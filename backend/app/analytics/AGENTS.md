@@ -30,6 +30,12 @@ Phase 2B2 owns secret resolution, database adapters, `EXPLAIN` cost checks, shor
 
 Never store or pass a raw datasource password/DSN in domain objects. Domain objects carry only an opaque `secret_ref`; credential resolution belongs to infrastructure. Every new dependency direction must remain covered by `tests/test_analytics_boundaries.py`.
 
+## 语言规范
+
+本模块新增或修改的注释、docstring、架构说明与复杂测试场景说明使用中文（见仓库级 `AGENTS.md`）。
+变量名、函数名、测试函数名、错误码、SQL 关键字与 SQLGlot API 名保持英文；不给显而易见的代码加逐行
+翻译式注释；不批量翻译未触及的上游文件。
+
 ## Commands
 
 Every `uv` command uses `--locked` so a user-level mirror index cannot rewrite `uv.lock`; the only exception is the intentional `uv lock --upgrade-package <name>`, which must be followed by the coordinate-drift check in the phase plan.

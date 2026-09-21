@@ -95,6 +95,13 @@ do not use HTML `maxLength`, which counts UTF-16 code units instead.
 - **Path alias**: `@/*` maps to `src/*`.
 - **Components**: `ui/` and `ai-elements/` are generated from registries (Shadcn, MagicUI, React Bits, Vercel AI SDK) — don't manually edit these.
 
+## 语言与 i18n
+
+InsightFlow 自有内容以中文为主要写作语言（见仓库级 `AGENTS.md`）。前端新增的用户可见文案必须进入现有
+i18n 体系（`src/core/i18n/`），至少同时提供 `zh-CN` 与 `en-US` 两套词条；中文文案是 InsightFlow 新页面
+的主要写作基准，同时保留中英切换能力。禁止在 JSX/TSX 中直接硬编码两套语言，或用条件表达式内联两份文案。
+稳定错误码与机器日志字段保持英文，只在展示层翻译。本阶段只建立规范：不修改默认语言，也不改动现有页面。
+
 ## Environment
 
 Scheduled-task interval forms preserve the initial `every_seconds` on mount,

@@ -218,6 +218,13 @@ cd frontend && pnpm rstest run <pattern>     # e.g. pnpm rstest run my-component
 
 These apply repo-wide; module guides own the module-specific detail.
 
+- **中文优先（InsightFlow 自有内容）** — 新增或修改的内容以中文为主要语言：代码注释、docstring、
+  架构说明、实施计划、AI 实施提示词、复杂测试场景说明。以下保持英文，不做机械汉化：变量/函数/类/
+  模块名、API 与数据库字段、配置键、错误码、协议值、CLI 命令、SQL 关键字、第三方与行业标准术语。
+  注释只解释为什么这样设计、安全边界、非显然的算法或兼容行为、容易误改的约束；不给显而易见的代码
+  加逐行翻译式注释。不批量翻译未修改的 DeerFlow 上游文件，旧代码在后续真实修改时逐步本地化。
+  稳定错误码、机器日志字段、测试函数标识符保持英文，面向用户显示时经 i18n 翻译。前端细则见
+  [frontend/AGENTS.md](frontend/AGENTS.md)。
 - **Documentation update policy** — keep docs in sync with code: update `README.md` for
   user-facing changes and the relevant `AGENTS.md` for development/architecture changes in
   the same change set.
