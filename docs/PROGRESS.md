@@ -6,8 +6,8 @@ Baseline: DeerFlow `v2.1.0-rc0` (`769589e8daee14c2587a634b6b43bd96471a41a1`), im
 
 | Phase | Status | Evidence | Next gate |
 | --- | --- | --- | --- |
-| 0 Baseline and governance | In progress | `upstream-v2.1.0-rc0`; architecture report | Phase 0 review |
-| 1 Analytics boundary | Not started | — | Approved Phase 1 prompt |
+| 0 Baseline and governance | Complete | `936758c`, `aa516bd`; architecture report; ADR 0001 | Phase 1 implementation |
+| 1 Analytics boundary | In progress | Phase 1 plan; analytics domain/boundary tests | Phase 1 review |
 | 2 Safe data access | Not started | — | Approved Phase 2 prompt |
 | 3 Agent workflow | Not started | — | Approved Phase 3 prompt |
 | 4 Product UI | Not started | — | Approved Phase 4 prompt |
