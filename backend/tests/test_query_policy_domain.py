@@ -173,6 +173,8 @@ def test_query_decision_code_values_are_stable_storage_contracts():
     assert QueryDecisionCode.OFFSET_NOT_ALLOWED.value == "offset_not_allowed"
     assert QueryDecisionCode.NON_LITERAL_LIMIT.value == "non_literal_limit"
     assert QueryDecisionCode.INVALID_LIMIT.value == "invalid_limit"
+    assert QueryDecisionCode.COMMENT_NOT_ALLOWED.value == "comment_not_allowed"
+    assert QueryDecisionCode.UNBOUND_PARAMETER.value == "unbound_parameter"
     assert QueryDecisionCode.LIMIT_APPLIED.value == "limit_applied"
     assert QueryDecisionCode.LIMIT_REDUCED.value == "limit_reduced"
     assert QueryDecisionCode.COMPLEX_QUERY.value == "complex_query"

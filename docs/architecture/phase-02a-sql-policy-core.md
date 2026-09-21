@@ -54,11 +54,13 @@ class QueryDecisionCode(StrEnum):
     MULTIPLE_STATEMENTS = "multiple_statements"
     UNSUPPORTED_STATEMENT = "unsupported_statement"
     FORBIDDEN_OPERATION = "forbidden_operation"
+    COMMENT_NOT_ALLOWED = "comment_not_allowed"
     WILDCARD_PROJECTION = "wildcard_projection"
     DANGEROUS_FUNCTION = "dangerous_function"
     OFFSET_NOT_ALLOWED = "offset_not_allowed"
     NON_LITERAL_LIMIT = "non_literal_limit"
     INVALID_LIMIT = "invalid_limit"
+    UNBOUND_PARAMETER = "unbound_parameter"
     LIMIT_APPLIED = "limit_applied"
     LIMIT_REDUCED = "limit_reduced"
     COMPLEX_QUERY = "complex_query"
@@ -113,21 +115,25 @@ class QueryPolicy(Protocol):
 3. Parse with an explicit `read` dialect. Catch SQLGlot errors and return `PARSE_ERROR` without exposing parser text.
 4. Drop parser `None` entries and require exactly one statement; more than one returns `MULTIPLE_STATEMENTS`.
 5. Allow only a `Select` root or a SQLGlot `SetOperation` root containing a `Select`. Everything else, including `Show`, `Values`, aliases, and generic `Command`, returns `UNSUPPORTED_STATEMENT`.
-6. Walk the complete AST and reject any forbidden operation node, including a write hidden inside a CTE. Return `FORBIDDEN_OPERATION`.
-7. Reject projection wildcards (`SELECT *`, `SELECT t.*`). `COUNT(*)` is the only allowed star form. Return `WILDCARD_PROJECTION`.
-8. Reject the fixed dangerous-function denylist, case-insensitively. Return `DANGEROUS_FUNCTION`.
-9. Reject any `OFFSET`, including nested offsets. Return `OFFSET_NOT_ALLOWED`.
-10. Inspect the root query's top-level `LIMIT`:
+6. Walk the complete AST and reject any forbidden operation node, including a write hidden inside a CTE. Return `FORBIDDEN_OPERATION`. `exp.PropertyEQ` belongs to this denylist, so MySQL session/property assignment such as `SELECT @x := id FROM t` is rejected here.
+7. Reject any real SQL comment or optimizer hint, whichever carrier the parser used: `Expression.comments` or an `exp.Hint` node (MySQL promotes `/*+ ... */` to a hint node instead of a comment). Return `COMMENT_NOT_ALLOWED`. Comment markers inside a string literal are literal data, not comments, and remain allowed.
+8. Reject projection wildcards (`SELECT *`, `SELECT t.*`). `COUNT(*)` is the only allowed star form. Return `WILDCARD_PROJECTION`.
+9. Reject the fixed dangerous-function denylist, case-insensitively. Return `DANGEROUS_FUNCTION`.
+10. Reject any `OFFSET`, including nested offsets. Return `OFFSET_NOT_ALLOWED`.
+11. Inspect the root query's top-level `LIMIT`:
     - no limit: inject `max_rows` and add `LIMIT_APPLIED`;
     - integer limit in `0..max_rows`: preserve it;
     - integer limit above `max_rows`: replace it with `max_rows` and add `LIMIT_REDUCED`;
     - a negative integer: return `INVALID_LIMIT`;
     - a placeholder, expression, identifier, or other non-literal: return `NON_LITERAL_LIMIT`.
-11. Serialize using the same explicit dialect with `pretty=False`.
-12. Reparse the serialized SQL with the same dialect and re-run the structural, forbidden-operation, wildcard, dangerous-function and offset checks. Any failure is denied; never return SQL that was not reparsed.
-13. Extract sorted unique physical relation names, excluding unqualified references to CTE aliases. Preserve up to `catalog.schema.table` components as exposed by SQLGlot.
-14. Compute `sha256(engine.value + "\0" + normalized_sql)` as lowercase hex.
-15. Classify `MEDIUM` if the AST contains a join, CTE, set operation, window, or subquery; otherwise classify `LOW`. Add `COMPLEX_QUERY` for `MEDIUM`, then append `APPROVED` as the final code.
+
+    This step runs before the general parameter check, so a top-level `LIMIT ?` stays `NON_LITERAL_LIMIT` rather than being overridden.
+12. Reject `exp.Placeholder` and `exp.Parameter` anywhere else in the AST. V1 has no binding-value contract in the domain, so an unbound parameter cannot be executed safely. Return `UNBOUND_PARAMETER`.
+13. Serialize using the same explicit dialect with `pretty=False`.
+14. Reparse the serialized SQL with the same dialect and re-run the structural, forbidden-operation, comment/hint, wildcard, dangerous-function, offset, LIMIT and unbound-parameter checks. Any failure is denied; never return SQL that was not reparsed.
+15. Extract sorted unique physical relation names, excluding unqualified references to CTE aliases. Preserve up to `catalog.schema.table` components as exposed by SQLGlot.
+16. Compute `sha256(engine.value + "\0" + normalized_sql)` as lowercase hex.
+17. Classify `MEDIUM` if the AST contains a join, CTE, set operation, window, or subquery; otherwise classify `LOW`. Add `COMPLEX_QUERY` for `MEDIUM`, then append `APPROVED` as the final code.
 
 `HIGH` is reserved for Phase 2B permission, PII, cross-schema, Cartesian-risk, and `EXPLAIN` cost outcomes. Phase 2A must not pretend that syntax alone can establish those facts.
 
@@ -139,10 +145,22 @@ The AST denylist contains the concrete SQLGlot 30.18.0 expression classes for:
 Insert, Update, Delete, Create, Drop, Alter, Merge,
 Command, Copy, Transaction, Commit, Rollback,
 Grant, Revoke, TruncateTable, Use, Set, Cache, Uncache,
-Execute, Into, Lock
+Execute, Into, Lock, PropertyEQ
 ```
 
+`PropertyEQ` carries MySQL session/property assignment (`SELECT @x := id FROM t`), which an unauthenticated read path must never accept.
+
 Root allowlisting remains mandatory even with this denylist. That makes unknown or newly parsed statement families fail closed instead of relying on an exhaustive blacklist.
+
+### Comments and hints
+
+V1 accepts no SQL comments or optimizer hints. Detection is metadata-based — `Expression.comments` plus `exp.Hint` nodes — never a raw-string regex scan, so `--` and `/* ... */` sequences inside string literals are literal data and remain valid. This deliberately also rejects MySQL executable comments (`/*!50000 ... */`), which SQLGlot otherwise preserves and re-serializes as an active fragment.
+
+### Unbound parameters
+
+V1 has no binding-value contract: the domain models neither parameters nor bindings, so any parameter outside the `LIMIT` position fails closed with `UNBOUND_PARAMETER`. Note the dialect asymmetry, which is parser behaviour and not a policy bug: PostgreSQL exposes `$1` as a parameter, while MySQL has no `$n` placeholder syntax and treats `$1` as an ordinary identifier. `?`, `:name`, `@name` and `$n` are all rejected in the dialects that treat them as parameters.
+
+If a later phase wants parameterized execution, it must first add an explicit immutable binding contract to the domain and only then relax this rule; the current policy must not be widened in place.
 
 The initial dangerous-function denylist is:
 
@@ -178,6 +196,10 @@ Both MySQL and PostgreSQL must cover:
 - empty, malformed and multiple-statement rejection;
 - rejection of DDL, DML, transaction/command/export/lock syntax;
 - rejection of write operations nested inside CTEs;
+- rejection of SQL line/block comments and optimizer hints in both carriers (`Expression.comments` and `exp.Hint`), including MySQL executable comments, while comment markers inside string literals remain allowed;
+- rejection of MySQL session/property assignment (`SELECT @x := id FROM t`) through the `PropertyEQ` denylist entry;
+- rejection of unbound `?`, `:name` and `@name` parameters in both dialects plus PostgreSQL `$n`, while a top-level `LIMIT ?` still returns `NON_LITERAL_LIMIT`;
+- re-application of the comment/hint and unbound-parameter checks to the reparsed normalized SQL;
 - rejection of `SELECT *` and qualified stars, while allowing `COUNT(*)`;
 - rejection of dangerous functions regardless of case;
 - rejection of offsets and non-literal/negative limits;

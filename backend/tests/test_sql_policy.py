@@ -289,3 +289,88 @@ def test_prepared_query_is_not_executable_authority(engine):
     assert not hasattr(prepared, "plan_id")
     assert not hasattr(prepared, "execute")
     assert {field.name for field in fields(prepared)} == {"sql", "engine", "relations", "row_limit", "query_hash"}
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT 1 -- ordinary comment\n",
+        "SELECT 1 /* ordinary comment */",
+        "SELECT /*+ INDEX(t idx_t) */ id FROM t",
+    ],
+)
+def test_sql_comments_are_rejected(engine, sql):
+    _blocked(sql, engine, QueryDecisionCode.COMMENT_NOT_ALLOWED)
+
+
+def test_mysql_executable_comment_is_rejected():
+    _blocked(
+        "SELECT 1 /*!50000 UNION SELECT SLEEP(10) */",
+        DatasourceEngine.MYSQL,
+        QueryDecisionCode.COMMENT_NOT_ALLOWED,
+    )
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+@pytest.mark.parametrize("literal", ["'-- not a comment'", "'/* not a comment */'"])
+def test_comment_markers_inside_string_literals_are_allowed(engine, literal):
+    _approved(f"SELECT {literal} AS label", engine)
+
+
+def test_mysql_session_assignment_is_forbidden():
+    _blocked(
+        "SELECT @x := id FROM t",
+        DatasourceEngine.MYSQL,
+        QueryDecisionCode.FORBIDDEN_OPERATION,
+    )
+
+
+@pytest.mark.parametrize(
+    ("engine", "sql"),
+    [
+        (DatasourceEngine.MYSQL, "SELECT id FROM t WHERE id = ?"),
+        (DatasourceEngine.POSTGRESQL, "SELECT id FROM t WHERE id = ?"),
+        (DatasourceEngine.MYSQL, "SELECT id FROM t WHERE id = :id"),
+        (DatasourceEngine.POSTGRESQL, "SELECT id FROM t WHERE id = :id"),
+        (DatasourceEngine.MYSQL, "SELECT id FROM t WHERE id = @id"),
+        (DatasourceEngine.POSTGRESQL, "SELECT id FROM t WHERE id = $1"),
+    ],
+)
+def test_unbound_query_parameters_are_rejected(engine, sql):
+    _blocked(sql, engine, QueryDecisionCode.UNBOUND_PARAMETER)
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT id FROM t WHERE id = ? LIMIT 5",
+        "SELECT id FROM t WHERE id = :id ORDER BY id",
+    ],
+)
+def test_unbound_parameters_outside_limit_are_rejected_before_bounding(engine, sql):
+    _blocked(sql, engine, QueryDecisionCode.UNBOUND_PARAMETER)
+
+
+def test_postgres_dollar_parameter_outside_limit_is_rejected():
+    _blocked(
+        "SELECT id FROM t WHERE id = $1 ORDER BY id",
+        DatasourceEngine.POSTGRESQL,
+        QueryDecisionCode.UNBOUND_PARAMETER,
+    )
+
+
+def test_mysql_treats_dollar_prefixed_token_as_an_identifier_not_a_parameter():
+    # MySQL has no `$n` placeholder syntax and `$` is a legal identifier character, so
+    # SQLGlot parses `$1` as a column reference rather than a bound-parameter carrier.
+    # Only PostgreSQL exposes `$n` as a parameter, which the test above pins.
+    decision = _approved("SELECT id FROM t WHERE id = $1", DatasourceEngine.MYSQL)
+
+    assert QueryDecisionCode.UNBOUND_PARAMETER not in decision.codes
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_top_level_placeholder_limit_still_reports_non_literal_limit(engine):
+    # The dedicated LIMIT check must win over the general unbound-parameter check.
+    _blocked("SELECT id FROM t LIMIT ?", engine, QueryDecisionCode.NON_LITERAL_LIMIT)

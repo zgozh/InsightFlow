@@ -42,6 +42,7 @@ _FORBIDDEN_EXPRESSIONS = (
     exp.Execute,
     exp.Into,
     exp.Lock,
+    exp.PropertyEQ,
 )
 _DANGEROUS_FUNCTIONS = frozenset(
     {
@@ -85,12 +86,32 @@ def _function_name(function: exp.Func) -> str:
     return function.sql_name().casefold()
 
 
+def _has_comments(statement: exp.Expression) -> bool:
+    """Detect real SQL comments and optimizer hints through parser metadata.
+
+    Comments live in ``Expression.comments``; MySQL additionally promotes ``/*+ ... */``
+    optimizer hints into an ``exp.Hint`` node instead of a comment, so both carriers must
+    be checked. This is metadata-based on purpose: markers inside string literals are
+    parsed as literals and are therefore never rejected.
+    """
+
+    return any(node.comments for node in statement.walk()) or any(isinstance(node, exp.Hint) for node in statement.walk())
+
+
+def _has_unbound_parameters(statement: exp.Expression) -> bool:
+    """Detect placeholders and parameters that carry no bound value."""
+
+    return any(isinstance(node, (exp.Placeholder, exp.Parameter)) for node in statement.walk())
+
+
 def _structure_error(statement: exp.Expression) -> QueryDecisionCode | None:
     allowed_root = isinstance(statement, (exp.Select, exp.SetOperation))
     if not allowed_root or statement.find(exp.Select) is None:
         return QueryDecisionCode.UNSUPPORTED_STATEMENT
     if any(isinstance(node, _FORBIDDEN_EXPRESSIONS) for node in statement.walk()):
         return QueryDecisionCode.FORBIDDEN_OPERATION
+    if _has_comments(statement):
+        return QueryDecisionCode.COMMENT_NOT_ALLOWED
     if any(not isinstance(star.parent, exp.Count) for star in statement.find_all(exp.Star)):
         return QueryDecisionCode.WILDCARD_PROJECTION
     if any(_function_name(function) in _DANGEROUS_FUNCTIONS for function in statement.find_all(exp.Func)):
@@ -157,6 +178,8 @@ class SqlglotQueryPolicy:
         limit, limit_error = _limit_value(statement)
         if limit_error:
             return _blocked(limit_error)
+        if _has_unbound_parameters(statement):
+            return _blocked(QueryDecisionCode.UNBOUND_PARAMETER)
 
         codes: list[QueryDecisionCode] = []
         if limit is None:
@@ -186,6 +209,8 @@ class SqlglotQueryPolicy:
         reparsed_limit, reparsed_limit_error = _limit_value(normalized_statement)
         if reparsed_limit_error or reparsed_limit != effective_limit:
             return _blocked(reparsed_limit_error or QueryDecisionCode.PARSE_ERROR)
+        if _has_unbound_parameters(normalized_statement):
+            return _blocked(QueryDecisionCode.UNBOUND_PARAMETER)
 
         risk = _risk(normalized_statement)
         if risk is QueryRisk.MEDIUM:
