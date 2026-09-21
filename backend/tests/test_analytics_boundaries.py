@@ -1,7 +1,7 @@
 import ast
 from pathlib import Path
 
-from app.analytics.application import QueryPolicy
+from app.analytics.application import AccessPolicyCatalog, QueryPolicy, SchemaCatalog, SemanticQueryAuthorizer
 from app.analytics.application.ports import DatasourceCatalog, MetricCatalog
 
 ANALYTICS_ROOT = Path(__file__).parent.parent / "app" / "analytics"
@@ -54,6 +54,12 @@ def test_catalog_ports_are_runtime_checkable_protocols():
 
 def test_query_policy_port_is_a_runtime_checkable_protocol():
     assert getattr(QueryPolicy, "_is_runtime_protocol", False)
+
+
+def test_authorization_ports_are_runtime_checkable_protocols():
+    assert getattr(SchemaCatalog, "_is_runtime_protocol", False)
+    assert getattr(AccessPolicyCatalog, "_is_runtime_protocol", False)
+    assert getattr(SemanticQueryAuthorizer, "_is_runtime_protocol", False)
 
 
 def test_analytics_infrastructure_does_not_depend_on_delivery_or_harness():
