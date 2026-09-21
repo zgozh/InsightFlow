@@ -93,11 +93,9 @@ services:
     restart: "no"
 
   mysql:
-    # 默认钉死 spec §10.2/§14 要求的 8.4。允许用 ANALYTICS_MYSQL_TAG 覆盖，是为了在无法拉取
-    # 新镜像的环境里复用已下载的同主版本镜像；被 2B2 依赖的行为（@@lower_case_table_names、
-    # START TRANSACTION READ ONLY、MAX_EXECUTION_TIME、EXPLAIN FORMAT=JSON v1、processlist）
-    # 在 8.0 与 8.4 上一致。任何非默认取值都必须在实施报告里作为偏差记录。
-    image: mysql:${ANALYTICS_MYSQL_TAG:-8.4}
+    # 验收基线是字面量 mysql:8.4（官方 Linux 镜像），不提供版本切换开关：真实数据库门禁的结论
+    # 只在确切的镜像版本上成立，可切换的 tag 会让非 8.4 的运行与验收证据无法区分。
+    image: mysql:8.4
     # 显式声明大小写敏感语义：它必须在初始化时确定，启动后再改会被服务器拒绝。
     command:
       - mysqld

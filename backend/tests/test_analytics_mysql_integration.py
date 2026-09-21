@@ -6,7 +6,13 @@
   READ ONLY` 的命令顺序、JSON v1 计划解析（顶层 `query_block.cost_info.query_cost` + 递归行数求和）
   以及每一条拒绝路径。这些测试在任何环境都必须通过。
 - 集成测试只在 `ANALYTICS_TEST_MYSQL=1` 时运行（由 `scripts/test_analytics_databases.py` 注入），
-  证明真实 MySQL 8.4 上的只读事务、`MAX_EXECUTION_TIME`、取消后 processlist 无残留、流式截断与错误脱敏。
+  证明真实 MySQL 8.4 上的只读事务、缓冲读取下的 `MAX_EXECUTION_TIME`（MySQL errno 3024）、流式路径
+  客户端超时的清理效果（取消后 processlist 无残留）、流式截断与错误脱敏。
+
+超时语义的实测结论（MySQL 8.4.11 与 8.0.46 表现一致）：`max_execution_time` 对缓冲 `exec_driver_sql`
+读取生效（`EXPLAIN` 走的就是这条路径），但**不会抢占 `connection.stream()` 服务端游标**。生产执行
+路径的终止边界是客户端 `asyncio.timeout(statement_timeout_ms + cancellation_grace_ms)` 加上随后的
+连接失效与销毁；服务端限制在该路径上保留为纵深防御，不写作已经发生的抢占。
 
 计划摘要的期望值不调用生产 helper：规范化规则（UTF-8、`ensure_ascii=False`、紧凑分隔符、`sort_keys`）
 在本文件里重写一遍，避免"规则被改坏"和"测试跟着改坏"同时发生。
@@ -749,7 +755,7 @@ class TestMySQLAgainstRealDatabase:
 
     async def test_client_timeout_destroys_the_connection_and_stops_the_query(self):
         runtime = MySQLRuntime()
-        # 服务端超时故意放宽，让客户端时限先到：这条路径证明的是"连接被销毁"而不是"服务端取消"。
+        # 服务端限制放宽到 3s，让客户端时限先到：这条路径证明的是"连接被销毁"，不是"服务端抢占"。
         limits = _limits(statement_timeout_ms=3_000, cancellation_grace_ms=500)
         sql = f"SELECT SLEEP(0.2) AS {_TIMEOUT_MARKER} FROM {_ORDERS} LIMIT 5000"
         engine = _engine(runtime, limits=limits)
@@ -764,7 +770,9 @@ class TestMySQLAgainstRealDatabase:
                     except Exception:
                         pass
             async with engine.connect() as monitor:
-                # 服务端 MAX_EXECUTION_TIME=3s 最终会终止语句；客户端连接早已被销毁。
+                # 实测 MySQL 8.4.11（与 8.0.46 一致）：MAX_EXECUTION_TIME 不会抢占 connection.stream()
+                # 打开的服务端游标，所以真正终止这条流式查询的是客户端超时后的连接失效/销毁，
+                # 不是服务端抢占。保留 processlist 等待，是为了证明超时返回后服务端不再有活动查询。
                 residual = await _wait_for_no_residual_timeout_session(monitor, timeout_seconds=20)
         finally:
             await engine.dispose()

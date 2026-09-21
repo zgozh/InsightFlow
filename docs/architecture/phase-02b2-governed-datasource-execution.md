@@ -287,7 +287,7 @@ allowlist 和数据库最小权限账号。
 
 EXPLAIN：
 
-- 设置当前连接的 `MAX_EXECUTION_TIME`；
+- 设置当前连接的 `MAX_EXECUTION_TIME`（对下面这条 EXPLAIN 缓冲读取生效；流式执行路径的语义见 §10.3）；
 - `START TRANSACTION READ ONLY`；
 - 执行 `EXPLAIN FORMAT=JSON <approved SQL>`，禁止 `EXPLAIN ANALYZE`；
 - 兼容并明确测试 MySQL 8.4 默认 JSON v1；
@@ -299,11 +299,24 @@ EXPLAIN：
 执行使用同样的 session timeout 与只读事务。MySQL 只读事务仍允许临时表变更，但 Phase 2A 只允许单条 SELECT，
 并禁止赋值和危险语法，因此不能依靠该例外构造写入。
 
-### 10.3 双层超时
+### 10.3 超时语义（按方言分别成立）
 
-数据库服务端 timeout 负责终止查询，`asyncio.timeout()` 负责客户端总时限。客户端 SQL 时限固定为
-`statement_timeout_ms + cancellation_grace_ms`，后者为服务器返回取消结果和清理留下明确余量。测试必须证明超时
-返回后查询没有继续占用活动连接。
+客户端 SQL 总时限固定为 `statement_timeout_ms + cancellation_grace_ms`，后者为服务器返回取消结果和清理留下
+明确余量。测试必须证明超时返回后查询没有继续占用活动连接。**但"由服务端终止查询"这一点只在 PostgreSQL 上成立**，
+因此不得笼统表述为"双层超时都由服务端负责"：
+
+- **PostgreSQL 16**：只读事务内的本地 `statement_timeout` 由服务端执行并中止查询；`asyncio.timeout()` 只是
+  客户端总时限。超时或取消后销毁连接，绝不复用。
+- **MySQL 8.4 + asyncmy 0.2.15**：连接仍然设置 `MAX_EXECUTION_TIME`，缓冲 `exec_driver_sql` 读取会得到 MySQL
+  errno 3024，因而可以证明服务端限制确实已武装——`EXPLAIN` 走的正是这条缓冲路径，继续受服务端限制保护。
+  **实测 MySQL 8.4.11 与 8.0.46 表现一致：`MAX_EXECUTION_TIME` 不会抢占 `connection.stream()` 打开的服务端
+  游标。** 该流式路径的实际终止边界是 Gateway 外层的
+  `asyncio.timeout(statement_timeout_ms + cancellation_grace_ms)`，随后必须使连接失效并销毁。真实数据库验收
+  已证明客户端超时返回后 `information_schema.processlist` 中残留活动查询为零。
+
+服务端 `MAX_EXECUTION_TIME` 在流式路径上保留为纵深防御。**不得把尚未发生的服务端抢占写成保证，也不得把
+MySQL 的这一差异泛化成"取消所有服务端超时"。** 客户端总时限、连接失效、事务回滚与残留查询检查都不得削弱。
+V1 不引入独立连接上的 `KILL QUERY` 看门狗；若未来需要由服务端强制终止流式查询，那是一个需要另行批准的新设计。
 
 ## 11. 结果规范化和配额
 
@@ -402,7 +415,7 @@ EXPLAIN：
 - JSON v1 EXPLAIN 的 cost/rows 解析；
 - `START TRANSACTION READ ONLY` 正常 SELECT；
 - 绕过上层直接写入时由数据库拒绝；
-- `MAX_EXECUTION_TIME` 和 Python timeout；
+- `MAX_EXECUTION_TIME` 已在缓冲路径上被证明武装（errno 3024），且流式路径按 §10.3 的客户端超时语义终止；
 - 取消后连接销毁且无持续查询；
 - 流式行数/字节截断；
 - 大小写错误对象不执行。

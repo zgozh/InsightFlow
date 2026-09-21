@@ -49,7 +49,13 @@ Phase 2B2 的 MySQL schema adapter 必须先读取或显式配置该服务器的
 
 凭证只存在于 infrastructure 私有对象内，绝不进入 repr、日志、异常、domain 或 receipt；plan token、DSN、用户名、密码、原始 SQL 与原始 EXPLAIN JSON 都不记录。数据库错误一律映射为稳定决定码，驱动异常文本不外泄。
 
-每次 EXPLAIN/execute 使用 `NullPool` 与 `echo=False` 的短生命周期 engine，并在 finally 中 `dispose()`；超时或取消后连接必须销毁，绝不复用。EXPLAIN 禁止 `ANALYZE`，执行 SQL 只能精确取自 `authorized.prepared.sql`。PostgreSQL 16 与 MySQL 8.4 都建立数据库只读事务，并使用服务端 + `asyncio.timeout()` 双层超时（客户端总时限 = `statement_timeout_ms + cancellation_grace_ms`）。MySQL 额外读取 `@@lower_case_table_names`，只有 `0` 放行，`1`/`2`/缺失返回 `UNSUPPORTED_IDENTIFIER_MODE`。结果逐行消费（禁止 `fetchall()`），未知类型不得调用 `repr()`/`str()`。
+每次 EXPLAIN/execute 使用 `NullPool` 与 `echo=False` 的短生命周期 engine，并在 finally 中 `dispose()`；超时或取消后连接必须销毁，绝不复用。EXPLAIN 禁止 `ANALYZE`，执行 SQL 只能精确取自 `authorized.prepared.sql`。结果逐行消费（禁止 `fetchall()`），未知类型不得调用 `repr()`/`str()`。`UNSUPPORTED_RESULT_TYPE` 同时覆盖不受支持的结果值类型、无法安全承载的结果元数据与结果形状；`RESULT_LIMIT_REACHED` 只用于携带截断结果的正常执行决定。
+
+超时语义必须按方言分别表述，不得笼统写成"服务端终止查询"：
+
+- **PostgreSQL 16**：只读事务内设置本地 `statement_timeout`，服务端超时负责中止查询；`asyncio.timeout(statement_timeout_ms + cancellation_grace_ms)` 限制客户端总耗时；超时或取消后销毁连接，不得复用。
+- **MySQL 8.4 + asyncmy**：当前连接仍然设置 `MAX_EXECUTION_TIME`。缓冲 `exec_driver_sql` 读取会得到 MySQL errno 3024，因此可以证明服务端限制确实已武装，`EXPLAIN` 走的正是这条缓冲路径。生产查询使用 `connection.stream()` 服务端游标，而实测（MySQL 8.4.11 与 8.0.46 表现一致）`MAX_EXECUTION_TIME` **不会抢占该流式路径**：它的实际终止边界是客户端 `asyncio.timeout(statement_timeout_ms + cancellation_grace_ms)`，随后必须使连接失效并销毁。真实数据库验收已证明客户端超时返回后 `information_schema.processlist` 中残留活动查询为零。服务端限制在该路径上保留为纵深防御——**不得把尚未发生的服务端抢占写成保证，也不得由此泛化成"取消所有服务端超时"**。
+- MySQL 额外读取 `@@lower_case_table_names`，只有 `0` 放行，`1`/`2`/缺失返回 `UNSUPPORTED_IDENTIFIER_MODE`。
 
 真实数据库门禁（Docker 必须已启动，PostgreSQL 16 + MySQL 8.4 只绑定 `127.0.0.1`）：
 
