@@ -3,8 +3,10 @@ from __future__ import annotations
 import sqlglot
 from sqlglot import exp
 from sqlglot.errors import SqlglotError
+from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
 from sqlglot.optimizer.qualify import qualify
 from sqlglot.optimizer.scope import Scope, traverse_scope
+from sqlglot.schema import MappingSchema
 
 from app.analytics.application import QueryPolicy
 from app.analytics.domain import (
@@ -75,6 +77,8 @@ def _physical_sources(scope: Scope) -> list[tuple[str, exp.Table]]:
 
 
 def _qualify_mapping(snapshot: SchemaSnapshot) -> dict:
+    """按 schema/catalog 嵌套的真实名称映射，供 SQLGlot 精确匹配使用。"""
+
     mapping: dict = {}
     for relation in snapshot.relations:
         columns = {column.name: column.data_type for column in relation.columns}
@@ -87,28 +91,34 @@ def _qualify_mapping(snapshot: SchemaSnapshot) -> dict:
 
 
 class _SchemaIndex:
-    def __init__(self, snapshot: SchemaSnapshot) -> None:
+    """按真实元数据名称精确匹配的 schema 索引。
+
+    标识符大小写与引号语义全部交由 SQLGlot 的方言规范化处理，这里不做 `casefold`：
+    过度折叠会让授权血缘指向与数据库实际解析对象不同的关系。
+    """
+
+    def __init__(self, snapshot: SchemaSnapshot, dialect: str) -> None:
         self._snapshot = snapshot
         self._by_name: dict[str, list[RelationSchema]] = {}
-        self._qualify_mapping = _qualify_mapping(snapshot)
         for relation in snapshot.relations:
-            self._by_name.setdefault(relation.name.casefold(), []).append(relation)
+            self._by_name.setdefault(relation.name, []).append(relation)
+        # normalize=False 保留真实元数据大小写，避免 SQLGlot 自动折叠真实名称。
+        self._schema = MappingSchema(_qualify_mapping(snapshot), dialect=dialect, normalize=False)
 
     @property
-    def qualify_mapping(self) -> dict:
-        return self._qualify_mapping
+    def qualify_schema(self) -> MappingSchema:
+        return self._schema
 
     def resolve(self, table: exp.Table) -> RelationSchema | None:
-        name = table.name.casefold()
-        catalog = table.catalog.casefold() if table.catalog else None
-        database = table.db.casefold() if table.db else None
+        name = table.name
+        catalog = table.catalog or None
+        database = table.db or None
         candidates = self._by_name.get(name, [])
         if catalog is None and database is None:
-            default_schema = self._snapshot.default_schema.casefold()
-            preferred = [relation for relation in candidates if relation.schema.casefold() == default_schema]
+            preferred = [relation for relation in candidates if relation.schema == self._snapshot.default_schema]
             candidates = preferred or candidates
         else:
-            candidates = [relation for relation in candidates if (database is None or relation.schema.casefold() == database) and (catalog is None or (relation.catalog or "").casefold() == catalog)]
+            candidates = [relation for relation in candidates if (database is None or relation.schema == database) and (catalog is None or (relation.catalog or "") == catalog)]
         if not candidates:
             return None
         if len(candidates) > 1:
@@ -116,31 +126,31 @@ class _SchemaIndex:
         return candidates[0]
 
     def column(self, relation: RelationSchema, name: str) -> ColumnSchema | None:
-        folded = name.casefold()
         for column in relation.columns:
-            if column.name.casefold() == folded:
+            if column.name == name:
                 return column
         return None
 
 
 class _PolicyIndex:
+    """按真实名称精确匹配的授权策略索引；只有函数白名单保持大小写不敏感。"""
+
     def __init__(self, policy: PrincipalAccessPolicy) -> None:
         self._by_key: dict[str, RelationAccessRule] = {}
         for rule in policy.relations:
-            key = _canonical_relation(rule.catalog, rule.schema, rule.name).casefold()
+            key = _canonical_relation(rule.catalog, rule.schema, rule.name)
             if key in self._by_key:
                 raise _AmbiguityError(key)
             self._by_key[key] = rule
         self._allowed_functions = frozenset(policy.allowed_functions)
 
     def relation_rule(self, relation: RelationSchema) -> RelationAccessRule | None:
-        key = _canonical_relation(relation.catalog, relation.schema, relation.name).casefold()
+        key = _canonical_relation(relation.catalog, relation.schema, relation.name)
         return self._by_key.get(key)
 
     def column_rule(self, rule: RelationAccessRule, name: str) -> ColumnAccessRule | None:
-        folded = name.casefold()
         for column in rule.columns:
-            if column.name.casefold() == folded:
+            if column.name == name:
                 return column
         return None
 
@@ -194,18 +204,22 @@ class SqlglotSemanticAuthorizer:
         prepared: PreparedQuery,
         risk: QueryRisk,
     ) -> QueryAuthorizationDecision:
-        schema_index = _SchemaIndex(schema)
+        schema_index = _SchemaIndex(schema, dialect)
         policy_index = _PolicyIndex(policy)
 
-        for scope in traverse_scope(statement):
+        # 先按方言规范化标识符（PostgreSQL 折叠未加引号的大小写、保留引号精确语义），
+        # 再做关系存在性预检，确保血缘指向数据库实际会解析到的对象。
+        normalized = normalize_identifiers(statement, dialect=dialect)
+
+        for scope in traverse_scope(normalized):
             for _alias, table in _physical_sources(scope):
                 if schema_index.resolve(table) is None:
                     raise _DenialError(AuthorizationDecisionCode.UNKNOWN_RELATION)
 
         try:
             qualified = qualify(
-                statement.copy(),
-                schema=schema_index.qualify_mapping,
+                normalized.copy(),
+                schema=schema_index.qualify_schema,
                 dialect=dialect,
                 validate_qualify_columns=True,
                 allow_partial_qualification=False,

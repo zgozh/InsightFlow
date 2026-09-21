@@ -497,3 +497,190 @@ def test_denied_decisions_never_carry_an_authorized_value():
     for sql in ("SELECT missing_column FROM orders", "SELECT email FROM orders"):
         decision = _authorize(sql)
         assert decision.authorized is None
+
+
+# --- 标识符大小写与引号语义（PostgreSQL / MySQL） -----------------------------
+#
+# PostgreSQL：未加引号的标识符按方言折叠为小写，加引号的标识符精确匹配真实名称。
+# 授权血缘必须指向数据库实际会解析到的对象，因此大小写不同的策略规则不能授权另一个真实对象。
+# MySQL：缺少 lower_case_table_names 证据时必须精确匹配，不确定的大小写不一致一律安全拒绝。
+
+_LOWER_ORDER_COLUMNS = (ColumnSchema(name="id", data_type="INT"),)
+_MIXED_ORDER_COLUMNS = (
+    ColumnSchema(name="id", data_type="INT"),
+    ColumnSchema(name="Region", data_type="TEXT"),
+)
+
+
+def _case_snapshot(*, engine=DatasourceEngine.POSTGRESQL, with_lower=True, with_mixed=True):
+    relations = []
+    if with_lower:
+        relations.append(RelationSchema(name="orders", schema="public", columns=_LOWER_ORDER_COLUMNS))
+    if with_mixed:
+        relations.append(RelationSchema(name="Orders", schema="public", columns=_MIXED_ORDER_COLUMNS))
+    return SchemaSnapshot(
+        datasource_id="ds-1",
+        engine=engine,
+        version="s1",
+        default_schema="public",
+        relations=tuple(relations),
+    )
+
+
+def _case_policy(
+    *,
+    with_lower=True,
+    with_mixed=True,
+    lower_name="orders",
+    mixed_name="Orders",
+    lower_columns=("id",),
+    mixed_columns=("id", "Region"),
+    functions=_ALL_FUNCTIONS,
+):
+    rules = []
+    if with_lower:
+        rules.append(
+            RelationAccessRule(
+                name=lower_name,
+                schema="public",
+                columns=tuple(ColumnAccessRule(name=name, access=ColumnAccess.ALLOW) for name in lower_columns),
+            )
+        )
+    if with_mixed:
+        rules.append(
+            RelationAccessRule(
+                name=mixed_name,
+                schema="public",
+                columns=tuple(ColumnAccessRule(name=name, access=ColumnAccess.ALLOW) for name in mixed_columns),
+            )
+        )
+    return PrincipalAccessPolicy(
+        datasource_id="ds-1",
+        principal_id="user-1",
+        version="p1",
+        relations=tuple(rules),
+        allowed_functions=functions,
+    )
+
+
+@pytest.mark.parametrize("sql", ["SELECT id FROM orders", "SELECT id FROM ORDERS"])
+def test_postgres_unquoted_relation_folds_to_the_lowercase_object(sql):
+    decision = _authorize(sql, snapshot=_case_snapshot(), policy=_case_policy())
+
+    assert decision.allowed is True
+    assert decision.authorized.relations == ("public.orders",)
+    assert decision.authorized.columns == ("public.orders.id",)
+
+
+def test_postgres_quoted_lowercase_relation_matches_only_the_lowercase_object():
+    decision = _authorize('SELECT id FROM "orders"', snapshot=_case_snapshot(), policy=_case_policy())
+
+    assert decision.allowed is True
+    assert decision.authorized.relations == ("public.orders",)
+
+
+def test_postgres_quoted_mixed_case_relation_matches_only_the_mixed_case_object():
+    decision = _authorize('SELECT id FROM "Orders"', snapshot=_case_snapshot(), policy=_case_policy())
+
+    assert decision.allowed is True
+    assert decision.authorized.relations == ("public.Orders",)
+    assert decision.authorized.columns == ("public.Orders.id",)
+
+
+def test_postgres_quoted_uppercase_relation_without_a_real_object_is_rejected():
+    _assert_blocked(
+        _authorize('SELECT id FROM "ORDERS"', snapshot=_case_snapshot(), policy=_case_policy()),
+        AuthorizationDecisionCode.UNKNOWN_RELATION,
+    )
+
+
+@pytest.mark.parametrize("sql", ["SELECT id FROM orders", 'SELECT id FROM "orders"'])
+def test_postgres_lowercase_reference_cannot_reach_a_mixed_case_object(sql):
+    # 真实对象只有 public.Orders；小写引用在 PostgreSQL 中指向不存在的 orders，必须拒绝而不是改写成 Orders。
+    snapshot = _case_snapshot(with_lower=False)
+    policy = _case_policy(with_lower=False)
+
+    _assert_blocked(_authorize(sql, snapshot=snapshot, policy=policy), AuthorizationDecisionCode.UNKNOWN_RELATION)
+
+
+@pytest.mark.parametrize("sql", ["SELECT id FROM Orders", "SELECT id FROM ORDERS"])
+def test_postgres_unquoted_mixed_case_relation_never_resolves_to_the_mixed_case_object(sql):
+    # 未加引号的 Orders/ORDERS 折叠为 orders，不能命中真实对象 public.Orders。
+    snapshot = _case_snapshot(with_lower=False)
+    policy = _case_policy(with_lower=False)
+
+    _assert_blocked(_authorize(sql, snapshot=snapshot, policy=policy), AuthorizationDecisionCode.UNKNOWN_RELATION)
+
+
+def test_postgres_quoted_mixed_case_column_preserves_real_casing():
+    decision = _authorize('SELECT "Region" FROM "Orders"', snapshot=_case_snapshot(), policy=_case_policy())
+
+    assert decision.allowed is True
+    assert decision.authorized.relations == ("public.Orders",)
+    assert decision.authorized.columns == ("public.Orders.Region",)
+
+
+@pytest.mark.parametrize("sql", ['SELECT Region FROM "Orders"', 'SELECT "region" FROM "Orders"', 'SELECT "REGION" FROM "Orders"'])
+def test_postgres_column_case_mismatch_is_rejected(sql):
+    # 未加引号的 Region 折叠为 region；"region"/"REGION" 与真实列 Region 不匹配。
+    _assert_blocked(
+        _authorize(sql, snapshot=_case_snapshot(), policy=_case_policy()),
+        AuthorizationDecisionCode.ANALYSIS_ERROR,
+    )
+
+
+def test_case_mismatched_relation_policy_cannot_authorize():
+    # 真实对象是 public.Orders，但策略规则写成了 orders，必须拒绝。
+    snapshot = _case_snapshot(with_lower=False)
+    policy = _case_policy(with_lower=True, with_mixed=False)
+
+    _assert_blocked(
+        _authorize('SELECT id FROM "Orders"', snapshot=snapshot, policy=policy),
+        AuthorizationDecisionCode.RELATION_NOT_ALLOWED,
+    )
+
+
+def test_case_mismatched_column_policy_cannot_authorize():
+    # 真实列是 Region，但策略规则写成了 region，必须拒绝。
+    snapshot = _case_snapshot(with_lower=False)
+    policy = _case_policy(with_lower=False, mixed_columns=("id", "region"))
+
+    _assert_blocked(
+        _authorize('SELECT "Region" FROM "Orders"', snapshot=snapshot, policy=policy),
+        AuthorizationDecisionCode.COLUMN_NOT_ALLOWED,
+    )
+
+
+def test_mysql_authorizes_only_an_exact_case_match():
+    snapshot = _case_snapshot(engine=DatasourceEngine.MYSQL, with_lower=False)
+    policy = _case_policy(with_lower=False)
+
+    decision = _authorize(
+        "SELECT id FROM Orders",
+        snapshot=snapshot,
+        policy=policy,
+        engine=DatasourceEngine.MYSQL,
+    )
+
+    assert decision.allowed is True
+    assert decision.authorized.relations == ("public.Orders",)
+
+
+@pytest.mark.parametrize("sql", ["SELECT id FROM orders", 'SELECT id FROM "orders"'])
+def test_mysql_rejects_case_mismatch_without_server_case_mode_evidence(sql):
+    # 本阶段没有 lower_case_table_names 证据：不确定的大小写不一致必须安全拒绝，不能猜测服务器语义。
+    snapshot = _case_snapshot(engine=DatasourceEngine.MYSQL, with_lower=False)
+    policy = _case_policy(with_lower=False)
+
+    _assert_blocked(
+        _authorize(sql, snapshot=snapshot, policy=policy, engine=DatasourceEngine.MYSQL),
+        AuthorizationDecisionCode.UNKNOWN_RELATION,
+    )
+
+
+def test_plain_lowercase_schema_still_authorizes_its_own_queries():
+    decision = _authorize("SELECT id FROM orders")
+
+    assert decision.allowed is True
+    assert decision.authorized.relations == ("public.orders",)
+    assert decision.authorized.columns == ("public.orders.id",)

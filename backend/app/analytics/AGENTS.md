@@ -30,6 +30,17 @@ Phase 2B2 owns secret resolution, database adapters, `EXPLAIN` cost checks, shor
 
 Never store or pass a raw datasource password/DSN in domain objects. Domain objects carry only an opaque `secret_ref`; credential resolution belongs to infrastructure. Every new dependency direction must remain covered by `tests/test_analytics_boundaries.py`.
 
+## 标识符语义
+
+物理对象的 catalog/schema/relation/column 一律按真实元数据名称精确匹配：AST 先经 SQLGlot 的方言标识符规范化，再与 `SchemaSnapshot` 的真实名称比对，绝不用全局 `casefold()` 模拟方言规则。
+
+- PostgreSQL：未加引号的 `orders` / `Orders` / `ORDERS` 折叠为小写；`"Orders"` 只匹配真实名称为 `Orders` 的对象；不存在精确对象时必须拒绝。
+- MySQL：当前没有 `lower_case_table_names` 证据，只有元数据与查询大小写完全一致才放行，无法确认的大小写不一致安全拒绝（宁可误拒绝，不可误授权）。
+
+`PrincipalAccessPolicy` 的 relation/column 规则也必须精确对应真实对象，大小写不同的规则不能授权另一个对象。只有 SQL 函数 allowlist 保持大小写不敏感。`AuthorizedQuerySpec.relations` / `.columns` 记录 `SchemaSnapshot` 的真实名称。
+
+Phase 2B2 的 MySQL schema adapter 必须先读取或显式配置该服务器的 `lower_case_table_names` 语义，再决定是否扩展 `SchemaSnapshot` 契约；在此之前不得引入连接、驱动或服务器探测。
+
 ## 语言规范
 
 本模块新增或修改的注释、docstring、架构说明与复杂测试场景说明使用中文（见仓库级 `AGENTS.md`）。

@@ -189,7 +189,18 @@ HIGH is intentionally unreachable as an allowed result in V1. Later approval wor
 
 ## 6. Canonical identifiers
 
-The adapter uses SQLGlot's selected dialect to normalize identifiers. Relation keys are `catalog.schema.table` when a catalog exists and `schema.table` otherwise; column keys append `.column`. Quoted identifier semantics follow SQLGlot's dialect normalization. Any normalization collision or lookup ambiguity returns `ANALYSIS_ERROR`.
+The adapter uses SQLGlot's selected dialect to normalize identifiers. Relation keys are `catalog.schema.table` when a catalog exists and `schema.table` otherwise; column keys append `.column`. Any normalization collision or lookup ambiguity returns `ANALYSIS_ERROR`.
+
+### Identifier case and quoting (Phase 2B1 Fix 01)
+
+物理对象的 catalog/schema/relation/column 一律按真实元数据名称精确匹配。适配器先用 SQLGlot 的方言标识符规范化处理 AST 副本，再与 `SchemaSnapshot` 的真实名称比对；不得用全局 `casefold()` 模拟方言规则，也不得让 SQLGlot 自动折叠真实元数据名称（schema 映射使用 `MappingSchema(..., normalize=False)`）。
+
+- PostgreSQL：未加引号的 `orders` / `Orders` / `ORDERS` 折叠为 `orders`；`"orders"` 精确匹配小写真实对象；`"Orders"` 只精确匹配真实名称为 `Orders` 的对象；`"ORDERS"` 只精确匹配真实名称为 `ORDERS` 的对象；不存在精确对象时必须拒绝。
+- MySQL：本阶段没有 `lower_case_table_names` 证据，只有元数据与查询大小写完全一致才放行，无法确认的大小写不一致安全拒绝。这是允许少量误拒绝、不允许任何误授权的安全策略。
+
+`PrincipalAccessPolicy` 的 relation/column 规则必须精确对应解析到的真实 `SchemaSnapshot` 对象；大小写不同的策略规则不能授权另一个真实对象，否则返回 `RELATION_NOT_ALLOWED` / `COLUMN_NOT_ALLOWED`。只有 SQL 函数 allowlist 保持大小写不敏感。
+
+`AuthorizedQuerySpec.relations` 与 `.columns` 记录 `SchemaSnapshot` 的真实名称，而不是查询文本中的大小写。Phase 2B2 的 MySQL schema adapter 必须先读取或显式配置该服务器的 `lower_case_table_names` 语义，再决定是否扩展 `SchemaSnapshot` 契约；2B1 不引入连接、驱动或服务器探测。
 
 The physical inventories are evidence for authorization and future audit. Phase 2B2 must recheck schema and policy versions before issuing a plan ID to prevent time-of-check/time-of-use drift.
 
