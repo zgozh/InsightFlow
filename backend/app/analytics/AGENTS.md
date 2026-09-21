@@ -41,6 +41,26 @@ Never store or pass a raw datasource password/DSN in domain objects. Domain obje
 
 Phase 2B2 的 MySQL schema adapter 必须先读取或显式配置该服务器的 `lower_case_table_names` 语义，再决定是否扩展 `SchemaSnapshot` 契约；在此之前不得引入连接、驱动或服务器探测。
 
+## 受控执行（Phase 2B2）
+
+`plan_id` 是服务端能力令牌，不是客户端自报的权限声明。它不携带 SQL、权限或凭证；`ExecutionPlanStore` 只保存 `secrets.token_urlsafe(32)` 的 SHA-256 摘要，原始 token 只在创建时返回一次。不存在、过期、已领取与 principal 不匹配对外统一返回 `PLAN_UNAVAILABLE`，避免枚举。
+
+完整语义授权会被重跑三次：创建 plan 前、`EXPLAIN` 之后、正式执行之前；每次都必须得到 allowed 且新的 `AuthorizedQuerySpec` 与原值 dataclass 精确相等（只比 version 不够，schema/policy 内容可能在版本号未变时漂移）。`AuthorizedQuerySpec` 与 `PreparedQuery` 依然不可执行——只有被 store 原子 `claim()` 的 plan 能到数据库，且 claim 必须发生在所有外部 I/O 之前，失败后不恢复 token。HIGH 永远不执行。
+
+凭证只存在于 infrastructure 私有对象内，绝不进入 repr、日志、异常、domain 或 receipt；plan token、DSN、用户名、密码、原始 SQL 与原始 EXPLAIN JSON 都不记录。数据库错误一律映射为稳定决定码，驱动异常文本不外泄。
+
+每次 EXPLAIN/execute 使用 `NullPool` 与 `echo=False` 的短生命周期 engine，并在 finally 中 `dispose()`；超时或取消后连接必须销毁，绝不复用。EXPLAIN 禁止 `ANALYZE`，执行 SQL 只能精确取自 `authorized.prepared.sql`。PostgreSQL 16 与 MySQL 8.4 都建立数据库只读事务，并使用服务端 + `asyncio.timeout()` 双层超时（客户端总时限 = `statement_timeout_ms + cancellation_grace_ms`）。MySQL 额外读取 `@@lower_case_table_names`，只有 `0` 放行，`1`/`2`/缺失返回 `UNSUPPORTED_IDENTIFIER_MODE`。结果逐行消费（禁止 `fetchall()`），未知类型不得调用 `repr()`/`str()`。
+
+真实数据库门禁（Docker 必须已启动，PostgreSQL 16 + MySQL 8.4 只绑定 `127.0.0.1`）：
+
+```powershell
+python scripts/test_analytics_databases.py --engine postgresql
+python scripts/test_analytics_databases.py --engine mysql
+python scripts/test_analytics_databases.py --engine all
+```
+
+`InMemoryExecutionPlanStore` 只在单进程内有效，不跨重启、不支持多 worker。Phase 2C 在把 plan/execute 暴露给 API 或 Agent 之前，必须提供基于应用持久化数据库的原子 claim 实现并补充多 worker 竞争测试；端口与领域契约不得依赖 dict 或 `asyncio.Lock`。
+
 ## 语言规范
 
 本模块新增或修改的注释、docstring、架构说明与复杂测试场景说明使用中文（见仓库级 `AGENTS.md`）。

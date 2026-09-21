@@ -40,6 +40,11 @@ dependencies = [
     "email-validator>=2.0.0",
     "e2b-code-interpreter>=2.8.1",
     "sqlglot==30.18.0",
+    # Phase 2B2 的受控数据源执行直接 import 这三个包，因此必须是根项目的直接依赖，
+    # 而不是依赖上游 harness 顺带提供的传递依赖。
+    "sqlalchemy[asyncio]>=2.0.49,<2.1",
+    "asyncpg>=0.31,<0.32",
+    "asyncmy>=0.2.14,<0.3",
 ]
 
 [project.optional-dependencies]

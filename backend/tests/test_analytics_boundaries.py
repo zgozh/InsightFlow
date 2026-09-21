@@ -2,18 +2,27 @@ import ast
 from pathlib import Path
 
 from app.analytics.application import AccessPolicyCatalog, QueryPolicy, SchemaCatalog, SemanticQueryAuthorizer
+from app.analytics.application.execution_ports import (
+    Clock,
+    DatasourceQueryGateway,
+    ExecutionPlanStore,
+    PlanTokenIssuer,
+)
 from app.analytics.application.ports import DatasourceCatalog, MetricCatalog
 
 ANALYTICS_ROOT = Path(__file__).parent.parent / "app" / "analytics"
-DOMAIN_ALLOWED_ROOTS = {"__future__", "dataclasses", "enum", "re"}
+DOMAIN_ALLOWED_ROOTS = {"__future__", "dataclasses", "datetime", "decimal", "enum", "math", "re"}
 APPLICATION_BANNED_PREFIXES = (
     "app.gateway",
     "deerflow",
     "fastapi",
     "langchain",
     "sqlalchemy",
+    "asyncpg",
+    "asyncmy",
     "sqlglot",
 )
+DATABASE_DRIVER_NAMES = ("sqlalchemy", "asyncpg", "asyncmy")
 
 
 def _imports(path: Path) -> list[tuple[int, str]]:
@@ -60,6 +69,31 @@ def test_authorization_ports_are_runtime_checkable_protocols():
     assert getattr(SchemaCatalog, "_is_runtime_protocol", False)
     assert getattr(AccessPolicyCatalog, "_is_runtime_protocol", False)
     assert getattr(SemanticQueryAuthorizer, "_is_runtime_protocol", False)
+
+
+def test_execution_ports_are_runtime_checkable_protocols():
+    assert getattr(DatasourceQueryGateway, "_is_runtime_protocol", False)
+    assert getattr(ExecutionPlanStore, "_is_runtime_protocol", False)
+    assert getattr(Clock, "_is_runtime_protocol", False)
+    assert getattr(PlanTokenIssuer, "_is_runtime_protocol", False)
+
+
+def test_database_drivers_never_appear_in_domain_or_application_sources():
+    # 原始文本扫描：AST 检查只能发现静态 import，字符串扫描还能拦住动态导入与手写方言分支。
+    violations: list[str] = []
+    for layer in ("domain", "application"):
+        for path in sorted((ANALYTICS_ROOT / layer).rglob("*.py")):
+            text = path.read_text(encoding="utf-8")
+            for name in DATABASE_DRIVER_NAMES:
+                if name in text:
+                    violations.append(f"{path.relative_to(ANALYTICS_ROOT)} mentions {name}")
+    assert not violations, "Database driver leakage outside infrastructure:\n" + "\n".join(violations)
+
+
+def test_infrastructure_actually_imports_the_database_drivers():
+    # 反向断言：避免上面的禁令因为路径写错而变成永远通过的空测试。
+    gateway = (ANALYTICS_ROOT / "infrastructure" / "database_runtime.py").read_text(encoding="utf-8")
+    assert "sqlalchemy" in gateway
 
 
 def test_analytics_infrastructure_does_not_depend_on_delivery_or_harness():

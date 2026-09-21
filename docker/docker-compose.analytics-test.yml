@@ -1,0 +1,126 @@
+# Phase 2B2 真实数据库门禁栈（PostgreSQL 16 + MySQL 8.4）。
+#
+# 为什么单独一份 compose，而不是并入默认栈：
+#
+# - 它只发布到 `127.0.0.1`，数据目录挂在 tmpfs 上：容器一销毁，测试数据、表结构与账号全部消失，
+#   不可能碰到开发或生产数据；`compose down` 后没有需要额外清理的具名卷。
+# - 超级用户只用于初始化（建库、建角色、造 fixture），被测连接一律使用普通用户或只读业务用户。
+#   用管理员账号跑被测查询会把权限问题掩盖成"通过"。
+# - 初始化 SQL 以 compose `configs.content` 内联，不落地任何凭证文件；这里的口令只是本机临时栈的
+#   测试口令，不是真实密钥。
+# - 只有显式运行 `scripts/test_analytics_databases.py` 才会启动它；普通单元测试不以 Docker 为前提。
+#
+# MySQL 必须跑 Linux 容器并以 `lower_case_table_names=0` 初始化：只有大小写敏感、按原样存储的语义才与
+# Phase 2B1 的精确标识符比对一致。
+
+name: insightflow-analytics-test
+
+configs:
+  postgresql_init:
+    content: |
+      CREATE ROLE analytics_tester LOGIN PASSWORD 'analytics_tester_pw';
+      CREATE ROLE analytics_reader LOGIN PASSWORD 'analytics_reader_pw';
+
+      CREATE TABLE public.orders (
+          id integer PRIMARY KEY,
+          customer text NOT NULL,
+          amount numeric(12, 2) NOT NULL,
+          created_at timestamptz NOT NULL DEFAULT now()
+      );
+      INSERT INTO public.orders (id, customer, amount)
+      SELECT g, 'customer-' || g, ((g % 100)::numeric) / 10
+      FROM generate_series(1, 5000) AS g;
+      ANALYZE public.orders;
+
+      GRANT CONNECT ON DATABASE analytics_test TO analytics_tester, analytics_reader;
+      GRANT USAGE ON SCHEMA public TO analytics_tester, analytics_reader;
+      -- tester 必须真的拥有写权限，否则"写入被只读事务拒绝"会被权限错误冒充。
+      GRANT SELECT, INSERT, UPDATE, DELETE ON public.orders TO analytics_tester;
+      GRANT SELECT ON public.orders TO analytics_reader;
+
+  mysql_init:
+    content: |
+      SET SESSION cte_max_recursion_depth = 20000;
+
+      CREATE USER 'analytics_reader'@'%' IDENTIFIED BY 'analytics_reader_pw';
+
+      CREATE TABLE analytics_test.orders (
+          id integer NOT NULL PRIMARY KEY,
+          customer varchar(64) NOT NULL,
+          amount decimal(12, 2) NOT NULL,
+          created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      INSERT INTO analytics_test.orders (id, customer, amount)
+      WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 5000)
+      SELECT n, CONCAT('customer-', n), (n % 100) / 10 FROM seq;
+      ANALYZE TABLE analytics_test.orders;
+
+      GRANT SELECT ON analytics_test.* TO 'analytics_reader'@'%';
+      FLUSH PRIVILEGES;
+
+services:
+  postgresql:
+    image: postgres:16
+    command:
+      - postgres
+      - -c
+      - fsync=off
+      - -c
+      - full_page_writes=off
+      - -c
+      - synchronous_commit=off
+      - -c
+      - max_connections=50
+    environment:
+      POSTGRES_DB: analytics_test
+      # 超级用户只在初始化阶段使用；被测查询走 analytics_tester / analytics_reader。
+      POSTGRES_USER: analytics_admin
+      POSTGRES_PASSWORD: analytics_admin_pw
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    ports:
+      - "127.0.0.1:${ANALYTICS_PG_PORT:-55432}:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    configs:
+      - source: postgresql_init
+        target: /docker-entrypoint-initdb.d/10-analytics-init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U analytics_admin -d analytics_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+      start_period: 10s
+    restart: "no"
+
+  mysql:
+    # 默认钉死 spec §10.2/§14 要求的 8.4。允许用 ANALYTICS_MYSQL_TAG 覆盖，是为了在无法拉取
+    # 新镜像的环境里复用已下载的同主版本镜像；被 2B2 依赖的行为（@@lower_case_table_names、
+    # START TRANSACTION READ ONLY、MAX_EXECUTION_TIME、EXPLAIN FORMAT=JSON v1、processlist）
+    # 在 8.0 与 8.4 上一致。任何非默认取值都必须在实施报告里作为偏差记录。
+    image: mysql:${ANALYTICS_MYSQL_TAG:-8.4}
+    # 显式声明大小写敏感语义：它必须在初始化时确定，启动后再改会被服务器拒绝。
+    command:
+      - mysqld
+      - --lower-case-table-names=0
+      - --max-connections=100
+      - --innodb-buffer-pool-size=134217728
+    environment:
+      MYSQL_ROOT_PASSWORD: analytics_root_pw
+      MYSQL_DATABASE: analytics_test
+      # 非管理员测试账号：只有 analytics_test 库内的权限，没有全局权限。
+      MYSQL_USER: analytics_tester
+      MYSQL_PASSWORD: analytics_tester_pw
+    ports:
+      - "127.0.0.1:${ANALYTICS_MYSQL_PORT:-53306}:3306"
+    tmpfs:
+      - /var/lib/mysql
+    configs:
+      - source: mysql_init
+        target: /docker-entrypoint-initdb.d/10-analytics-init.sql
+    healthcheck:
+      test: ["CMD", "mysql", "-h", "127.0.0.1", "-u", "analytics_tester", "-panalytics_tester_pw", "-D", "analytics_test", "-e", "SELECT 1"]
+      interval: 3s
+      timeout: 5s
+      retries: 60
+      start_period: 20s
+    restart: "no"
