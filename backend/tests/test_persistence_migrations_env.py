@@ -16,6 +16,7 @@ from __future__ import annotations
 import sqlalchemy as sa
 
 from deerflow.persistence.migrations._env_filters import (
+    APP_OWNED_TABLE_PREFIXES,
     LANGGRAPH_OWNED_TABLES,
     include_object,
 )
@@ -178,6 +179,56 @@ class TestExtensionOwnedTables:
 
         register_extension_table_prefix("acme_ext_")
         assert "acme_ext_" in EXTENSION_TABLE_PREFIXES
+
+
+class TestAppOwnedTables:
+    """App 侧 bounded context（analytics）与扩展共享同一个应用数据库，但各有迁移链。
+
+    与扩展前缀的区别：这里的排除集合是**固定常量**，不接受运行时注册 ——
+    `app.analytics` 的迁移目录与表前缀都是仓库内已知事实，把它做成可注册集合只会
+    多出一个"谁能改它"的攻击面。Harness 也绝不 import `app.analytics`。
+    """
+
+    def test_the_prefix_set_contains_only_the_analytics_prefix(self):
+        assert APP_OWNED_TABLE_PREFIXES == frozenset({"analytics_"})
+
+    def test_analytics_tables_are_excluded(self):
+        for name in ("analytics_datasources", "analytics_query_audits", "analytics_alembic_version"):
+            assert include_object(None, name, "table", True, None) is False
+
+    def test_analytics_indexes_and_constraints_are_excluded_with_their_table(self):
+        from types import SimpleNamespace
+
+        for type_ in ("index", "unique_constraint", "check_constraint", "foreign_key_constraint"):
+            owner = SimpleNamespace(table=SimpleNamespace(name="analytics_execution_plans"))
+            assert include_object(owner, "ix_analytics_execution_plans_expires_at", type_, True, None) is False
+
+    def test_a_similar_name_is_still_included(self):
+        # 控制组：前缀是 `analytics_`，不是 `analytic`，否则会把别人的表一起隐藏。
+        for name in ("analytic_events", "analytics", "audit_analytics_x"):
+            assert include_object(None, name, "table", True, None) is True
+
+    def test_host_tables_are_unaffected(self):
+        for name in ("runs", "threads_meta", "feedback", "users", "channel_connections"):
+            assert include_object(None, name, "table", True, None) is True
+
+    def test_langgraph_exclusion_still_applies(self):
+        assert include_object(None, "checkpoints", "table", True, None) is False
+
+    def test_include_object_does_not_import_the_app_package(self):
+        """过滤器必须靠固定前缀工作，不能在 Harness 里 import `app.analytics`。"""
+        import ast
+        from pathlib import Path
+
+        source = (Path(__file__).resolve().parents[1] / "packages/harness/deerflow/persistence/migrations/_env_filters.py").read_text(encoding="utf-8")
+        imported: set[str] = set()
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module)
+
+        assert not any(name.startswith("app.") for name in imported), imported
 
 
 _PREFIX_PROBE = """

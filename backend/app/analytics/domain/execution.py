@@ -21,6 +21,9 @@ class ExecutionDecisionCode(StrEnum):
     PLAN_CREATED = "plan_created"
     PLAN_UNAVAILABLE = "plan_unavailable"
     PLAN_STORE_UNAVAILABLE = "plan_store_unavailable"
+    # 审计是访问真实业务数据库前的门禁，因此它有自己的稳定决定码，而不是复用
+    # DATABASE_UNAVAILABLE：运维必须能区分"业务库连不上"和"审计写不进去"。
+    AUDIT_UNAVAILABLE = "audit_unavailable"
     AUTHORIZATION_STALE = "authorization_stale"
     DATASOURCE_UNAVAILABLE = "datasource_unavailable"
     SECRET_UNAVAILABLE = "secret_unavailable"

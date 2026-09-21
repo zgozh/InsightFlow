@@ -196,6 +196,11 @@ class _RecordingStore:
         self._put_error = put_error
         self.plans: list[StoredExecutionPlan] = []
         self.claims: list[dict] = []
+        self.revoked: list[str] = []
+
+    @property
+    def events(self):
+        return self._events
 
     async def put(self, plan):
         self._events.append("store:put")
@@ -210,6 +215,37 @@ class _RecordingStore:
 
     async def purge_expired(self, *, now):
         self._events.append("store:purge")
+
+    async def revoke(self, *, token_digest):
+        self._events.append("store:revoke")
+        self.revoked.append(token_digest)
+
+
+class _RecordingAuditLog:
+    """审计门禁替身：记录顺序、可注入 start/finish 失败。
+
+    `finish` 失败时不写入 `finished`，模拟"记录仍停留在 started"的保守状态。
+    """
+
+    def __init__(self, *, events, start_error=None, finish_error=None):
+        self._events = events
+        self._start_error = start_error
+        self._finish_error = finish_error
+        self.started: list = []
+        self.finished: list = []
+
+    async def start(self, entry):
+        self._events.append("audit:start")
+        if self._start_error is not None:
+            raise self._start_error
+        self.started.append(entry)
+        return f"audit-{len(self.started)}"
+
+    async def finish(self, completion):
+        self._events.append("audit:finish")
+        if self._finish_error is not None:
+            raise self._finish_error
+        self.finished.append(completion)
 
 
 class _FixedClock:
@@ -230,23 +266,25 @@ class _FixedTokenIssuer:
         return self._token
 
 
-def _create_use_case(*, catalog, authorizer, gateway, store, clock=None, issuer=None):
+def _create_use_case(*, catalog, authorizer, gateway, store, clock=None, issuer=None, audit_log=None):
     return CreateQueryExecutionPlan(
         datasource_catalog=catalog,
         authorize_prepared_query=authorizer,
         gateway=gateway,
         plan_store=store,
+        audit_log=audit_log or _RecordingAuditLog(events=store.events),
         clock=clock or _FixedClock(),
         token_issuer=issuer or _FixedTokenIssuer(),
     )
 
 
-def _execute_use_case(*, catalog, authorizer, gateway, store, clock=None):
+def _execute_use_case(*, catalog, authorizer, gateway, store, clock=None, audit_log=None):
     return ExecuteQueryPlan(
         datasource_catalog=catalog,
         authorize_prepared_query=authorizer,
         gateway=gateway,
         plan_store=store,
+        audit_log=audit_log or _RecordingAuditLog(events=store.events),
         clock=clock or _FixedClock(),
     )
 
@@ -282,12 +320,14 @@ async def test_create_plan_runs_the_documented_sequence():
 
     assert decision.code is ExecutionDecisionCode.PLAN_CREATED
     assert events == [
+        "audit:start",
         "datasource:first",
         "authorize:first",
         "explain",
         "datasource:second",
         "authorize:second",
         "store:put",
+        "audit:finish",
     ]
 
 
@@ -422,7 +462,8 @@ async def test_create_plan_returns_authorization_stale_when_the_datasource_chang
     decision = await use_case.execute(principal_id="user-1", datasource_id="ds-1", authorized=authorized, limits=_limits())
 
     assert decision.code is ExecutionDecisionCode.AUTHORIZATION_STALE
-    assert events[-1] == "datasource:second"
+    assert "datasource:second" in events
+    assert "store:put" not in events
 
 
 @pytest.mark.asyncio
@@ -589,7 +630,7 @@ async def test_execute_plan_claims_before_any_external_work():
     decision = await use_case.execute(principal_id="user-1", plan_id="raw-token")
 
     assert decision.code is ExecutionDecisionCode.EXECUTED
-    assert events == ["store:claim", "datasource:first", "authorize:first", "execute"]
+    assert events == ["store:claim", "audit:start", "datasource:first", "authorize:first", "execute", "audit:finish"]
 
 
 @pytest.mark.asyncio
@@ -764,6 +805,208 @@ async def test_execute_plan_maps_gateway_failures_and_never_restores_the_plan(co
     # claim 已经消费 token；失败不恢复，避免重放与重复成本。
     assert events.count("store:claim") == 1
     assert "store:put" not in events
+
+
+# --- 审计门禁 ---------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_plan_returns_audit_unavailable_and_never_touches_the_datasource():
+    events: list[str] = []
+    authorized = _authorized()
+    audit = _RecordingAuditLog(events=events, start_error=RuntimeError("audit store down"))
+    use_case = _create_use_case(
+        catalog=_RecordingCatalog(_datasource(), events=events),
+        authorizer=_RecordingAuthorizer(_allowed_decision(authorized), events=events),
+        gateway=_RecordingGateway(events=events),
+        store=_RecordingStore(events=events),
+        audit_log=audit,
+    )
+
+    decision = await use_case.execute(principal_id="user-1", datasource_id="ds-1", authorized=authorized, limits=_limits())
+
+    assert decision.code is ExecutionDecisionCode.AUDIT_UNAVAILABLE
+    assert decision.receipt is None
+    # 审计写不进去时，真实业务数据库调用次数必须为零。
+    assert events == ["audit:start"]
+
+
+@pytest.mark.asyncio
+async def test_create_plan_does_not_audit_purely_local_shape_rejections():
+    events: list[str] = []
+    audit = _RecordingAuditLog(events=events)
+    use_case = _create_use_case(
+        catalog=_RecordingCatalog(_datasource(), events=events),
+        authorizer=_RecordingAuthorizer(_allowed_decision(_authorized()), events=events),
+        gateway=_RecordingGateway(events=events),
+        store=_RecordingStore(events=events),
+        audit_log=audit,
+    )
+
+    decision = await use_case.execute(principal_id="user-2", datasource_id="ds-1", authorized=_authorized(), limits=_limits())
+
+    assert decision.code is ExecutionDecisionCode.AUTHORIZATION_STALE
+    assert events == [] and audit.started == []
+
+
+@pytest.mark.asyncio
+async def test_create_plan_revokes_the_token_when_the_audit_finish_fails():
+    events: list[str] = []
+    authorized = _authorized()
+    store = _RecordingStore(events=events)
+    audit = _RecordingAuditLog(events=events, finish_error=RuntimeError("audit store down"))
+    use_case = _create_use_case(
+        catalog=_RecordingCatalog(_datasource(), events=events),
+        authorizer=_RecordingAuthorizer(_allowed_decision(authorized), events=events),
+        gateway=_RecordingGateway(events=events),
+        store=store,
+        issuer=_FixedTokenIssuer("raw-token-value"),
+        audit_log=audit,
+    )
+
+    decision = await use_case.execute(principal_id="user-1", datasource_id="ds-1", authorized=authorized, limits=_limits())
+
+    assert decision.code is ExecutionDecisionCode.AUDIT_UNAVAILABLE
+    assert decision.receipt is None
+    import hashlib
+
+    assert store.revoked == [hashlib.sha256(b"raw-token-value").hexdigest()]
+    assert events[-1] == "store:revoke"
+
+
+@pytest.mark.asyncio
+async def test_create_plan_records_only_safe_audit_metadata():
+    events: list[str] = []
+    authorized = _authorized()
+    audit = _RecordingAuditLog(events=events)
+    use_case = _create_use_case(
+        catalog=_RecordingCatalog(_datasource(), events=events),
+        authorizer=_RecordingAuthorizer(_allowed_decision(authorized), events=events),
+        gateway=_RecordingGateway(events=events),
+        store=_RecordingStore(events=events),
+        issuer=_FixedTokenIssuer("raw-token-value"),
+        audit_log=audit,
+    )
+
+    await use_case.execute(principal_id="user-1", datasource_id="ds-1", authorized=authorized, limits=_limits())
+
+    started = audit.started[0]
+    finished = audit.finished[0]
+    assert started.query_hash == "a" * 64
+    assert started.schema_version == "s1" and started.policy_version == "p1"
+    assert (finished.estimated_rows, finished.engine_cost, finished.plan_digest) == (10, Decimal("12.5"), "b" * 64)
+    for value in (started, finished):
+        rendered = repr(value)
+        assert _SQL not in rendered
+        assert "raw-token-value" not in rendered
+        assert "env://" not in rendered
+        assert "d" * 64 not in rendered
+
+
+@pytest.mark.asyncio
+async def test_execute_plan_returns_audit_unavailable_and_keeps_the_token_consumed():
+    events: list[str] = []
+    plan = _stored_plan()
+    store = _RecordingStore(events=events, plan=plan)
+    audit = _RecordingAuditLog(events=events, start_error=RuntimeError("audit store down"))
+    use_case = _execute_use_case(
+        catalog=_RecordingCatalog(_datasource(), events=events),
+        authorizer=_RecordingAuthorizer(_allowed_decision(plan.authorized), events=events),
+        gateway=_RecordingGateway(events=events),
+        store=store,
+        audit_log=audit,
+    )
+
+    decision = await use_case.execute(principal_id="user-1", plan_id="raw-token")
+
+    assert decision.code is ExecutionDecisionCode.AUDIT_UNAVAILABLE
+    assert decision.result is None
+    # claim 已经消费 token 且不恢复；审计失败不得触碰业务数据库。
+    assert events == ["store:claim", "audit:start"]
+
+
+@pytest.mark.asyncio
+async def test_execute_plan_suppresses_the_result_when_the_audit_finish_fails():
+    events: list[str] = []
+    plan = _stored_plan()
+    audit = _RecordingAuditLog(events=events, finish_error=RuntimeError("audit store down"))
+    use_case = _execute_use_case(
+        catalog=_RecordingCatalog(_datasource(), events=events),
+        authorizer=_RecordingAuthorizer(_allowed_decision(plan.authorized), events=events),
+        gateway=_RecordingGateway(events=events),
+        store=_RecordingStore(events=events, plan=plan),
+        audit_log=audit,
+    )
+
+    decision = await use_case.execute(principal_id="user-1", plan_id="raw-token")
+
+    assert decision.code is ExecutionDecisionCode.AUDIT_UNAVAILABLE
+    assert decision.result is None
+    # finish 失败：记录停留在 started，审计替身里没有任何终态。
+    assert audit.finished == [] and len(audit.started) == 1
+
+
+@pytest.mark.asyncio
+async def test_execute_plan_audit_finish_carries_result_counts():
+    events: list[str] = []
+    plan = _stored_plan()
+    audit = _RecordingAuditLog(events=events)
+    use_case = _execute_use_case(
+        catalog=_RecordingCatalog(_datasource(), events=events),
+        authorizer=_RecordingAuthorizer(_allowed_decision(plan.authorized), events=events),
+        gateway=_RecordingGateway(events=events, result=_result(columns=("id",), rows=((1,), (2,)), row_count=2, byte_count=42)),
+        store=_RecordingStore(events=events, plan=plan),
+        audit_log=audit,
+    )
+
+    await use_case.execute(principal_id="user-1", plan_id="raw-token")
+
+    finished = audit.finished[0]
+    assert (finished.row_count, finished.byte_count, finished.truncated) == (2, 42, False)
+    assert finished.latency_ms == 0
+
+
+@pytest.mark.asyncio
+async def test_create_plan_propagates_cancellation_and_still_finishes_the_audit():
+    import asyncio
+
+    events: list[str] = []
+    authorized = _authorized()
+    audit = _RecordingAuditLog(events=events)
+    use_case = _create_use_case(
+        catalog=_RecordingCatalog(_datasource(), events=events),
+        authorizer=_RecordingAuthorizer(_allowed_decision(authorized), events=events),
+        gateway=_RecordingGateway(events=events, explain_error=asyncio.CancelledError()),
+        store=_RecordingStore(events=events),
+        audit_log=audit,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await use_case.execute(principal_id="user-1", datasource_id="ds-1", authorized=authorized, limits=_limits())
+
+    # 取消必须继续传播，但审计要尽力标记为稳定失败。
+    assert audit.finished and audit.finished[0].decision_code == ExecutionDecisionCode.DATABASE_UNAVAILABLE.value
+
+
+@pytest.mark.asyncio
+async def test_execute_plan_propagates_cancellation_and_never_returns_a_result():
+    import asyncio
+
+    events: list[str] = []
+    plan = _stored_plan()
+    audit = _RecordingAuditLog(events=events)
+    use_case = _execute_use_case(
+        catalog=_RecordingCatalog(_datasource(), events=events),
+        authorizer=_RecordingAuthorizer(_allowed_decision(plan.authorized), events=events),
+        gateway=_RecordingGateway(events=events, execute_error=asyncio.CancelledError()),
+        store=_RecordingStore(events=events, plan=plan),
+        audit_log=audit,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await use_case.execute(principal_id="user-1", plan_id="raw-token")
+
+    assert audit.finished and audit.finished[0].decision_code == ExecutionDecisionCode.DATABASE_UNAVAILABLE.value
 
 
 # --- 运行时端口契约 ---------------------------------------------------------

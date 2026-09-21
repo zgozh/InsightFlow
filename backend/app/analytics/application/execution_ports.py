@@ -102,6 +102,8 @@ class ExecutionPlanStore(Protocol):
 
     async def purge_expired(self, *, now: datetime) -> None: ...
 
+    async def revoke(self, *, token_digest: str) -> None: ...
+
 
 @runtime_checkable
 class Clock(Protocol):

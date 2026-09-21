@@ -44,6 +44,18 @@ LANGGRAPH_OWNED_TABLES: frozenset[str] = frozenset(
 EXTENSION_TABLE_PREFIXES: set[str] = set()
 
 
+#: Table-name prefixes owned by ``app.*`` bounded contexts that share the
+#: application database but keep their own MetaData and their own Alembic chain.
+#:
+#: Deliberately a fixed constant, not another runtime registry: the only entry is
+#: ``analytics_`` (see ``app/analytics/infrastructure/persistence/models.py``),
+#: which is a fact about this repository rather than an operator declaration.
+#: A second registry would only add another way to silence autogenerate, and the
+#: filter must keep working in an Alembic process that never imports App code —
+#: Harness must not import ``app.*`` in either direction.
+APP_OWNED_TABLE_PREFIXES: frozenset[str] = frozenset({"analytics_"})
+
+
 def _host_table_names() -> frozenset[str]:
     """Every table name the host itself owns.
 
@@ -145,17 +157,27 @@ def _is_extension_owned(name: object) -> bool:
     return isinstance(name, str) and any(name.startswith(prefix) for prefix in EXTENSION_TABLE_PREFIXES)
 
 
+def _is_app_owned(name: object) -> bool:
+    return isinstance(name, str) and any(name.startswith(prefix) for prefix in APP_OWNED_TABLE_PREFIXES)
+
+
+def _is_excluded_table(name: object) -> bool:
+    return name in LANGGRAPH_OWNED_TABLES or _is_extension_owned(name) or _is_app_owned(name)
+
+
 def include_object(object_, name, type_, reflected, compare_to):  # noqa: ARG001
-    """Returns False for any LangGraph-owned or extension-owned table, or for an
-    index/constraint whose parent table is one of those. Returns True otherwise.
+    """Returns False for any table the host does not own -- LangGraph checkpointer
+    tables, extension-owned tables, and ``app.*``-owned bounded-context tables --
+    or for an index/constraint whose parent table is one of those. Returns True
+    otherwise.
 
     Signature matches alembic's ``include_object`` callable contract:
     ``(object, name, type_, reflected, compare_to)``.
     """
-    if type_ == "table" and (name in LANGGRAPH_OWNED_TABLES or _is_extension_owned(name)):
+    if type_ == "table" and _is_excluded_table(name):
         return False
     parent_table = getattr(object_, "table", None)
     parent_name = getattr(parent_table, "name", None) if parent_table is not None else None
-    if parent_name is not None and (parent_name in LANGGRAPH_OWNED_TABLES or _is_extension_owned(parent_name)):
+    if parent_name is not None and _is_excluded_table(parent_name):
         return False
     return True

@@ -64,3 +64,9 @@ class InMemoryExecutionPlanStore:
     async def purge_expired(self, *, now: datetime) -> None:
         async with self._lock:
             self._purge_expired_locked(now)
+
+    async def revoke(self, *, token_digest: str) -> None:
+        """作废一个已签发但不可交付的 plan；幂等，与持久化实现语义一致。"""
+
+        async with self._lock:
+            self._plans.pop(token_digest, None)

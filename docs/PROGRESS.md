@@ -8,7 +8,7 @@ Baseline: DeerFlow `v2.1.0-rc0` (`769589e8daee14c2587a634b6b43bd96471a41a1`), im
 | --- | --- | --- | --- |
 | 0 Baseline and governance | Complete | `936758c`, `aa516bd`; architecture report; ADR 0001 | Phase 1 implementation |
 | 1 Analytics boundary | Complete | `53ed1f4`; focused/guidance/Ruff review PASS | Phase 2A implementation |
-| 2 Safe data access | In progress | 2A `8a11d0e`, `f2d35d3`; 2B1 `44f62c3` + Fix 01; 2B2 `3a65865` + Fix 01（MySQL 超时语义与验收镜像基线） | Phase 2B2 Fix 01 GPT 复验 |
+| 2 Safe data access | In progress | 2A `8a11d0e`, `f2d35d3`; 2B1 `44f62c3` + Fix 01; 2B2 `3a65865` + Fix 01（MySQL 超时语义与验收镜像基线）; 2C1 持久化控制面（App 自有迁移链、principal 隔离仓库、原子 plan store、审计门禁） | Phase 2C1 GPT 复验 |
 | 3 Agent workflow | Not started | — | Approved Phase 3 prompt |
 | 4 Product UI | Not started | — | Approved Phase 4 prompt |
 | 5 Capability removal | Not started | — | Approved deletion manifests |

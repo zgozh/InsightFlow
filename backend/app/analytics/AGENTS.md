@@ -6,7 +6,7 @@
 
 - `domain/`: standard library only; immutable business contracts and deterministic policies.
 - `application/`: use cases and ports; may import `domain/`, never delivery/runtime frameworks.
-- `infrastructure/`: real adapters. `sql_policy.py` and `semantic_authorizer.py` are the only modules allowed to import `sqlglot`; the rest arrives with MySQL/PostgreSQL/repository work in Phase 2B2/2C.
+- `infrastructure/`: real adapters. `sql_policy.py` and `semantic_authorizer.py` are the only modules allowed to import `sqlglot`; `datasource_secrets.py` / `database_runtime.py` / `mysql_runtime.py` / `postgresql_runtime.py` own credentials and drivers; `persistence/` may import SQLAlchemy and Alembic. Infrastructure never imports Harness (`deerflow.*`), `app.gateway`, FastAPI or LangChain.
 - `agent/`: added with real tools and immutable Agent definitions in Phase 3.
 - `api/`: added with real FastAPI routes in Phase 2C; routes call application use cases.
 
@@ -66,6 +66,36 @@ python scripts/test_analytics_databases.py --engine all
 ```
 
 `InMemoryExecutionPlanStore` 只在单进程内有效，不跨重启、不支持多 worker。Phase 2C 在把 plan/execute 暴露给 API 或 Agent 之前，必须提供基于应用持久化数据库的原子 claim 实现并补充多 worker 竞争测试；端口与领域契约不得依赖 dict 或 `asyncio.Lock`。
+
+## 持久化控制面（Phase 2C1）
+
+Analytics 拥有**自己的** SQLAlchemy `MetaData`（`AnalyticsBase`）与**自己的** Alembic 链，绝不注册进 Harness 的 `Base.metadata`：Harness 不得反向 import App，而依赖 import 副作用把 App 模型塞进 Host 的 `create_all()`，会让空库、autogenerate 与独立测试的表集合发生漂移。代价是 Host 的迁移过滤器必须显式排除固定前缀 `analytics_`（`migrations/_env_filters.py::APP_OWNED_TABLE_PREFIXES`，是常量而不是又一个运行时注册表）。两条链互不认识：
+
+- 版本表分离：Analytics 用 `analytics_alembic_version`，Harness 用 `alembic_version`；
+- Analytics 链**只** `upgrade head`，绝不 `create_all + stamp head`；未知 revision、空版本表、多版本行、有 `analytics_*` 表却无版本表一律拒绝启动（`bootstrap_analytics_schema`），绝不自动重 stamp；
+- PostgreSQL 用 Analytics 专用的固定 advisory lock（与 Harness 的 key 不同），SQLite 用每 engine 的 `asyncio.Lock` 加 30 秒 `busy_timeout`。注意 SQLite 的 `transactional_ddl` 为 `False`：Alembic 不会自己开启或提交迁移事务，**版本表写入必须由调用方提交**，否则会建出表却没有任何 revision 记录；
+- 迁移通过调用方注入的连接执行（`config.attributes["connection"]`）；生产 bootstrap 绝不由 DSN 另建 engine，否则 search path、事务与锁都会落到另一条会话上。
+
+权限仍然默认拒绝：owner 只决定管理归属，**owner 本身不获得查询权限**；`get_accessible()` 要求存在与 principal 精确匹配的 policy 行且数据源为 `active`，`None` 从不表示跨用户查询。schema/policy 的 `replace` 必须携带 `expected_version`：完全相等幂等、内容不同但版本相同拒绝、当前版本不等于 expected 拒绝；metric 是 exact-owner scope 且版本只能前进。
+
+plan 的持久化是**明确的短期执行状态例外**：`analytics_execution_plans` 保存 Phase 2A 重新序列化后的 canonical SQL 与 opaque `secret_ref`，payload 上限 1 MiB、TTL 上限 300 秒，`claim()` 时立即删除。原始 token 永不落库（只存 SHA-256），摘要也永不写日志；不得把这段 SQL 复制进日志、异常、receipt 或审计。
+
+`SqlExecutionPlanStore.claim()` 只用**一条** `DELETE ... RETURNING`：先删除，再在 adapter 内校验 principal、过期与 payload。错 principal、过期、已领取、损坏与未知 payload 版本都已经被消费并统一返回 `PLAN_UNAVAILABLE`，失败后绝不恢复 token。禁止 SELECT-then-DELETE、dict 替代与 `asyncio.Lock`。
+
+审计是**门禁**而不是尽力而为的日志：
+
+```text
+plan:    audit:start -> datasource -> authorize -> explain -> datasource -> authorize -> store:put -> audit:finish
+execute: store:claim -> audit:start -> datasource -> authorize -> gateway:execute -> audit:finish
+```
+
+- 审计 start 失败返回 `AUDIT_UNAVAILABLE`，并且不发起任何后续业务数据库调用；
+- plan 的 finish 失败必须 `revoke` 已插入的 plan 且绝不返回 token；
+- execute 的 finish 失败不返回查询结果，记录停留在 `started`——已经发生的外部查询无法用分布式事务回滚，`started` 就是"执行结果未知"的保守证据；
+- 取消继续传播 `CancelledError`，只在有界 shield 中尽力写终态；
+- 审计表结构本身不含 SQL、token/digest、secret ref、DSN、用户名/口令、驱动异常文本、原始 EXPLAIN 与结果值字段；`QueryAuditStart` / `QueryAuditCompletion` 也在领域边界拒绝这些内容进入。
+
+PostgreSQL 门禁额外跑 `tests/test_analytics_persistence_postgresql.py`：每个测试在独立临时 schema 中运行，schema 生命周期由初始化超级用户完成，**被测连接仍是普通用户 `analytics_tester`**；它证明真实 `DELETE ... RETURNING` 竞争、advisory lock 容量上限与 `FOR UPDATE` 替换冲突。
 
 ## 语言规范
 

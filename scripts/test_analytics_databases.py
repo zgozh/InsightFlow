@@ -26,22 +26,29 @@ _LOG_TAIL_LINES = 200
 _HEALTH_TIMEOUT_SECONDS = 300
 
 # 每个引擎对应的服务名、测试文件、门禁环境变量与两个账号。
+# postgresql 额外跑 Phase 2C1 的持久化控制面测试：它在独立临时 schema 里运行，schema 生命周期
+# 由初始化超级用户完成，被测连接仍是普通用户 analytics_tester。
 ENGINES = {
     "postgresql": {
         "service": "postgresql",
-        "test_file": "tests/test_analytics_postgresql_integration.py",
+        "test_files": (
+            "tests/test_analytics_postgresql_integration.py",
+            "tests/test_analytics_persistence_postgresql.py",
+        ),
         "gate_env": "ANALYTICS_TEST_POSTGRESQL",
         "port_env": "ANALYTICS_PG_PORT",
         "port_default": DEFAULT_POSTGRESQL_PORT,
         "database": "analytics_test",
         "credential_env": "ANALYTICS_TEST_PG_CREDENTIAL",
         "readonly_env": "ANALYTICS_TEST_PG_READONLY_CREDENTIAL",
+        "admin_credential_env": "ANALYTICS_TEST_PG_ADMIN_CREDENTIAL",
         "tester": ("analytics_tester", "analytics_tester_pw"),
         "reader": ("analytics_reader", "analytics_reader_pw"),
+        "admin": ("analytics_admin", "analytics_admin_pw"),
     },
     "mysql": {
         "service": "mysql",
-        "test_file": "tests/test_analytics_mysql_integration.py",
+        "test_files": ("tests/test_analytics_mysql_integration.py",),
         "gate_env": "ANALYTICS_TEST_MYSQL",
         "port_env": "ANALYTICS_MYSQL_PORT",
         "port_default": DEFAULT_MYSQL_PORT,
@@ -113,6 +120,10 @@ def _test_environment(engines: list[str]) -> dict[str, str]:
         environment[configuration["gate_env"]] = "1"
         environment[configuration["credential_env"]] = _credential_payload(name, port, configuration["database"], configuration["tester"])
         environment[configuration["readonly_env"]] = _credential_payload(name, port, configuration["database"], configuration["reader"])
+        # 持久化控制面测试需要建/删自己的临时 schema；管理员凭证只用于 schema 生命周期，
+        # 被测连接仍然只用上面那两个非管理员账号。
+        if "admin_credential_env" in configuration:
+            environment[configuration["admin_credential_env"]] = _credential_payload(name, port, configuration["database"], configuration["admin"])
     return environment
 
 
@@ -151,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
         status = _compose_capture("ps", "--format", "json")
         print(f"[gate] health:\n{(status.stdout or '').strip()}")
 
-        test_files = [ENGINES[name]["test_file"] for name in engines]
+        test_files = [path for name in engines for path in ENGINES[name]["test_files"]]
         command = ["uv", "run", "--locked", "pytest", *test_files, "-q"]
         print(f"[gate] running: {' '.join(command)} (cwd={BACKEND_DIR})")
         result = _run(command, cwd=str(BACKEND_DIR), env=_test_environment(engines))

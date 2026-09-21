@@ -171,6 +171,30 @@ async def test_store_purge_expired_is_public_and_idempotent():
     assert await store.claim(token_digest=_DIGEST, principal_id="user-1", now=_NOW) is None
 
 
+@pytest.mark.asyncio
+async def test_store_revoke_removes_the_plan_and_is_idempotent():
+    # revoke 是「审计 finish 失败必须作废已插入 plan」的实现前提，两种 store 语义一致。
+    store = _store()
+    await store.put(_plan())
+
+    await store.revoke(token_digest=_DIGEST)
+    await store.revoke(token_digest=_DIGEST)
+
+    assert await store.claim(token_digest=_DIGEST, principal_id="user-1", now=_NOW) is None
+
+
+@pytest.mark.asyncio
+async def test_store_revoke_leaves_other_plans_untouched():
+    store = _store()
+    await store.put(_plan(digest="a" * 64))
+    await store.put(_plan(digest="b" * 64))
+
+    await store.revoke(token_digest="a" * 64)
+
+    assert await store.claim(token_digest="a" * 64, principal_id="user-1", now=_NOW) is None
+    assert await store.claim(token_digest="b" * 64, principal_id="user-1", now=_NOW) is not None
+
+
 # --- 领取语义：统一不可用 ---------------------------------------------------
 
 
