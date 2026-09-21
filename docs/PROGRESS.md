@@ -7,12 +7,14 @@ Baseline: DeerFlow `v2.1.0-rc0` (`769589e8daee14c2587a634b6b43bd96471a41a1`), im
 | Phase | Status | Evidence | Next gate |
 | --- | --- | --- | --- |
 | 0 Baseline and governance | Complete | `936758c`, `aa516bd`; architecture report; ADR 0001 | Phase 1 implementation |
-| 1 Analytics boundary | In progress | Phase 1 plan; analytics domain/boundary tests | Phase 1 review |
-| 2 Safe data access | Not started | — | Approved Phase 2 prompt |
+| 1 Analytics boundary | Complete | `53ed1f4`; focused/guidance/Ruff review PASS | Phase 2A implementation |
+| 2 Safe data access | In progress | Phase 2A design; SQL policy tests | Phase 2A architecture review |
 | 3 Agent workflow | Not started | — | Approved Phase 3 prompt |
 | 4 Product UI | Not started | — | Approved Phase 4 prompt |
 | 5 Capability removal | Not started | — | Approved deletion manifests |
 | 6 Deployment and acceptance | Not started | — | Full acceptance evidence |
+
+Phase 2 is delivered in three independently reviewed slices: **2A** deterministic SQL policy core, **2B** governed datasource execution, and **2C** persistence and delivery. A slice is not complete until its own gates and review pass.
 
 Only one primary commit per phase; fixes use later small commits. A phase is never marked complete without its test commands, exit codes and key output recorded in the phase review artifact.
 
