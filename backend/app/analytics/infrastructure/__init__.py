@@ -1,3 +1,4 @@
+from app.analytics.infrastructure.database_runtime import SQLAlchemyDatasourceQueryGateway
 from app.analytics.infrastructure.execution_plan_store import InMemoryExecutionPlanStore, SecurePlanTokenIssuer, SystemClock
 from app.analytics.infrastructure.mysql_runtime import MySQLRuntime
 from app.analytics.infrastructure.persistence import (
@@ -20,6 +21,7 @@ __all__ = [
     "MySQLRuntime",
     "PostgreSQLRuntime",
     "SecurePlanTokenIssuer",
+    "SQLAlchemyDatasourceQueryGateway",
     "SqlAccessPolicyRepository",
     "SqlDatasourceRepository",
     "SqlExecutionPlanStore",

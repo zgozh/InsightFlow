@@ -1082,6 +1082,45 @@ The default GitHub API rate limits are quite restrictive. For frequent project r
 1. Uncomment the `GITHUB_TOKEN` line in the `.env` file and add your personal access token
 2. Restart the DeerFlow service to apply changes
 
+## Analytics governed query
+
+The `analytics:` block configures the authenticated analytics control plane (Phase 2C2).
+It is parsed strictly by `app.analytics.config.AnalyticsConfig` (`extra="forbid"`): unknown
+fields, a boolean where an integer is expected, or a `float` engine cost all fail Gateway
+startup. The parsed values are frozen at startup — changing them requires a restart.
+
+| Key | Default | Meaning |
+| --- | ---: | --- |
+| `enabled` | `true` | When false the control plane is not mounted and `/api/analytics` answers 503 |
+| `query_max_rows` | 1000 | Cap passed to Phase 2A; becomes the SQL `row_limit` when the query has no `LIMIT` |
+| `connect_timeout_ms` | 3000 | Datasource connect timeout |
+| `statement_timeout_ms` | 5000 | Server-side per-statement timeout |
+| `cancellation_grace_ms` | 500 | Extra client budget before the connection is destroyed |
+| `max_estimated_rows` | 100000 | `EXPLAIN` row estimate ceiling |
+| `max_engine_cost` | `"100000"` | Decimal **string** (or integer); floats are rejected |
+| `max_explain_bytes` | 1048576 | Raw EXPLAIN document ceiling |
+| `max_result_columns` | 128 | Result column ceiling |
+| `max_result_rows` | 1000 | Transport row ceiling; must not exceed `query_max_rows` |
+| `max_result_bytes` | 1048576 | Transport byte ceiling |
+| `plan_ttl_seconds` | 60 | One-shot plan lifetime (max 300) |
+| `audit_page_size` | 50 | Default audit page size; server hard cap is 100 |
+
+Two constraints matter operationally:
+
+- `max_result_rows` must not exceed `query_max_rows`, and both must stay at or below 10,000.
+- `CreateQueryExecutionPlan` requires `max_result_rows` to be **no larger than the query's own
+  effective `row_limit`** (the Phase 2B2 invariant: the transport layer must not be allowed to
+  read more rows than the authorization granted). A query carrying a smaller `LIMIT` is therefore
+  denied with `authorization_stale`, so keep `max_result_rows` at or below the smallest `LIMIT`
+  users are expected to write.
+
+`database.backend: memory` disables the whole block: no Analytics migration runs, every
+`/api/analytics` route answers 503, and the durable plan store is never replaced by an
+in-memory one. Datasources only ever store an opaque `secret_ref` such as
+`env://ANALYTICS_DS`, pointing at a restricted JSON environment variable
+(`engine`, `host`, `port`, `database`, `username`, `password`, optional `tls_mode` / `ca_pem`);
+`tls_mode: disable` is only accepted for loopback hosts.
+
 ## Environment Variables
 
 DeerFlow supports environment variable substitution using the `$` prefix:

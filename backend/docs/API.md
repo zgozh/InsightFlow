@@ -1200,6 +1200,56 @@ GET /api/threads/{thread_id}/artifacts/{path}
 
 ---
 
+## Analytics API
+
+Authenticated governed query delivery, mounted at `/api/analytics`. Every route uses the
+Gateway's existing authentication; admin routes additionally require `system_role: admin`,
+and a personal access token never carries admin capability.
+
+Client-submitted data is deliberately tiny — `{datasource_id, sql}` or `{plan_id}`. `sql` and
+`plan_id` are secret-typed and never echoed back: a validation error under this prefix returns
+`{"detail": {"code": "invalid_analytics_request"}}` instead of Pydantic's raw input. `principal_id`,
+`owner_id`, execution limits, prepared/authorized objects, schema/policy versions and credentials
+are all rejected with 422.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/datasources` | Datasources this principal may query (no owner, no `secret_ref`) |
+| GET | `/metrics` | Metrics owned by this principal |
+| POST | `/query-plans` | Body `{datasource_id, sql}`; returns a stable `code`, plus a one-shot `plan_id` on success |
+| POST | `/query-executions` | Body `{plan_id}`; returns a stable `code` and a bounded result |
+| GET | `/audits` | This principal's audit page (`limit`, `before_started_at`, `before_id`) |
+| GET/POST | `/admin/datasources` | List / create owned datasources (IDs are server-generated) |
+| GET/PUT | `/admin/datasources/{id}` | Read / replace an owned datasource |
+| GET/PUT | `/admin/datasources/{id}/schema` | Read / replace the schema snapshot (`expected_version` required) |
+| GET/PUT/DELETE | `/admin/datasources/{id}/policies/{principal_id}` | Exact-principal access policy |
+| GET/POST | `/admin/metrics` | List / create owner-scoped metrics |
+| GET/PUT/DELETE | `/admin/metrics/{key}` | Read / advance / retire a metric |
+| GET | `/admin/audits` | Audit page for one exact `principal_id` (required; `*` is not a wildcard) |
+
+Two-step query flow:
+
+```bash
+# 1) plan: raw SQL in, one-shot token out
+curl -X POST http://localhost:2026/api/analytics/query-plans \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"datasource_id": "<id>", "sql": "SELECT id, amount FROM public.orders LIMIT 50"}'
+# -> {"code": "plan_created", "plan_id": "...", "expires_at": "...", "estimated_rows": 420, ...}
+
+# 2) execute: the token is consumed atomically, once
+curl -X POST http://localhost:2026/api/analytics/query-executions \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"plan_id": "..."}'
+# -> {"code": "executed", "result": {"columns": [...], "rows": [...], "row_count": 50, ...}}
+```
+
+Status mapping: 401 unauthenticated, 403 non-admin on `/admin/*`, 503 when the control plane is
+disabled, unmounted, or running on `database.backend: memory`, 404 for a missing or not-owned
+resource, 409 for a version conflict, 422 for a rejected body, and 200 with a stable `code`
+(`unsupported_statement`, `relation_not_allowed`, `approval_required`, `cost_limit_exceeded`,
+`plan_unavailable`, `authorization_stale`, `audit_unavailable`, …) for ordinary policy,
+authorization, plan and execute denials. `HIGH` risk is always denied — there is no approval API.
+
 ## Error Responses
 
 All APIs return errors in a consistent format:

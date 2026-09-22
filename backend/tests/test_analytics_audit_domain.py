@@ -24,6 +24,7 @@ from app.analytics.application.persistence_ports import (
     PersistenceConflictError,
     PersistenceDataError,
     QueryAuditLog,
+    QueryAuditReader,
     SchemaSnapshotRepository,
 )
 from app.analytics.domain import (
@@ -287,6 +288,9 @@ def test_a_conforming_audit_log_satisfies_the_port():
         async def finish(self, completion):
             return None
 
+        async def list_for_principal(self, *, principal_id, limit, before_started_at=None, before_id=None):
+            return ()
+
     assert isinstance(_Log(), QueryAuditLog)
 
 
@@ -295,7 +299,29 @@ def test_audit_log_rejects_an_object_without_finish():
         async def start(self, entry):
             return "audit-1"
 
+        async def list_for_principal(self, *, principal_id, limit, before_started_at=None, before_id=None):
+            return ()
+
     assert not isinstance(_Half(), QueryAuditLog)
+
+
+def test_audit_log_rejects_an_object_without_the_read_port():
+    """Phase 2C2 把只读分页并入审计端口：写入能力齐备但没有读取方法的对象不再满足协议。"""
+
+    class _WriteOnly:
+        async def start(self, entry):
+            return "audit-1"
+
+        async def finish(self, completion):
+            return None
+
+    assert not isinstance(_WriteOnly(), QueryAuditLog)
+
+
+def test_the_read_only_audit_port_is_separate_and_runtime_checkable():
+    assert getattr(QueryAuditReader, "_is_runtime_protocol", False)
+    assert "list_for_principal" in QueryAuditReader.__dict__
+    assert "start" not in QueryAuditReader.__dict__
 
 
 def test_plan_store_port_declares_revoke():

@@ -1,5 +1,5 @@
 from app.analytics.domain.access_policy import ColumnAccess, ColumnAccessRule, PrincipalAccessPolicy, RelationAccessRule
-from app.analytics.domain.audit import QueryAuditCompletion, QueryAuditPhase, QueryAuditStart, QueryAuditStatus
+from app.analytics.domain.audit import QueryAuditCompletion, QueryAuditPhase, QueryAuditRecord, QueryAuditStart, QueryAuditStatus
 from app.analytics.domain.authorization import AuthorizationDecisionCode, AuthorizedQuerySpec, QueryAuthorizationDecision
 from app.analytics.domain.datasource import DatasourceDefinition, DatasourceEngine, DatasourceStatus
 from app.analytics.domain.execution import (
@@ -44,6 +44,7 @@ __all__ = [
     "QueryAuthorizationDecision",
     "QueryAuditCompletion",
     "QueryAuditPhase",
+    "QueryAuditRecord",
     "QueryAuditStart",
     "QueryAuditStatus",
     "QueryCostEstimate",

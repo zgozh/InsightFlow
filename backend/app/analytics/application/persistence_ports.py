@@ -10,6 +10,7 @@
 在 Phase 2B1 已定义；这里的写侧端口显式继承它们，保证同一次注入同时满足读写两侧。
 """
 
+from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from app.analytics.application.authorization import AccessPolicyCatalog, SchemaCatalog
@@ -19,6 +20,7 @@ from app.analytics.domain import (
     MetricDefinition,
     PrincipalAccessPolicy,
     QueryAuditCompletion,
+    QueryAuditRecord,
     QueryAuditStart,
     SchemaSnapshot,
 )
@@ -78,7 +80,24 @@ class MetricRepository(MetricCatalog, Protocol):
 
 
 @runtime_checkable
-class QueryAuditLog(Protocol):
+class QueryAuditReader(Protocol):
+    """只读审计端口：按 principal 精确过滤的 `(started_at, id)` keyset 分页。
+
+    没有"全部租户"的读法：跨用户列表只能由调用方对每个 principal 单独查询。
+    """
+
+    async def list_for_principal(
+        self,
+        *,
+        principal_id: str,
+        limit: int,
+        before_started_at: datetime | None = None,
+        before_id: str | None = None,
+    ) -> tuple[QueryAuditRecord, ...]: ...
+
+
+@runtime_checkable
+class QueryAuditLog(QueryAuditReader, Protocol):
     """审计门禁端口：`start` 返回审计 ID，`finish` 只更新一条 `started` 记录。"""
 
     async def start(self, entry: QueryAuditStart) -> str: ...

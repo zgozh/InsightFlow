@@ -7,6 +7,9 @@ from deerflow_extension_api import EXTENSION_PRINCIPAL_RESOLVER_KEY, ExtensionPr
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.analytics.api import install_request_error_handler
+from app.analytics.api import router as analytics_router
+from app.analytics.composition import build_analytics_services
 from app.gateway.auth_disabled import AUTH_SOURCE_INTERNAL, AUTH_SOURCE_PAT, warn_if_auth_disabled_enabled
 from app.gateway.auth_middleware import AuthMiddleware
 from app.gateway.browser_capability import ensure_browser_runtime_available
@@ -50,6 +53,7 @@ from app.gateway.routers import (
 from app.gateway.trace_middleware import TraceMiddleware
 from deerflow.config import app_config as deerflow_app_config
 from deerflow.logging_config import DEFAULT_LOG_DATE_FORMAT, DEFAULT_LOG_FORMAT, configure_logging
+from deerflow.persistence.engine import get_engine, get_session_factory
 from deerflow.tracing.monocle import setup_monocle_tracing_if_enabled
 from deerflow.uploads.manager import cleanup_stale_upload_staging_files
 
@@ -378,294 +382,308 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     async with langgraph_runtime(app, startup_config):
         logger.info("LangGraph runtime initialised")
 
-        # Check admin bootstrap state and migrate orphan threads after admin exists.
-        # Must run AFTER langgraph_runtime so app.state.store is available for thread migration
-        await _ensure_admin_user(app)
-
-        # Phase-2 trash tier (§8.3): one retention sweep at startup, beside
-        # the lazy trigger on the trash listing — no daemon, no scheduler.
-        # Runs after langgraph_runtime so app.state.project_document_repo is
-        # available. The per-user reconciliation walks every row and file, so
-        # it is scheduled as a background task: gateway readiness never waits
-        # on it, a failure is logged by the task itself, and shutdown awaits
-        # the in-flight sweep (bounded, cancelled on overrun) before the
-        # runtime is torn down.
-        app.state.startup_trash_sweep_task = asyncio.create_task(_run_startup_trash_sweep(app, startup_config))
-
+        # Analytics 控制面：在共享应用数据库就绪之后、Gateway ready 之前装配。
+        # 它复用 Harness 已经建立的 engine/session factory，不建第二个控制面数据库；
+        # enabled=false 或 database.backend=memory 时保持 None，Analytics API 稳定 503。
         try:
-            from app.gateway.services import launch_scheduled_thread_run
-            from app.scheduler import ScheduledTaskService
+            app.state.analytics_services = await build_analytics_services(
+                config=startup_config,
+                engine=get_engine(),
+                session_factory=get_session_factory(),
+                backend=startup_config.database.backend,
+            )
 
-            if getattr(app.state, "scheduled_task_repo", None) is not None and getattr(app.state, "scheduled_task_run_repo", None) is not None:
-                scheduled_task_service = ScheduledTaskService(
-                    task_repo=app.state.scheduled_task_repo,
-                    task_run_repo=app.state.scheduled_task_run_repo,
-                    launch_run=lambda **kwargs: launch_scheduled_thread_run(app=app, **kwargs),
-                    poll_interval_seconds=startup_config.scheduler.poll_interval_seconds,
-                    lease_seconds=startup_config.scheduler.lease_seconds,
-                    max_concurrent_runs=startup_config.scheduler.max_concurrent_runs,
-                    queue_timeout_seconds=startup_config.scheduler.queue_timeout_seconds,
-                    multi_instance=startup_config.scheduler.multi_instance,
-                    run_lease_grace_seconds=startup_config.run_ownership.grace_seconds,
-                )
-                app.state.scheduled_task_service = scheduled_task_service
+            # Check admin bootstrap state and migrate orphan threads after admin exists.
+            # Must run AFTER langgraph_runtime so app.state.store is available for thread migration
+            await _ensure_admin_user(app)
+
+            # Phase-2 trash tier (§8.3): one retention sweep at startup, beside
+            # the lazy trigger on the trash listing — no daemon, no scheduler.
+            # Runs after langgraph_runtime so app.state.project_document_repo is
+            # available. The per-user reconciliation walks every row and file, so
+            # it is scheduled as a background task: gateway readiness never waits
+            # on it, a failure is logged by the task itself, and shutdown awaits
+            # the in-flight sweep (bounded, cancelled on overrun) before the
+            # runtime is torn down.
+            app.state.startup_trash_sweep_task = asyncio.create_task(_run_startup_trash_sweep(app, startup_config))
+
+            try:
+                from app.gateway.services import launch_scheduled_thread_run
+                from app.scheduler import ScheduledTaskService
+
+                if getattr(app.state, "scheduled_task_repo", None) is not None and getattr(app.state, "scheduled_task_run_repo", None) is not None:
+                    scheduled_task_service = ScheduledTaskService(
+                        task_repo=app.state.scheduled_task_repo,
+                        task_run_repo=app.state.scheduled_task_run_repo,
+                        launch_run=lambda **kwargs: launch_scheduled_thread_run(app=app, **kwargs),
+                        poll_interval_seconds=startup_config.scheduler.poll_interval_seconds,
+                        lease_seconds=startup_config.scheduler.lease_seconds,
+                        max_concurrent_runs=startup_config.scheduler.max_concurrent_runs,
+                        queue_timeout_seconds=startup_config.scheduler.queue_timeout_seconds,
+                        multi_instance=startup_config.scheduler.multi_instance,
+                        run_lease_grace_seconds=startup_config.run_ownership.grace_seconds,
+                    )
+                    app.state.scheduled_task_service = scheduled_task_service
+                    if startup_config.scheduler.enabled:
+                        await scheduled_task_service.start()
+            except Exception:
+                logger.exception("Failed to initialize scheduled task service")
+                # If an enabled scheduler rejects start(), keep that rejection as a
+                # lifespan failure instead of exposing a half-started service.
                 if startup_config.scheduler.enabled:
-                    await scheduled_task_service.start()
-        except Exception:
-            logger.exception("Failed to initialize scheduled task service")
-            # If an enabled scheduler rejects start(), keep that rejection as a
-            # lifespan failure instead of exposing a half-started service.
-            if startup_config.scheduler.enabled:
-                raise
+                    raise
 
-        # Start IM channel service only after scheduler recovery succeeds, so a
-        # fail-closed scheduler startup cannot strand channel-owned tasks before
-        # the lifespan reaches its normal shutdown boundary.
-        try:
-            from app.channels.service import start_channel_service
+            # Start IM channel service only after scheduler recovery succeeds, so a
+            # fail-closed scheduler startup cannot strand channel-owned tasks before
+            # the lifespan reaches its normal shutdown boundary.
+            try:
+                from app.channels.service import start_channel_service
 
-            # Closure over `app` (mirrors ScheduledTaskService's `launch_run`
-            # above) rather than resolving `app.state.stream_bridge` here
-            # directly: `stream_bridge` is a STARTUP_ONLY_FIELDS singleton set
-            # once, above, by `langgraph_runtime(app, startup_config)`, so
-            # either shape is safe by construction — the closure is just the
-            # more defensive/consistent-with-precedent form, and it is what
-            # ChannelManager's follow-up-drain watcher (issue #4121 Slice 2)
-            # uses to reach the same StreamBridge every other run consumer
-            # goes through `get_stream_bridge(request)` for.
-            channel_service = await start_channel_service(
-                startup_config,
-                get_stream_bridge=lambda: getattr(app.state, "stream_bridge", None),
-            )
-            logger.info("Channel service started: %s", channel_service.get_status())
-        except Exception:
-            logger.exception("No IM channels configured or channel service failed to start")
-
-        from app.gateway.services import launch_mcp_task_notification_run
-        from app.mcp_tasks import McpTaskService
-        from deerflow.config.extensions_config import ExtensionsConfig
-        from deerflow.config.mcp_tasks_config import McpTasksConfig
-        from deerflow.mcp.task_tool_caller import McpTaskToolCaller
-        from deerflow.mcp.tasks import (
-            ORDINARY_MCP_TASK_DRIVER,
-            McpTaskDriverRegistry,
-            OrdinaryMcpTaskDriver,
-        )
-        from deerflow.mcp.tasks.runtime import (
-            configured_task_toolset_count,
-            set_mcp_task_config_snapshot,
-            set_mcp_task_submitter,
-            validate_mcp_task_runtime_configuration,
-        )
-
-        task_extensions_config = ExtensionsConfig.from_file()
-        mcp_tasks_config = getattr(startup_config, "mcp_tasks", McpTasksConfig())
-        mcp_task_repo = getattr(app.state, "mcp_task_repo", None)
-        app.state.mcp_tasks_available = False
-        set_mcp_task_submitter(None)
-        set_mcp_task_config_snapshot(task_extensions_config)
-        validate_mcp_task_runtime_configuration(
-            mcp_tasks_config=mcp_tasks_config,
-            extensions_config=task_extensions_config,
-            repository_available=mcp_task_repo is not None,
-        )
-        if mcp_task_repo is not None:
-            mcp_task_drivers = McpTaskDriverRegistry()
-            if configured_task_toolset_count(task_extensions_config):
-                mcp_task_drivers.register(
-                    ORDINARY_MCP_TASK_DRIVER,
-                    OrdinaryMcpTaskDriver(McpTaskToolCaller(task_extensions_config)),
+                # Closure over `app` (mirrors ScheduledTaskService's `launch_run`
+                # above) rather than resolving `app.state.stream_bridge` here
+                # directly: `stream_bridge` is a STARTUP_ONLY_FIELDS singleton set
+                # once, above, by `langgraph_runtime(app, startup_config)`, so
+                # either shape is safe by construction — the closure is just the
+                # more defensive/consistent-with-precedent form, and it is what
+                # ChannelManager's follow-up-drain watcher (issue #4121 Slice 2)
+                # uses to reach the same StreamBridge every other run consumer
+                # goes through `get_stream_bridge(request)` for.
+                channel_service = await start_channel_service(
+                    startup_config,
+                    get_stream_bridge=lambda: getattr(app.state, "stream_bridge", None),
                 )
-            mcp_task_service = McpTaskService(
-                repository=mcp_task_repo,
-                drivers=mcp_task_drivers,
-                poll_interval_seconds=mcp_tasks_config.poll_interval_seconds,
-                lease_seconds=mcp_tasks_config.lease_seconds,
-                max_concurrent_polls=mcp_tasks_config.max_concurrent_polls,
-                max_poll_backoff_seconds=mcp_tasks_config.max_poll_backoff_seconds,
-                input_required_poll_interval_seconds=mcp_tasks_config.input_required_poll_interval_seconds,
-                tracking_degraded_after_errors=mcp_tasks_config.tracking_degraded_after_errors,
-                max_result_bytes=mcp_tasks_config.max_result_bytes,
-                result_preview_max_chars=mcp_tasks_config.result_preview_max_chars,
-                launch_notification=lambda **kwargs: launch_mcp_task_notification_run(app=app, **kwargs),
-                get_run=lambda run_id, **kwargs: app.state.run_manager.get(
-                    run_id,
-                    raise_on_store_error=True,
-                    **kwargs,
-                ),
-            )
-            app.state.mcp_task_drivers = mcp_task_drivers
-            app.state.mcp_task_service = mcp_task_service
-            if mcp_tasks_config.enabled:
-                await mcp_task_service.start()
-                set_mcp_task_submitter(mcp_task_service)
-                app.state.mcp_tasks_available = True
-
-        from app.subagent_batches import SubagentBatchService
-        from deerflow.subagents.batch_runtime import set_subagent_batch_submitter
-
-        batch_repo = getattr(app.state, "subagent_batch_repo", None)
-        app.state.subagent_batches_available = False
-        set_subagent_batch_submitter(None)
-        if subagent_batches_config.enabled and batch_repo is None:
-            raise RuntimeError("subagent_batches.enabled requires database.backend sqlite or postgres")
-        if batch_repo is not None:
-            batch_service = SubagentBatchService(
-                repository=batch_repo,
-                config=subagent_batches_config,
-                runtime_config=subagent_runtime_config,
-            )
-            app.state.subagent_batch_service = batch_service
-            if subagent_batches_config.enabled:
-                await batch_service.start()
-                set_subagent_batch_submitter(batch_service)
-                app.state.subagent_batches_available = True
-
-        yield
-
-        await _shutdown_startup_trash_sweep(app)
-
-        try:
-            await auth.close_oidc_service()
-        except Exception:
-            logger.exception("Failed to close OIDC service")
-
-        # Stop channel service on shutdown (bounded to prevent worker hang)
-        try:
-            from app.channels.service import stop_channel_service
-
-            await asyncio.wait_for(
-                stop_channel_service(),
-                timeout=_SHUTDOWN_HOOK_TIMEOUT_SECONDS,
-            )
-        except TimeoutError:
-            logger.warning(
-                "Channel service shutdown exceeded %.1fs; proceeding with worker exit.",
-                _SHUTDOWN_HOOK_TIMEOUT_SECONDS,
-            )
-        except Exception:
-            logger.exception("Failed to stop channel service")
-
-        if getattr(app.state, "scheduled_task_service", None) is not None:
-            try:
-                await app.state.scheduled_task_service.stop()
+                logger.info("Channel service started: %s", channel_service.get_status())
             except Exception:
-                logger.exception("Failed to stop scheduled task service")
+                logger.exception("No IM channels configured or channel service failed to start")
 
-        if getattr(app.state, "mcp_task_service", None) is not None:
+            from app.gateway.services import launch_mcp_task_notification_run
+            from app.mcp_tasks import McpTaskService
+            from deerflow.config.extensions_config import ExtensionsConfig
+            from deerflow.config.mcp_tasks_config import McpTasksConfig
+            from deerflow.mcp.task_tool_caller import McpTaskToolCaller
+            from deerflow.mcp.tasks import (
+                ORDINARY_MCP_TASK_DRIVER,
+                McpTaskDriverRegistry,
+                OrdinaryMcpTaskDriver,
+            )
+            from deerflow.mcp.tasks.runtime import (
+                configured_task_toolset_count,
+                set_mcp_task_config_snapshot,
+                set_mcp_task_submitter,
+                validate_mcp_task_runtime_configuration,
+            )
+
+            task_extensions_config = ExtensionsConfig.from_file()
+            mcp_tasks_config = getattr(startup_config, "mcp_tasks", McpTasksConfig())
+            mcp_task_repo = getattr(app.state, "mcp_task_repo", None)
             app.state.mcp_tasks_available = False
-            try:
-                await app.state.mcp_task_service.stop()
-            except Exception:
-                logger.exception("Failed to stop MCP task service")
-            finally:
-                from deerflow.mcp.tasks.runtime import set_mcp_task_submitter
-
-                set_mcp_task_submitter(None)
-        from deerflow.mcp.tasks.runtime import set_mcp_task_config_snapshot
-
-        set_mcp_task_config_snapshot(None)
-
-        if getattr(app.state, "subagent_batch_service", None) is not None:
-            app.state.subagent_batches_available = False
-            try:
-                await app.state.subagent_batch_service.stop()
-            except Exception:
-                logger.exception("Failed to stop subagent batch service")
-            finally:
-                from deerflow.subagents.batch_runtime import set_subagent_batch_submitter
-
-                set_subagent_batch_submitter(None)
-
-        try:
-            from deerflow.community.browser_automation import get_browser_session_manager
-
-            closed = await asyncio.wait_for(
-                get_browser_session_manager().close_all_sessions(),
-                timeout=_SHUTDOWN_HOOK_TIMEOUT_SECONDS,
+            set_mcp_task_submitter(None)
+            set_mcp_task_config_snapshot(task_extensions_config)
+            validate_mcp_task_runtime_configuration(
+                mcp_tasks_config=mcp_tasks_config,
+                extensions_config=task_extensions_config,
+                repository_available=mcp_task_repo is not None,
             )
-            if closed:
-                logger.info("Closed %d browser session(s)", closed)
-        except TimeoutError:
-            logger.warning(
-                "Browser session shutdown exceeded %.1fs; proceeding with worker exit.",
-                _SHUTDOWN_HOOK_TIMEOUT_SECONDS,
-            )
-        except Exception:
-            logger.exception("Failed to close browser sessions")
-
-        # Drain the memory backend's pending-update buffer before the worker
-        # exits (best-effort, bounded). IM channels and the scheduler are
-        # already stopped above, so no new IM/scheduler updates arrive during
-        # the drain; the LangGraph runtime / in-flight HTTP requests can still
-        # complete memory enqueues in a narrow window, but anything added after
-        # the drain copies the buffer only resets the debounce Timer
-        # (best-effort, same as today).
-        #
-        # No host-level pending/processing guard: ``shutdown_flush``
-        # short-circuits on a truly idle buffer (returns True immediately), so
-        # calling it unconditionally is cheap and keeps the in-flight-worker
-        # race entirely inside the backend (where the buffer lives) -- the host
-        # cannot "forget" that case the way a ``pending_count > 0``-only guard
-        # would (review #6 on the original PR).
-        #
-        # K8s caveat: ``shutdown_flush_timeout_seconds`` must fit inside the
-        # pod's ``terminationGracePeriodSeconds`` (channel stop + browser
-        # session close + the brief retrieval-warm wait + this drain + buffer),
-        # set on the gateway Helm deployment -- or K8s SIGKILLs the drain
-        # mid-flight and the loss this is fixing is silently re-introduced.
-        # The retrieval index is derived from canonical memory files, so its
-        # wait is independently capped and never consumes the flush budget.
-        retrieval_warm_finished = True
-        if retrieval_warm_task is not None and not retrieval_warm_task.done():
-            try:
-                await asyncio.wait_for(
-                    asyncio.shield(retrieval_warm_task),
-                    timeout=min(
-                        _RETRIEVAL_WARM_SHUTDOWN_TIMEOUT_SECONDS,
-                        startup_config.memory.shutdown_flush_timeout_seconds,
+            if mcp_task_repo is not None:
+                mcp_task_drivers = McpTaskDriverRegistry()
+                if configured_task_toolset_count(task_extensions_config):
+                    mcp_task_drivers.register(
+                        ORDINARY_MCP_TASK_DRIVER,
+                        OrdinaryMcpTaskDriver(McpTaskToolCaller(task_extensions_config)),
+                    )
+                mcp_task_service = McpTaskService(
+                    repository=mcp_task_repo,
+                    drivers=mcp_task_drivers,
+                    poll_interval_seconds=mcp_tasks_config.poll_interval_seconds,
+                    lease_seconds=mcp_tasks_config.lease_seconds,
+                    max_concurrent_polls=mcp_tasks_config.max_concurrent_polls,
+                    max_poll_backoff_seconds=mcp_tasks_config.max_poll_backoff_seconds,
+                    input_required_poll_interval_seconds=mcp_tasks_config.input_required_poll_interval_seconds,
+                    tracking_degraded_after_errors=mcp_tasks_config.tracking_degraded_after_errors,
+                    max_result_bytes=mcp_tasks_config.max_result_bytes,
+                    result_preview_max_chars=mcp_tasks_config.result_preview_max_chars,
+                    launch_notification=lambda **kwargs: launch_mcp_task_notification_run(app=app, **kwargs),
+                    get_run=lambda run_id, **kwargs: app.state.run_manager.get(
+                        run_id,
+                        raise_on_store_error=True,
+                        **kwargs,
                     ),
                 )
+                app.state.mcp_task_drivers = mcp_task_drivers
+                app.state.mcp_task_service = mcp_task_service
+                if mcp_tasks_config.enabled:
+                    await mcp_task_service.start()
+                    set_mcp_task_submitter(mcp_task_service)
+                    app.state.mcp_tasks_available = True
+
+            from app.subagent_batches import SubagentBatchService
+            from deerflow.subagents.batch_runtime import set_subagent_batch_submitter
+
+            batch_repo = getattr(app.state, "subagent_batch_repo", None)
+            app.state.subagent_batches_available = False
+            set_subagent_batch_submitter(None)
+            if subagent_batches_config.enabled and batch_repo is None:
+                raise RuntimeError("subagent_batches.enabled requires database.backend sqlite or postgres")
+            if batch_repo is not None:
+                batch_service = SubagentBatchService(
+                    repository=batch_repo,
+                    config=subagent_batches_config,
+                    runtime_config=subagent_runtime_config,
+                )
+                app.state.subagent_batch_service = batch_service
+                if subagent_batches_config.enabled:
+                    await batch_service.start()
+                    set_subagent_batch_submitter(batch_service)
+                    app.state.subagent_batches_available = True
+
+            yield
+
+            await _shutdown_startup_trash_sweep(app)
+
+            try:
+                await auth.close_oidc_service()
+            except Exception:
+                logger.exception("Failed to close OIDC service")
+
+            # Stop channel service on shutdown (bounded to prevent worker hang)
+            try:
+                from app.channels.service import stop_channel_service
+
+                await asyncio.wait_for(
+                    stop_channel_service(),
+                    timeout=_SHUTDOWN_HOOK_TIMEOUT_SECONDS,
+                )
             except TimeoutError:
-                retrieval_warm_finished = False
-                logger.warning("Memory retrieval index rebuild is still running; leaving its connection open during shutdown")
+                logger.warning(
+                    "Channel service shutdown exceeded %.1fs; proceeding with worker exit.",
+                    _SHUTDOWN_HOOK_TIMEOUT_SECONDS,
+                )
+            except Exception:
+                logger.exception("Failed to stop channel service")
 
-        manager = None
-        try:
-            # Memory shutdown runs on a worker thread and can trigger detached
-            # system-model callbacks. Stop accepting those callbacks before
-            # flushing, while keeping the registered loop alive for awaited
-            # task hooks until langgraph_runtime drains runs and subagents.
-            from deerflow.extensions.notify import suspend_extension_system_observations
-
-            suspend_extension_system_observations()
-        except Exception:
-            logger.debug("Failed to suspend extension system observations (non-fatal)", exc_info=True)
-
-        try:
-            app_cfg = get_app_config()
-            if app_cfg.memory.enabled:
-                from deerflow.agents.memory import get_memory_manager
-
-                manager = await asyncio.to_thread(get_memory_manager)
-                flush_timeout = app_cfg.memory.shutdown_flush_timeout_seconds
-                completed = await asyncio.to_thread(manager.shutdown_flush, flush_timeout)
-                if completed:
-                    logger.info("Memory queue flush completed within %.1fs", flush_timeout)
-                else:
-                    logger.warning(
-                        "Memory queue flush did not finish within %.1fs; remaining updates may be lost",
-                        flush_timeout,
-                    )
-        except Exception:
-            logger.exception("Failed to flush memory queue on shutdown")
-        finally:
-            close = getattr(manager, "close", None)
-            if callable(close) and retrieval_warm_finished:
+            if getattr(app.state, "scheduled_task_service", None) is not None:
                 try:
-                    await asyncio.to_thread(close)
+                    await app.state.scheduled_task_service.stop()
                 except Exception:
-                    logger.exception("Failed to close memory backend on shutdown")
+                    logger.exception("Failed to stop scheduled task service")
+
+            if getattr(app.state, "mcp_task_service", None) is not None:
+                app.state.mcp_tasks_available = False
+                try:
+                    await app.state.mcp_task_service.stop()
+                except Exception:
+                    logger.exception("Failed to stop MCP task service")
+                finally:
+                    from deerflow.mcp.tasks.runtime import set_mcp_task_submitter
+
+                    set_mcp_task_submitter(None)
+            from deerflow.mcp.tasks.runtime import set_mcp_task_config_snapshot
+
+            set_mcp_task_config_snapshot(None)
+
+            if getattr(app.state, "subagent_batch_service", None) is not None:
+                app.state.subagent_batches_available = False
+                try:
+                    await app.state.subagent_batch_service.stop()
+                except Exception:
+                    logger.exception("Failed to stop subagent batch service")
+                finally:
+                    from deerflow.subagents.batch_runtime import set_subagent_batch_submitter
+
+                    set_subagent_batch_submitter(None)
+
+            try:
+                from deerflow.community.browser_automation import get_browser_session_manager
+
+                closed = await asyncio.wait_for(
+                    get_browser_session_manager().close_all_sessions(),
+                    timeout=_SHUTDOWN_HOOK_TIMEOUT_SECONDS,
+                )
+                if closed:
+                    logger.info("Closed %d browser session(s)", closed)
+            except TimeoutError:
+                logger.warning(
+                    "Browser session shutdown exceeded %.1fs; proceeding with worker exit.",
+                    _SHUTDOWN_HOOK_TIMEOUT_SECONDS,
+                )
+            except Exception:
+                logger.exception("Failed to close browser sessions")
+
+            # Drain the memory backend's pending-update buffer before the worker
+            # exits (best-effort, bounded). IM channels and the scheduler are
+            # already stopped above, so no new IM/scheduler updates arrive during
+            # the drain; the LangGraph runtime / in-flight HTTP requests can still
+            # complete memory enqueues in a narrow window, but anything added after
+            # the drain copies the buffer only resets the debounce Timer
+            # (best-effort, same as today).
+            #
+            # No host-level pending/processing guard: ``shutdown_flush``
+            # short-circuits on a truly idle buffer (returns True immediately), so
+            # calling it unconditionally is cheap and keeps the in-flight-worker
+            # race entirely inside the backend (where the buffer lives) -- the host
+            # cannot "forget" that case the way a ``pending_count > 0``-only guard
+            # would (review #6 on the original PR).
+            #
+            # K8s caveat: ``shutdown_flush_timeout_seconds`` must fit inside the
+            # pod's ``terminationGracePeriodSeconds`` (channel stop + browser
+            # session close + the brief retrieval-warm wait + this drain + buffer),
+            # set on the gateway Helm deployment -- or K8s SIGKILLs the drain
+            # mid-flight and the loss this is fixing is silently re-introduced.
+            # The retrieval index is derived from canonical memory files, so its
+            # wait is independently capped and never consumes the flush budget.
+            retrieval_warm_finished = True
+            if retrieval_warm_task is not None and not retrieval_warm_task.done():
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(retrieval_warm_task),
+                        timeout=min(
+                            _RETRIEVAL_WARM_SHUTDOWN_TIMEOUT_SECONDS,
+                            startup_config.memory.shutdown_flush_timeout_seconds,
+                        ),
+                    )
+                except TimeoutError:
+                    retrieval_warm_finished = False
+                    logger.warning("Memory retrieval index rebuild is still running; leaving its connection open during shutdown")
+
+            manager = None
+            try:
+                # Memory shutdown runs on a worker thread and can trigger detached
+                # system-model callbacks. Stop accepting those callbacks before
+                # flushing, while keeping the registered loop alive for awaited
+                # task hooks until langgraph_runtime drains runs and subagents.
+                from deerflow.extensions.notify import suspend_extension_system_observations
+
+                suspend_extension_system_observations()
+            except Exception:
+                logger.debug("Failed to suspend extension system observations (non-fatal)", exc_info=True)
+
+            try:
+                app_cfg = get_app_config()
+                if app_cfg.memory.enabled:
+                    from deerflow.agents.memory import get_memory_manager
+
+                    manager = await asyncio.to_thread(get_memory_manager)
+                    flush_timeout = app_cfg.memory.shutdown_flush_timeout_seconds
+                    completed = await asyncio.to_thread(manager.shutdown_flush, flush_timeout)
+                    if completed:
+                        logger.info("Memory queue flush completed within %.1fs", flush_timeout)
+                    else:
+                        logger.warning(
+                            "Memory queue flush did not finish within %.1fs; remaining updates may be lost",
+                            flush_timeout,
+                        )
+            except Exception:
+                logger.exception("Failed to flush memory queue on shutdown")
+            finally:
+                close = getattr(manager, "close", None)
+                if callable(close) and retrieval_warm_finished:
+                    try:
+                        await asyncio.to_thread(close)
+                    except Exception:
+                        logger.exception("Failed to close memory backend on shutdown")
+        finally:
+            # shutdown 只清理 state 引用；共享 engine 仍由 langgraph_runtime 释放。
+            app.state.analytics_services = None
 
     logger.info("Shutting down API Gateway")
 
@@ -946,6 +964,10 @@ This gateway provides runtime endpoints for agent runs plus custom endpoints for
 
     # Assistants compatibility API (LangGraph Platform stub)
     app.include_router(assistants_compat.router)
+
+    # Analytics API is mounted at /api/analytics
+    install_request_error_handler(app)
+    app.include_router(analytics_router)
 
     # Auth API is mounted at /api/v1/auth
     app.include_router(auth.router)

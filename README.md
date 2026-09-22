@@ -1627,6 +1627,20 @@ The v1-to-v2 storage migration is one-way for a running application: pre-PR code
 
 `--user-id` may be repeated. `--all-users` discovers the existing directory-safe buckets below the selected storage root; standalone integrations that passed raw IDs containing characters such as `@` should use the original value with `--user-id`. A failed user's migration is reported without hiding the rest of the audit, and the command exits non-zero when any user fails. The automatic first-read path remains enabled, so running this CLI is not required for startup.
 
+### Analytics governed query (InsightFlow)
+
+An authenticated analytics control plane mounted at `/api/analytics`. Administrators register
+datasources (owner-scoped, with an opaque `env://` secret reference), schema snapshots, exact-principal
+access policies and metrics. Users then submit a `datasource_id` plus raw SQL to obtain a short-lived,
+single-use plan token, and redeem that token to run the query and receive a bounded, sanitized result.
+
+Every query passes the deterministic SQL policy, semantic authorization, an `EXPLAIN` cost gate, a
+durable one-shot plan store and a fail-closed audit ledger; `HIGH`-risk queries are always denied and
+raw SQL, plan tokens and credentials never reach logs, audits or error responses. The control plane
+reuses the Gateway's application database, and returns 503 (never an in-memory fallback) when it is
+disabled or the database backend is `memory`. See [backend/docs/API.md](backend/docs/API.md) and
+[backend/docs/CONFIGURATION.md](backend/docs/CONFIGURATION.md).
+
 ## Recommended Models
 
 DeerFlow is model-agnostic — it works with any LLM that implements the OpenAI-compatible API. That said, it performs best with models that support:

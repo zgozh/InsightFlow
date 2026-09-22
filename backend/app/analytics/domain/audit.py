@@ -127,3 +127,61 @@ class QueryAuditCompletion:
         _require_optional_cost(self.engine_cost, "engine_cost")
         _require_optional_digest(self.plan_digest, "plan_digest")
         _require_optional_bool(self.truncated, "truncated")
+
+
+@dataclass(frozen=True, slots=True)
+class QueryAuditRecord:
+    """审计表的只读投影：字段与表结构一一对应，不多一个。
+
+    读取侧与写入侧共用同一份"安全元数据"定义：这里没有 SQL、token/digest、secret ref、
+    DSN、账号口令、驱动异常文本、原始 EXPLAIN 或结果值，因此任何序列化路径都不可能把它们
+    带出去。
+    """
+
+    id: str
+    principal_id: str
+    datasource_id: str | None
+    phase: QueryAuditPhase
+    status: QueryAuditStatus
+    started_at: datetime
+    query_hash: str | None = None
+    risk: QueryRisk | None = None
+    decision_code: str | None = None
+    schema_version: str | None = None
+    policy_version: str | None = None
+    estimated_rows: int | None = None
+    engine_cost: Decimal | None = None
+    plan_digest: str | None = None
+    row_count: int | None = None
+    byte_count: int | None = None
+    truncated: bool | None = None
+    latency_ms: int | None = None
+    finished_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        _require_trimmed(self.id, "id")
+        _require_trimmed(self.principal_id, "principal_id")
+        if self.datasource_id is not None:
+            _require_trimmed(self.datasource_id, "datasource_id")
+        if not isinstance(self.phase, QueryAuditPhase):
+            raise ValueError("phase must be a QueryAuditPhase")
+        if not isinstance(self.status, QueryAuditStatus):
+            raise ValueError("status must be a QueryAuditStatus")
+        _require_aware_datetime(self.started_at, "started_at")
+        if self.finished_at is not None:
+            _require_aware_datetime(self.finished_at, "finished_at")
+        _require_optional_digest(self.query_hash, "query_hash")
+        _require_optional_digest(self.plan_digest, "plan_digest")
+        if self.risk is not None and not isinstance(self.risk, QueryRisk):
+            raise ValueError("risk must be None or a QueryRisk")
+        if self.decision_code is not None:
+            _require_trimmed(self.decision_code, "decision_code")
+        if (self.schema_version is None) != (self.policy_version is None):
+            raise ValueError("schema_version and policy_version must be provided together")
+        if self.schema_version is not None:
+            _require_trimmed(self.schema_version, "schema_version")
+            _require_trimmed(self.policy_version, "policy_version")
+        for field_name in ("estimated_rows", "row_count", "byte_count", "latency_ms"):
+            _require_optional_measurement(getattr(self, field_name), field_name)
+        _require_optional_cost(self.engine_cost, "engine_cost")
+        _require_optional_bool(self.truncated, "truncated")

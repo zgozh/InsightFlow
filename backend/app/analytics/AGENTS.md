@@ -97,6 +97,45 @@ execute: store:claim -> audit:start -> datasource -> authorize -> gateway:execut
 
 PostgreSQL 门禁额外跑 `tests/test_analytics_persistence_postgresql.py`：每个测试在独立临时 schema 中运行，schema 生命周期由初始化超级用户完成，**被测连接仍是普通用户 `analytics_tester`**；它证明真实 `DELETE ... RETURNING` 竞争、advisory lock 容量上限与 `FOR UPDATE` 替换冲突。
 
+## 认证交付与 Gateway 装配（Phase 2C2）
+
+`app.analytics` 自己解析 `AppConfig` 的 `analytics:` extra 块（`config.py`，`extra=forbid`）并由
+`composition.build_analytics_services` 装配；Gateway 只负责认证、管理员门禁、生命周期挂载与 HTTP 映射。
+
+- composition **只接收**已经建立的共享 `AsyncEngine` / `async_sessionmaker`，不建第二个控制面数据库；
+  `enabled=false` 或 `database.backend=memory` 返回 `None` 并且**不**运行迁移，所有 `/api/analytics`
+  稳定 503 —— memory backend 绝不退化成 `InMemoryExecutionPlanStore`；
+- 配置错误、engine/session 缺失、迁移失败都阻止启动：半可用的查询 API 比不可用更危险；
+- 限额只来自服务端配置，客户端没有任何覆盖入口。
+
+`PlanAnalyticsQuery` 是系统里**唯一**接受原始 SQL 的入口：
+
+```text
+可访问 datasource -> Phase 2A policy -> Phase 2B1 authorization -> CreateQueryExecutionPlan
+```
+
+- 只接受认证 `principal_id`、客户端 `datasource_id` 与短生命周期 `raw_sql`；授权值来自服务端重跑，
+  限额来自配置，两者都不接受客户端输入；
+- policy/authorization 拒绝会写对应阶段的审计；审计 start/finish 失败统一 `AUDIT_UNAVAILABLE` 并停止后续步骤；
+- raw SQL 只以 Phase 2A 的 SHA-256 `query_hash` 进入审计，绝不进入日志、异常或响应。
+
+`ExecuteAnalyticsQuery` 只转发认证主体与一次性 `plan_id`。
+
+HTTP 契约（`/api/analytics`）的安全约束：
+
+- principal/owner 只来自 `app.gateway.deps.get_current_user`；请求体里的同名/授权/限额/版本/凭证字段
+  在 DTO 层（`extra="forbid"`）就被 422 拒绝；
+- 管理员路由把 `require_admin_user` 作为路由依赖，先于请求体使用与任何 repository 调用；PAT 永不获得管理员能力；
+- `install_request_error_handler` 把该前缀下的 422 折叠成 `{"code": "invalid_analytics_request"}`：
+  FastAPI 默认会把 Pydantic 的 `input` 原样回显，而 `sql` / `plan_id` 正藏在里面；
+- 普通用户 datasource 响应不含 `owner_id` / `secret_ref`；任何响应都不含解析后的凭证；
+- owner 不匹配与不存在统一 404（不泄露"存在但不是你的"），版本冲突 409，存储/驱动失败 503 且不带文本；
+- 审计读取只有 exact-principal：管理员也必须给出精确 `principal_id`，`*` 不是通配符。
+
+行数上限的运维含义：`CreateQueryExecutionPlan` 要求配置的 `max_result_rows` 不高于该查询自身 LIMIT
+折算出的 `row_limit`（Phase 2B2 不变量），因此带更小 LIMIT 的查询会以 `authorization_stale` 被拒绝；
+`max_result_rows` 必须配到"用户会写的最小 LIMIT"以内。
+
 ## 语言规范
 
 本模块新增或修改的注释、docstring、架构说明与复杂测试场景说明使用中文（见仓库级 `AGENTS.md`）。

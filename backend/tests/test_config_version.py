@@ -6,6 +6,7 @@ import logging
 import os
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -247,3 +248,22 @@ def test_config_upgrade_adds_security_fail_closed_preserving_user_values():
     assert user["skill_evolution"]["enabled"] is True
     assert user["skill_evolution"]["moderation_model_name"] == "custom-moderation-model"
     assert user["config_version"] == example["config_version"]
+
+
+def test_the_example_analytics_block_parses_with_the_app_owned_parser():
+    """模板里的 `analytics:` 必须能被 `app.analytics` 的严格解析器接受。
+
+    模板与解析器是同一份契约的两端：任何一侧单独改动（新增字段却不更新解析器、或把
+    float 成本写进模板）都会在这里失败。
+    """
+
+    from app.analytics.config import AnalyticsConfig
+
+    example = _load_repo_example()
+    assert example["config_version"] >= 46
+    assert "analytics" in example
+
+    config = AnalyticsConfig.from_app_config(SimpleNamespace(analytics=example["analytics"]))
+
+    assert config.enabled is True
+    assert config.execution_limits().max_result_rows == config.max_result_rows

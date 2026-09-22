@@ -4,6 +4,7 @@ from app.analytics.application.authorization import (
     SchemaCatalog,
     SemanticQueryAuthorizer,
 )
+from app.analytics.application.delivery import ExecuteAnalyticsQuery, PlanAnalyticsQuery, QueryExecutionDelivery, QueryPlanDelivery
 from app.analytics.application.execution import CreateQueryExecutionPlan, ExecuteQueryPlan
 from app.analytics.application.execution_ports import (
     Clock,
@@ -14,6 +15,7 @@ from app.analytics.application.execution_ports import (
     PlanTokenIssuer,
     StoredExecutionPlan,
 )
+from app.analytics.application.management import AnalyticsAdministration, AnalyticsNotFoundError, AnalyticsStorageError
 from app.analytics.application.persistence_ports import (
     AccessPolicyRepository,
     DatasourceAdminRepository,
@@ -21,6 +23,7 @@ from app.analytics.application.persistence_ports import (
     PersistenceConflictError,
     PersistenceDataError,
     QueryAuditLog,
+    QueryAuditReader,
     SchemaSnapshotRepository,
 )
 from app.analytics.application.ports import DatasourceCatalog, MetricCatalog
@@ -36,6 +39,10 @@ __all__ = [
     "DatasourceCatalog",
     "DatasourceQueryError",
     "DatasourceQueryGateway",
+    "AnalyticsAdministration",
+    "AnalyticsNotFoundError",
+    "AnalyticsStorageError",
+    "ExecuteAnalyticsQuery",
     "ExecuteQueryPlan",
     "ExecutionPlanStore",
     "ExecutionPlanStoreError",
@@ -43,8 +50,12 @@ __all__ = [
     "MetricRepository",
     "PersistenceConflictError",
     "PersistenceDataError",
+    "PlanAnalyticsQuery",
     "PlanTokenIssuer",
     "QueryAuditLog",
+    "QueryExecutionDelivery",
+    "QueryPlanDelivery",
+    "QueryAuditReader",
     "QueryPolicy",
     "SchemaCatalog",
     "SchemaSnapshotRepository",
