@@ -76,4 +76,3 @@ artifact ownership、消息历史可重建 trace。若门禁失败，保持工�
 11. `docs/PROGRESS.md` 状态，明确 Phase 5 未启动。
 
 不要求重跑与本阶段无关的全部上游测试；门禁范围按计划 Task 8。任何测试失败不得描述为 PASS。
-

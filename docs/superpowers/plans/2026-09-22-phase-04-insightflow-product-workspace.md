@@ -143,4 +143,3 @@ TypeScript 5.8, TanStack Query, Zod, Tailwind 4, Rstest, Playwright.
 - [ ] 更新 `docs/PROGRESS.md`：Phase 3 Complete，Phase 4 保持 In progress、next gate 为 GPT 复验；
   Phase 5 不启动。
 - [ ] 仅创建提交 `feat: deliver insightflow product workspace`，工作树保持干净。
-

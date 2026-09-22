@@ -246,7 +246,9 @@ test.describe("Chat workspace", () => {
     await page.reload();
 
     await expect(
-      page.getByText("内容由AI生成，重要信息请务必核查", { exact: true }),
+      page.getByText("内容由 InsightFlow 生成，重要信息请务必核查", {
+        exact: true,
+      }),
     ).toBeVisible({ timeout: 15_000 });
   });
 

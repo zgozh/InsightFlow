@@ -155,4 +155,3 @@ engine cost、truncated、schema/policy version、evidence ID 和安全 digest�
 6. `pnpm check`、focused unit、focused E2E、`pnpm build`、后端 focused pytest/ruff 和
    `git diff --check` 全绿。
 7. 不新增依赖，lockfiles、Docker、固定 tag/tree 不漂移；工作树干净。
-
