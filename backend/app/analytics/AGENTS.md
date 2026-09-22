@@ -138,6 +138,33 @@ HTTP 契约（`/api/analytics`）的安全约束：
 override：上限只可能变小，`CreateQueryExecutionPlan` 里 `limits.max_result_rows <= prepared.row_limit`
 的校验继续作为纵深防御，plan payload 保存收紧后的 limits，execute 不会重新放宽。
 
+## 安全数据分析 Agent 工作流（Phase 3）
+
+`app.analytics.agent` 是 App-owned Agent bridge。Harness 只通过配置化 tool loader 动态加载它，
+Harness 自身不 import App，也没有 Analytics 专用开关。
+
+- `runtime.py` 只保存 Gateway 在 composition 成功后绑定的**不可变** `AnalyticsServices`，shutdown 清除。
+  重复绑定**不同**对象是配置错误（`analytics_agent_already_bound`），绝不静默替换；它不创建
+  engine/session/repository，也不 dispose 共享资源。
+- principal 只来自 Gateway `inject_authenticated_user_context` 写入的 `runtime.context["user_id"]`。
+  刻意**不**回退到 ambient ContextVar 或 `DEFAULT_USER_ID`：后者是未认证桶，把它当 principal 会让
+  未认证路径落到一个字面量为 `default` 的账号上。取不到就是稳定的 `analytics_unavailable`。
+- `inspect_business_catalog` 无身份参数，只返回 datasource 的 `id/name/engine/default_schema/status`
+  与 metric 的 `key/name/description/dimensions/version/status`；不含 owner、`secret_ref`、policy 或内部版本。
+- `query_business_data` 的参数**只有** `datasource_id` 与 `sql`，并在一次调用内完成 plan → execute：
+  plan token 只活在函数局部变量里，绝不进入 ToolMessage、checkpoint、run event、日志、异常或 evidence。
+  execute 失败不重新 plan、不自动重试；取消照常传播。
+- 成功执行返回确定性 evidence：`evidence_id` 是安全元数据 canonical JSON 的 SHA-256，`result_digest`
+  是 canonical columns+rows 的 SHA-256。字段白名单固定，不含 SQL、token/digest、secret、DSN、异常文本或 PII。
+  结果仍受 Phase 2 的列/行/字节上限约束。
+
+Lead-only 与 subagent 隔离：DeerFlow 会把父级 tool group 原样继承给 subagent，因此
+`config.example.yaml` 用 operator-owned、**加法式**的 `subagents.agents.general-purpose.disallowed_tools`
+拒绝这两个工具。它只能追加拒绝项，永远不能解除内置拒绝项，客户端与 run context 都无法覆盖。
+
+`agent/` 模块不得 import SQLGlot、SQLAlchemy、驱动、secret resolver 或 repository；它只调用
+`AnalyticsServices` 应用入口，Phase 4 的 UI 与 Phase 3 的 Agent 因此共用同一条 Phase 2 安全闭环。
+
 ## 语言规范
 
 本模块新增或修改的注释、docstring、架构说明与复杂测试场景说明使用中文（见仓库级 `AGENTS.md`）。

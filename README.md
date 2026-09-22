@@ -1641,6 +1641,22 @@ reuses the Gateway's application database, and returns 503 (never an in-memory f
 disabled or the database backend is `memory`. See [backend/docs/API.md](backend/docs/API.md) and
 [backend/docs/CONFIGURATION.md](backend/docs/CONFIGURATION.md).
 
+
+### Governed analytics agent workflow (InsightFlow)
+
+The lead agent gets a lead-only `analytics` tool group: `inspect_business_catalog` lists the
+datasources and metrics the signed-in user may use, and `query_business_data` runs one read-only
+query per call — plan and execute happen inside a single tool call, so the single-use plan token
+never reaches the model. Successful runs return a deterministic `evidence` envelope
+(`evidence_id` + `result_digest`) that the analysis and review subagents cite instead of restating
+unenforced numbers.
+
+Built-in subagents inherit the lead agent's tool groups, so the example config denies both tools
+for `general-purpose` through the operator-owned, additive
+`subagents.agents.general-purpose.disallowed_tools` list. See
+[backend/docs/CONFIGURATION.md](backend/docs/CONFIGURATION.md) and
+[skills/public/business-analysis/SKILL.md](skills/public/business-analysis/SKILL.md).
+
 ## Recommended Models
 
 DeerFlow is model-agnostic — it works with any LLM that implements the OpenAI-compatible API. That said, it performs best with models that support:

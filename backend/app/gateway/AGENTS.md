@@ -171,7 +171,8 @@ plane is mounted onto `app.state.analytics_services` right after `langgraph_runt
 (`enabled=false` or `database.backend=memory` leaves it `None`, so the API answers a
 stable 503); shutdown only clears that reference and the shared engine stays owned by the
 Harness. HTTP handlers call application services only, never a repository or the business
-gateway.
+gateway; the same lifespan binds that immutable bundle for the App-owned analytics agent
+tools (`bind_analytics_services`) and clears the binding on shutdown.
 
 Proxied through nginx: `/api/langgraph/*` → Gateway LangGraph-compatible runtime, all other `/api/*` → Gateway REST APIs.
 

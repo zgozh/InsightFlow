@@ -45,19 +45,50 @@ from app.analytics.domain import (
 
 
 @dataclass(frozen=True, slots=True)
+class QueryPlanDeliveryMetadata:
+    """plan 阶段产出的**安全**元数据，供 Phase 3 evidence 使用。
+
+    只含审计表里本就有的字段：datasource、Phase 2A 的 `query_hash`、风险级别与 schema/policy
+    版本。没有 SQL、token、secret 或凭证；HTTP DTO 不会顺带暴露它。
+    """
+
+    datasource_id: str
+    query_hash: str
+    risk: QueryRisk
+    schema_version: str
+    policy_version: str
+
+    def __post_init__(self) -> None:
+        for field_name in ("datasource_id", "schema_version", "policy_version"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip() or value != value.strip():
+                raise ValueError(f"{field_name} must be a non-empty trimmed string")
+        if not isinstance(self.query_hash, str) or len(self.query_hash) != 64 or any(character not in "0123456789abcdef" for character in self.query_hash):
+            raise ValueError("query_hash must be 64 lowercase hexadecimal characters")
+        if not isinstance(self.risk, QueryRisk):
+            raise ValueError("risk must be a QueryRisk")
+
+
+@dataclass(frozen=True, slots=True)
 class QueryPlanDelivery:
-    """plan 交付结果：稳定码 + 成功时的一次性 plan receipt。"""
+    """plan 交付结果：稳定码 + 成功时的一次性 plan receipt + 安全元数据。"""
 
     code: str
     receipt: QueryPlanReceipt | None = None
+    metadata: QueryPlanDeliveryMetadata | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.code, str) or not self.code.strip() or self.code != self.code.strip():
             raise ValueError("code must be a non-empty trimmed string")
         if self.receipt is not None and not isinstance(self.receipt, QueryPlanReceipt):
             raise ValueError("receipt must be a QueryPlanReceipt")
+        if self.metadata is not None and not isinstance(self.metadata, QueryPlanDeliveryMetadata):
+            raise ValueError("metadata must be a QueryPlanDeliveryMetadata")
         if (self.code == ExecutionDecisionCode.PLAN_CREATED.value) != (self.receipt is not None):
             raise ValueError("only a created plan may carry a receipt")
+        # receipt 与 metadata 同时产出：只有它们都存在时 Phase 3 才可能构造 evidence。
+        if (self.receipt is not None) != (self.metadata is not None):
+            raise ValueError("a receipt and its metadata must be provided together")
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,7 +256,20 @@ class PlanAnalyticsQuery:
         except Exception:  # noqa: BLE001 - 未知失败默认拒绝且不泄漏文本
             return QueryPlanDelivery(code=ExecutionDecisionCode.DATABASE_UNAVAILABLE.value)
 
-        return QueryPlanDelivery(code=plan_decision.code.value, receipt=plan_decision.receipt)
+        return QueryPlanDelivery(
+            code=plan_decision.code.value,
+            receipt=plan_decision.receipt,
+            # 只有签发成功才带安全元数据：拒绝路径没有可引用的 authorized 值。
+            metadata=None
+            if plan_decision.receipt is None
+            else QueryPlanDeliveryMetadata(
+                datasource_id=authorized.datasource_id,
+                query_hash=authorized.prepared.query_hash,
+                risk=authorized.risk,
+                schema_version=authorized.schema_version,
+                policy_version=authorized.policy_version,
+            ),
+        )
 
 
 class ExecuteAnalyticsQuery:

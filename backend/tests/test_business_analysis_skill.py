@@ -1,0 +1,103 @@
+"""经营分析 skill 测试（Phase 3 任务 6）。
+
+skill 只规定**顺序与证据要求**，不实现 SQL 策略、访问控制或凭证访问。这里固定：
+
+- frontmatter 合法、名字与目录一致；
+- 架构 §5 的九个步骤顺序都在（目录 → 单条查询 → Analyst → Reviewer → 一次修订 → artifact → 摘要）；
+- Reviewer 被明确要求不查询数据库、不创建子 Agent；
+- 不含固定表名、示例真实 SQL、凭据或 PII。
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import pytest
+
+SKILL_DIR = Path(__file__).resolve().parents[2] / "skills" / "public" / "business-analysis"
+SKILL_PATH = SKILL_DIR / "SKILL.md"
+
+
+def _text() -> str:
+    return SKILL_PATH.read_text(encoding="utf-8")
+
+
+def test_the_skill_file_exists_with_frontmatter():
+    text = _text()
+
+    assert text.startswith("---\n")
+    frontmatter = text.split("---", 2)[1]
+    assert re.search(r"^name:\s*business-analysis$", frontmatter, flags=re.MULTILINE)
+    assert re.search(r"^description:\s*\S", frontmatter, flags=re.MULTILINE)
+
+
+def test_the_frontmatter_matches_the_directory_name():
+    from deerflow.skills.validation import _validate_skill_frontmatter
+
+    valid, message, name = _validate_skill_frontmatter(SKILL_DIR)
+
+    assert valid, message
+    assert name == "business-analysis"
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "inspect_business_catalog",
+        "query_business_data",
+        "general-purpose",
+        "Data Analyst",
+        "Reviewer",
+        "evidence_id",
+        "result_digest",
+        "/mnt/user-data/outputs",
+        "present_files",
+    ],
+)
+def test_the_workflow_names_every_required_element(marker):
+    assert marker in _text()
+
+
+def test_the_workflow_orders_catalog_then_a_single_query_then_analysis_then_review():
+    # 只看 frontmatter 之后的正文：description 里也会提到这些角色名。
+    body = _text().split("---", 2)[2]
+    positions = [body.index(token) for token in ("inspect_business_catalog", "每次只调用一次", "Data Analyst", "委派 Reviewer", "最多一次定向修订")]
+
+    assert positions == sorted(positions)
+
+
+def test_the_skill_requires_serial_queries_and_forbids_automatic_retry():
+    text = _text()
+
+    assert "串行" in text
+    assert "不要重试同一条" in text or "不要因为一次失败就自动重新查询" in text
+
+
+def test_the_reviewer_is_explicitly_forbidden_from_querying_or_nesting():
+    text = _text()
+
+    assert "不要**查询数据库" in text or "不要**查询数据库、不要创建子 Agent" in text
+    assert "不要创建子 Agent" in text
+
+
+def test_the_skill_does_not_treat_its_own_rules_as_the_security_boundary():
+    text = _text()
+
+    assert "不实现任何 SQL 策略、访问控制或凭证访问" in text
+    assert "由平台的受控查询工具执行" in text
+
+
+def test_the_skill_carries_no_sql_table_names_credentials_or_pii():
+    text = _text()
+
+    for banned in ("SELECT ", "FROM ", "secret_ref", "password", "postgres://", "mysql://", "env://", "public.orders", "api_key"):
+        assert banned not in text, banned
+    # 没有内联代码块里塞真实 SQL 示例。
+    assert "```sql" not in text
+
+
+def test_the_skill_does_not_claim_tools_the_agent_does_not_have():
+    text = _text()
+
+    assert "token" not in text.lower() or "token 或任何凭据" in text

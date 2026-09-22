@@ -234,7 +234,11 @@ async def test_the_documented_sequence_runs_and_returns_the_plan_receipt():
 
     delivery = await use_case.execute(principal_id="user-1", datasource_id="ds-1", raw_sql=_SQL)
 
-    assert delivery == QueryPlanDelivery(code=ExecutionDecisionCode.PLAN_CREATED.value, receipt=_plan_created().receipt)
+    assert delivery.code == ExecutionDecisionCode.PLAN_CREATED.value
+    assert delivery.receipt == _plan_created().receipt
+    # plan 同时产出安全元数据（Phase 3 evidence 用它），但不含 SQL 或授权对象。
+    assert delivery.metadata is not None
+    assert delivery.metadata.query_hash == _HASH
     assert events == ["datasource", "policy", "authorization", "plan"]
     # 成功路径没有额外的 policy/authorization 审计：plan 阶段由 2C1 用例自己写。
     assert policy.requests[0].max_rows == AnalyticsConfig().query_max_rows
@@ -464,7 +468,7 @@ async def test_raw_sql_only_reaches_the_audit_as_a_query_hash():
 
 
 def test_delivery_values_never_carry_sql_or_authorization_objects():
-    assert set(QueryPlanDelivery.__dataclass_fields__) == {"code", "receipt"}
+    assert set(QueryPlanDelivery.__dataclass_fields__) == {"code", "receipt", "metadata"}
     assert set(QueryExecutionDelivery.__dataclass_fields__) == {"code", "result"}
 
 

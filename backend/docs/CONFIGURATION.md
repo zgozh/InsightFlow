@@ -1123,6 +1123,32 @@ in-memory one. Datasources only ever store an opaque `secret_ref` such as
 (`engine`, `host`, `port`, `database`, `username`, `password`, optional `tls_mode` / `ca_pem`);
 `tls_mode: disable` is only accepted for loopback hosts.
 
+
+### Analytics agent tools (Phase 3)
+
+The example config declares an `analytics` tool group with two App-owned tools —
+`inspect_business_catalog` and `query_business_data`. Both call the Phase 2 application
+services; `query_business_data` runs plan and execute inside a single tool call so the
+one-shot plan token never reaches the model, and it returns a deterministic `evidence`
+envelope. They are only usable while the analytics control plane is mounted
+(`enabled: false` or `database.backend: memory` yields a stable `analytics_unavailable`).
+
+Built-in subagents inherit the lead agent's tool groups, so a lead-only group has to be denied
+on the subagent side:
+
+```yaml
+subagents:
+  agents:
+    general-purpose:
+      disallowed_tools:
+        - inspect_business_catalog
+        - query_business_data
+```
+
+`disallowed_tools` is an operator-owned, **additive** denylist: it appends to the agent's
+built-in denials (`task`, `ask_clarification`, `present_files`) and can never remove one.
+It is read only from `config.yaml` — neither the client nor run context can change it.
+
 ## Environment Variables
 
 DeerFlow supports environment variable substitution using the `$` prefix:

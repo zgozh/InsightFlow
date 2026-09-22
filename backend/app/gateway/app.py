@@ -7,6 +7,7 @@ from deerflow_extension_api import EXTENSION_PRINCIPAL_RESOLVER_KEY, ExtensionPr
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.analytics.agent.runtime import bind_analytics_services, clear_analytics_services
 from app.analytics.api import install_request_error_handler
 from app.analytics.api import router as analytics_router
 from app.analytics.composition import build_analytics_services
@@ -392,6 +393,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 session_factory=get_session_factory(),
                 backend=startup_config.database.backend,
             )
+            # Phase 3：把同一个不可变服务包绑定给 App-owned Agent 工具。
+            # 工具从可信运行上下文取 principal，只调用应用用例；未绑定时稳定失败。
+            bind_analytics_services(app.state.analytics_services)
 
             # Check admin bootstrap state and migrate orphan threads after admin exists.
             # Must run AFTER langgraph_runtime so app.state.store is available for thread migration
@@ -683,6 +687,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                         logger.exception("Failed to close memory backend on shutdown")
         finally:
             # shutdown 只清理 state 引用；共享 engine 仍由 langgraph_runtime 释放。
+            clear_analytics_services()
             app.state.analytics_services = None
 
     logger.info("Shutting down API Gateway")

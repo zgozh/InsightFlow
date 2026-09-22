@@ -20,7 +20,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 46
+config_version: 47
 
 # Optional per-model request pacing (inside a models[] entry):
 # request_admission:
@@ -739,6 +739,10 @@ tool_groups:
   - name: bash
   - name: browser
   - name: knowledge
+  # InsightFlow governed analytics tools (Phase 3). Lead-only: built-in subagents
+  # inherit the lead agent's tool groups, so the denylist under `subagents:` below
+  # keeps them out of delegated runs.
+  - name: analytics
 
 # ============================================================================
 # Tools Configuration
@@ -1185,6 +1189,19 @@ tools:
   - name: bash
     group: bash
     use: deerflow.sandbox.tools:bash_tool
+
+  # InsightFlow governed analytics (Phase 3). Both tools call the Phase 2
+  # application services; `query_business_data` runs plan+execute inside a single
+  # tool call so the one-shot plan token never reaches the model. They are only
+  # usable while the analytics control plane is mounted (disabled or
+  # database.backend=memory => a stable `analytics_unavailable`).
+  - name: inspect_business_catalog
+    group: analytics
+    use: app.analytics.agent.tools:inspect_business_catalog
+
+  - name: query_business_data
+    group: analytics
+    use: app.analytics.agent.tools:query_business_data
 
 # ============================================================================
 # Tool Search Configuration (Deferred Tool Loading)
@@ -1776,6 +1793,18 @@ subagent_runtime:
 #   # Model override: by default, subagents inherit the lead agent's model.
 #   # Set `model` to use a different model (e.g., a local Ollama model for cost savings).
 #   # The model name must match a name defined in the `models:` section above.
+
+# Built-in subagents inherit the lead agent's tool groups, so a lead-only tool
+# group must be denied on the subagent side. `disallowed_tools` is an
+# operator-owned, additive denylist: it can only add names to the agent's
+# built-in denials (`task`, `ask_clarification`, `present_files`), never remove
+# one, and neither the client nor run context can change it.
+subagents:
+  agents:
+    general-purpose:
+      disallowed_tools:
+        - inspect_business_catalog
+        - query_business_data
 
 # Durable native-subagent batches. Disabled by default because enabling it can
 # materially increase model usage and requires database.backend sqlite/postgres.

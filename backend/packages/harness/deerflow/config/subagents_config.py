@@ -2,7 +2,7 @@
 
 import logging
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from deerflow.config.token_budget_config import TokenBudgetConfig
 
@@ -97,6 +97,31 @@ class SubagentOverrideConfig(BaseModel):
         default=None,
         description="Per-run token budget override for this subagent (None = use the global subagents.token_budget default). Symmetric with timeout_seconds/max_turns.",
     )
+    disallowed_tools: list[str] | None = Field(
+        default=None,
+        description=(
+            "Additional tool names this subagent must never receive (None = no change). Operator-owned "
+            "startup config, merged additively with the agent's built-in denylist: it can only add names, "
+            "never remove a built-in denial, and request/run context cannot override it."
+        ),
+    )
+
+    @field_validator("disallowed_tools")
+    @classmethod
+    def _normalize_disallowed_tools(cls, value: list[str] | None) -> list[str] | None:
+        """Reject blank/non-string entries and dedupe while preserving operator order."""
+        if value is None:
+            return None
+        seen: set[str] = set()
+        normalized: list[str] = []
+        for entry in value:
+            if not isinstance(entry, str) or not entry or entry != entry.strip():
+                raise ValueError("disallowed_tools entries must be non-empty trimmed tool names")
+            if entry in seen:
+                continue
+            seen.add(entry)
+            normalized.append(entry)
+        return normalized
 
 
 class CustomSubagentConfig(BaseModel):

@@ -169,6 +169,22 @@ def get_subagent_config(name: str, *, app_config: Any | None = None) -> Subagent
         logger.debug("Subagent '%s': skills overridden (%s -> %s)", name, config.skills, effective_skills)
         overrides["skills"] = effective_skills
 
+    # Tool denylist: additive only. An operator override may add names to the
+    # agent's built-in denials but can never remove one -- built-ins encode
+    # invariants (no task/ask_clarification/present_files in a subagent), while
+    # the override exists to keep host-specific tool groups out of delegated
+    # runs. Order is stable: built-in entries first, then the operator's.
+    override_denylist = agent_override.disallowed_tools if agent_override is not None else None
+    if override_denylist:
+        existing_denylist = list(config.disallowed_tools or [])
+        merged_denylist = list(existing_denylist)
+        for tool_name in override_denylist:
+            if tool_name not in merged_denylist:
+                merged_denylist.append(tool_name)
+        if merged_denylist != existing_denylist:
+            logger.debug("Subagent '%s': disallowed_tools extended with %s", name, [tool for tool in merged_denylist if tool not in existing_denylist])
+            overrides["disallowed_tools"] = merged_denylist
+
     if overrides:
         config = replace(config, **overrides)
 
