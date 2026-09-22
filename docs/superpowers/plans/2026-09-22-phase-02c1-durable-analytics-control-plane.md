@@ -350,4 +350,3 @@ feat: add durable analytics control plane
 - The application layer receives protocols and immutable values only; SQLAlchemy remains infrastructure-only.
 - Multi-worker correctness is proved with independent PostgreSQL connections, not an in-process lock.
 - File decomposition is by catalog, plan, audit, codec and migration responsibility; it avoids per-table controller/service boilerplate.
-
