@@ -2,13 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, rs } from "@rstest/core";
 
 import { listAgents } from "@/core/agents/api";
 import { fetch as apiFetch } from "@/core/api/fetcher";
-import {
-  listChannelConnections,
-  listChannelProviders,
-} from "@/core/channels/api";
 import { fetchFeatures } from "@/core/features/api";
-import { loadLarkIntegrationStatus } from "@/core/integrations/lark/api";
-import { loadMCPConfig } from "@/core/mcp/api";
 import { loadMemory } from "@/core/memory/api";
 import {
   createScheduledTask,
@@ -53,15 +47,9 @@ describe("static website API requests", () => {
   it("loads optional capabilities and empty catalogs without the Gateway", async () => {
     await expect(fetchFeatures()).resolves.toMatchObject({
       agents_api: { enabled: false },
-      browser_control: { enabled: false },
       mcp_tasks: { enabled: false },
       subagent_batches: { repository_available: false, worker_running: false },
     });
-    await expect(listChannelProviders()).resolves.toEqual({
-      enabled: false,
-      providers: [],
-    });
-    await expect(listChannelConnections()).resolves.toEqual([]);
     await expect(listAgents()).resolves.toEqual([]);
     await expect(listSubagents()).resolves.toEqual([]);
     await expect(loadSuggestionsConfig()).resolves.toMatchObject({
@@ -94,21 +82,13 @@ describe("static website API requests", () => {
     env.NEXT_PUBLIC_BACKEND_BASE_URL = "https://gateway.example/prefix";
     network.mockResolvedValueOnce(Response.json({ skills: [] }));
     await expect(loadSkills()).resolves.toEqual([]);
-    network.mockResolvedValueOnce(Response.json({ mcp_servers: {} }));
-    await expect(loadMCPConfig()).resolves.toEqual({ mcp_servers: {} });
-    network.mockResolvedValueOnce(Response.json({ installed: false }));
-    await expect(loadLarkIntegrationStatus()).resolves.toMatchObject({
-      installed: false,
-    });
     expect(network.mock.calls.map(([url]) => url)).toEqual([
       "http://127.0.0.1:3000/mock/api/skills",
-      "http://127.0.0.1:3000/mock/api/mcp/config",
-      "http://127.0.0.1:3000/mock/api/integrations/lark/status",
     ]);
     await expect(fetchFeatures()).resolves.toMatchObject({
       agents_api: { enabled: false },
     });
-    expect(network).toHaveBeenCalledTimes(3);
+    expect(network).toHaveBeenCalledTimes(1);
   });
 
   it("rejects writes and unsupported endpoints locally instead of reporting fake success", async () => {

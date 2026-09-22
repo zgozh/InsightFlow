@@ -50,13 +50,9 @@ import { useAuth } from "@/core/auth/AuthProvider";
 import { hasPermission, PERMISSIONS } from "@/core/auth/permissions";
 import { writeTextToClipboard } from "@/core/clipboard";
 import { useI18n } from "@/core/i18n/hooks";
-import { useProjects } from "@/core/projects";
-import { useLocalSettings } from "@/core/settings";
-import { isStaticWebsiteOnly } from "@/core/static-mode";
 import { exportThread, type ThreadExportFormat } from "@/core/threads/export";
 import {
   useInfiniteThreads,
-  useMoveThreadToProject,
   usePinThread,
   useRenameThread,
 } from "@/core/threads/hooks";
@@ -70,13 +66,11 @@ import {
   channelSourceOfThread,
   isThreadPinned,
   pathOfThread,
-  projectIdOfThread,
   titleOfThread,
 } from "@/core/threads/utils";
 import { env } from "@/env";
 import { isIMEComposing } from "@/lib/ime";
 
-import { MoveToProjectMenu, NewProjectDialog } from "./move-to-project-menu";
 import { ThreadChannelIcon } from "./thread-channel-source";
 import { useThreadDeleteDialog } from "./thread-delete-dialog";
 import { VirtualThreadList } from "./thread-list-virtualizer";
@@ -104,33 +98,10 @@ export function ThreadSidebarItem({
   const requestDelete = useThreadDeleteDialog();
   const { mutate: renameThread } = useRenameThread();
   const { mutate: updatePinnedThread } = usePinThread();
-  // The move mutation is owned here (not inside `MoveToProjectMenu`) because
-  // selecting a project closes the dropdown and unmounts the menu — a
-  // per-mutate `onError` registered there would be dropped before a failed
-  // request settles, failing silently. This row persists, so a hook-level
-  // `onError` always fires. Same ownership-hoisting precedent as the
-  // `NewProjectDialog` below.
-  const { mutate: moveThreadToProject } = useMoveThreadToProject({
-    onError: (error) => {
-      toast.error(
-        error instanceof Error && error.message
-          ? error.message
-          : t.projects.moveFailed,
-      );
-    },
-  });
-
-  const handleMoveProject = useCallback(
-    (projectId: string | null) => {
-      moveThreadToProject({ threadId: thread.thread_id, projectId });
-    },
-    [moveThreadToProject, thread.thread_id],
-  );
   const archiveAction = useThreadArchiveAction();
 
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
-  const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
 
   const handleRenameSubmit = useCallback(() => {
     if (renameValue.trim()) {
@@ -327,11 +298,6 @@ export function ThreadSidebarItem({
               <Archive className="text-muted-foreground" />
               <span>{t.chats.archiveChat}</span>
             </DropdownMenuItem>
-            <MoveToProjectMenu
-              thread={thread}
-              onNewProject={() => setNewProjectDialogOpen(true)}
-              onMoveProject={handleMoveProject}
-            />
             {canDeleteThreads && (
               <>
                 <DropdownMenuSeparator />
@@ -377,13 +343,6 @@ export function ThreadSidebarItem({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      {/* New Project Dialog (mounted outside the DropdownMenu so it survives
-          the menu closing when "New project…" is selected) */}
-      <NewProjectDialog
-        thread={thread}
-        open={newProjectDialogOpen}
-        onOpenChange={setNewProjectDialogOpen}
-      />
     </SidebarMenuItem>
   );
 }
@@ -395,12 +354,6 @@ export function RecentChatList() {
     thread_id: string;
     agent_name?: string;
   }>();
-  const [settings] = useLocalSettings();
-  const groupByProject = settings.projectsDisplayMode === "grouped";
-  // Static-demo mode never renders project groups (ProjectsSection is hidden
-  // and project queries stay off), so a persisted "grouped" preference must
-  // behave as flat — otherwise assigned threads would vanish from this list.
-  const grouped = groupByProject && !isStaticWebsiteOnly();
   const {
     data: infiniteThreads,
     fetchNextPage,
@@ -410,38 +363,6 @@ export function RecentChatList() {
     archived:
       env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" ? undefined : false,
   });
-  // Project discovery doubles as the exclusion oracle for grouped mode: an
-  // assigned thread may leave this flat list ONLY when its project group can
-  // actually render in `ProjectsSection`. Any query error (or not-yet-loaded
-  // data) yields `null` → exclude nothing (fail-visible), and a thread whose
-  // project id is unknown to both lists stays here too. TanStack dedupes
-  // these shared queries with `GroupedProjectList`.
-  // The discovery queries only feed that grouped-mode filter; in the default
-  // flat mode the results are read by nobody, so keep the two project round
-  // trips off the page load (`GroupedProjectList` fetches these same keys
-  // when grouped mode is on, and TanStack dedupes the observers).
-  const activeProjectsQuery = useProjects("active", { enabled: grouped });
-  const archivedProjectsQuery = useProjects("archived", { enabled: grouped });
-  const knownProjectIds = useMemo(() => {
-    const activeProjects = activeProjectsQuery.data;
-    const archivedProjects = archivedProjectsQuery.data;
-    if (
-      activeProjectsQuery.isError ||
-      archivedProjectsQuery.isError ||
-      !activeProjects ||
-      !archivedProjects
-    ) {
-      return null;
-    }
-    return new Set(
-      [...activeProjects, ...archivedProjects].map((project) => project.id),
-    );
-  }, [
-    activeProjectsQuery.data,
-    activeProjectsQuery.isError,
-    archivedProjectsQuery.data,
-    archivedProjectsQuery.isError,
-  ]);
   const threadListModel = useMemo(
     () => buildThreadListModel(infiniteThreads?.pages ?? []),
     [infiniteThreads?.pages],
@@ -461,20 +382,7 @@ export function RecentChatList() {
       ? [...threadListModel.displayedThreads, activeThread]
       : threadListModel.displayedThreads;
   }, [threadIdFromPath, threadListModel]);
-  // In grouped mode, project-assigned threads render under their project
-  // header in `ProjectsSection`; this list keeps only unassigned threads —
-  // plus any assigned thread whose project cannot render a group (unknown id,
-  // or project discovery failed/loading), so no chat silently vanishes.
-  const visibleThreads = useMemo(
-    () =>
-      grouped && knownProjectIds
-        ? displayedThreads.filter((thread) => {
-            const projectId = projectIdOfThread(thread);
-            return projectId === null || !knownProjectIds.has(projectId);
-          })
-        : displayedThreads,
-    [grouped, displayedThreads, knownProjectIds],
-  );
+  const visibleThreads = displayedThreads;
   const branchList = useMemo(() => {
     const entries = flattenThreadBranches(visibleThreads);
     return {
@@ -508,14 +416,9 @@ export function RecentChatList() {
     threadListModel.canLoadMore,
   ]);
 
-  // Grouped mode moves project threads under `ProjectsSection`, so this list
-  // can be empty while older pages (possibly holding unassigned threads) still
-  // exist on the server. Keep the pagination controls mounted then; flat mode
-  // keeps the original "empty list renders nothing" behavior.
-  if (
-    visibleThreads.length === 0 &&
-    !(grouped && hasNextPage && threadListModel.canLoadMore)
-  ) {
+  // Flat list only: this list can be empty while older pages still exist on
+  // the server.
+  if (visibleThreads.length === 0) {
     return null;
   }
   return (

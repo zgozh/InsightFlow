@@ -10,7 +10,6 @@ import type { PropsWithChildren } from "react";
 const mocks = rs.hoisted(() => ({ fetch: rs.fn() }));
 rs.mock("@/core/api/fetcher", () => ({ fetch: mocks.fetch }));
 
-import { PROJECTS_QUERY_KEY } from "@/core/projects/api";
 import { useArchiveThread } from "@/core/threads/archive";
 import { usePinThread } from "@/core/threads/hooks";
 
@@ -166,25 +165,19 @@ test("a late pin response cannot roll back the confirmed archive flag", async ()
   client.clear();
 });
 
-test("archive invalidates project-scoped thread lists on success", async () => {
+test("archive invalidates the shared thread lists on success", async () => {
   mocks.fetch.mockResolvedValue(
     new Response(JSON.stringify({ metadata: { deerflow_archived: true } })),
   );
   const { client, result } = setup();
-  const projectListKey = [...PROJECTS_QUERY_KEY, "threads", "proj-1"];
-  client.setQueryData(projectListKey, {
-    pages: [[{ ...original }]],
-    pageParams: [0],
-  });
   const invalidate = rs.spyOn(client, "invalidateQueries");
   await act(async () => {
     await result.current.mutateAsync({ threadId: "chat", archived: true });
   });
-  // The project page's thread list changes membership with the archive flag;
-  // every other thread mutation invalidates this prefix (regression: archive
-  // was the lone path leaving an open project page stale).
+  // Phase 5 删除 Projects 后不再有 project 作用域的线程列表；归档仍必须失效
+  // 共享的搜索与无限列表前缀，否则侧栏会保留已被归档的行。
   const keys = invalidate.mock.calls.map(([filters]) => filters?.queryKey);
-  expect(keys).toContainEqual([...PROJECTS_QUERY_KEY, "threads"]);
-  expect(client.getQueryState(projectListKey)?.isInvalidated).toBe(true);
+  expect(keys).toContainEqual(["thread", "metadata", "chat"]);
+  expect(keys).toContainEqual(["threads", "search"]);
   client.clear();
 });

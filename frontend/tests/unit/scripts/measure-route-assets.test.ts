@@ -11,6 +11,10 @@ import {
 describe("route asset measurement", () => {
   it("covers every approved representative route", () => {
     expect(ROUTES).toContain("/login");
+    expect(ROUTES).toContain("/workspace/metrics");
+    // Phase 5 删除了上游文档站与博客路由，预算清单里不能残留它们。
+    expect(ROUTES).not.toContain("/en/docs");
+    expect(ROUTES).not.toContain("/blog/posts");
   });
 
   it("removes an inherited static-mode flag from the normal build", () => {

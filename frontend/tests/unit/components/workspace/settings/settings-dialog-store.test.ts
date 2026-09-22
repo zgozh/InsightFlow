@@ -28,11 +28,11 @@ test("openSettingsDialog opens on the requested section", () => {
 });
 
 test("setSettingsDialogOpen(false) keeps the last section", () => {
-  openSettingsDialog("channels");
+  openSettingsDialog("subagents");
   setSettingsDialogOpen(false);
   expect(getSettingsDialogSnapshot()).toEqual({
     open: false,
-    section: "channels",
+    section: "subagents",
   });
 });
 

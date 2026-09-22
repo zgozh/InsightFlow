@@ -25,12 +25,12 @@ baseline:
   tests: 1078
   text_loc: 717429
 forecast_after_all_batches: &id001
-  tracked: 2290
-  source: 1060
-  tests: 894
-  text_loc: 547896
+  tracked: 2267
+  source: 1058
+  tests: 873
+  text_loc: 542536
 target_reachable: false
-target_verdict: 五批共删除 783 tracked / 339 source / 184 tests / 169533 text-LOC；剩余 2290 tracked / 1060 source / 894 tests / 547896 text-LOC。相对 tracked 目标区间 850–1050 差 1240–1440，相对硬上限 1200 仍高 1090；生产源码比目标上限 650 高 410；测试比目标上限 350 高 544；有效文本 LOC 比目标上限 220k 高 327896。剩余部分由 KEEP 契约的不可删成本构成，见 keep_cost_breakdown。
+target_verdict: 五批共删除 806 tracked / 341 source / 205 tests / 174893 text-LOC；剩余 2267 tracked / 1058 source / 873 tests / 542536 text-LOC。相对 tracked 目标区间 850–1050 差 1217–1417，相对硬上限 1200 仍高 1067；生产源码比目标上限 650 高 408；测试比目标上限 350 高 523；有效文本 LOC 比目标上限 220k 高 322536。剩余部分由 KEEP 契约的不可删成本构成，见 keep_cost_breakdown。
 keep_cost_breakdown:
 - area: backend/tests（Phase 0–4 安全与运行期回归的唯一载体）
   tracked: 655
@@ -51,17 +51,17 @@ keep_cost_breakdown:
   text_loc: 107336
   why_kept: KEEP 契约内的不可删成本；480 tracked 文件
 - area: frontend/tests（KEEP 路由的 unit/dom/e2e 覆盖）
-  tracked: 236
+  tracked: 215
   source: 0
-  tests: 236
-  text_loc: 50852
-  why_kept: KEEP 契约内的不可删成本；236 tracked 文件
+  tests: 215
+  text_loc: 46034
+  why_kept: KEEP 契约内的不可删成本；215 tracked 文件
 - area: frontend/src（InsightFlow 工作台、chat 主链、artifact、设置、i18n）
-  tracked: 406
-  source: 402
+  tracked: 404
+  source: 400
   tests: 0
-  text_loc: 68051
-  why_kept: KEEP 契约内的不可删成本；406 tracked 文件
+  text_loc: 67509
+  why_kept: KEEP 契约内的不可删成本；404 tracked 文件
 - area: docs + backend/docs（阶段文档、验收契约、模块指南）
   tracked: 103
   source: 0
@@ -75,11 +75,11 @@ keep_cost_breakdown:
   text_loc: 49605
   why_kept: KEEP 契约内的不可删成本；410 tracked 文件
 - area: 合计（删除后仍保留的全部 tracked 文件）
-  tracked: 2290
-  source: 1060
-  tests: 894
-  text_loc: 547896
-  why_kept: baseline tracked=3073 → 保留 2290；text-LOC 717429 → 547896。剩余部分不是「尚未删干净」，而是 KEEP 契约指定的产品面本体。
+  tracked: 2267
+  source: 1058
+  tests: 873
+  text_loc: 542536
+  why_kept: baseline tracked=3073 → 保留 2267；text-LOC 717429 → 542536。剩余部分不是「尚未删干净」，而是 KEEP 契约指定的产品面本体。
 batches:
 - id: B1
   objective: 删除 InsightFlow 最终产品面之外的全部前端路由、孤儿营销组件与上游品牌资产，并把共享外壳从这些路由上解耦。
@@ -329,11 +329,34 @@ batches:
     keep_exceptions: []
   delete_files:
   - frontend/public/images/deer.svg
+  - frontend/src/components/landing/post-list.tsx
   - frontend/src/components/landing/progressive-skills-animation.tsx
   - frontend/src/components/landing/star-counter.tsx
   - frontend/src/components/workspace/agent-welcome.tsx
   - frontend/src/components/workspace/move-to-project-menu.tsx
   - frontend/src/components/workspace/projects-section.tsx
+  - frontend/src/components/workspace/settings/channels-settings-page.tsx
+  - frontend/tests/e2e-real-backend/project-trash.spec.ts
+  - frontend/tests/e2e/agent-chat.spec.ts
+  - frontend/tests/e2e/agent-settings-layout.spec.ts
+  - frontend/tests/e2e/agents-feature-disabled.spec.ts
+  - frontend/tests/e2e/browser-feature.spec.ts
+  - frontend/tests/e2e/capability-center.spec.ts
+  - frontend/tests/e2e/channels.spec.ts
+  - frontend/tests/e2e/docs-localized-links.spec.ts
+  - frontend/tests/e2e/integrations.spec.ts
+  - frontend/tests/e2e/mcp-settings.spec.ts
+  - frontend/tests/e2e/project-documents.spec.ts
+  - frontend/tests/e2e/skill-export.spec.ts
+  - frontend/tests/unit/app/github-stars.test.ts
+  - frontend/tests/unit/app/projects-page.dom.test.tsx
+  - frontend/tests/unit/components/landing/case-study-section.dom.test.tsx
+  - frontend/tests/unit/components/landing/star-counter.dom.test.tsx
+  - frontend/tests/unit/components/workspace/input-box-project-attachment.dom.test.tsx
+  - frontend/tests/unit/core/integrations/lark/api.test.ts
+  - frontend/tests/unit/core/mcp/api.test.ts
+  - frontend/tests/unit/core/mcp/hooks.test.ts
+  - frontend/tests/unit/core/mcp/parse.test.ts
   modify_files:
   - path: frontend/src/app/(auth)/login/page.tsx
     change: 删除 FlickeringGrid 的 mask-[url(/images/deer.svg)]，保留网格；不新增图片资产
@@ -381,6 +404,68 @@ batches:
     change: 断言收缩到 KEEP 导航项
   - path: frontend/tests/unit/core/threads/utils.test.ts
     change: pathOfThread 断言改为只返回 chats 路由
+  - path: frontend/src/mdx-components.ts
+    change: 删除 docs 组件映射（components/docs 已删），保留 nextra 包装可编译
+  - path: frontend/src/components/workspace/chats/chat-providers.tsx
+    change: 删除 browser-view provider 挂载，保留 chat/artifact/analytics provider
+  - path: frontend/src/components/workspace/recent-chat-list.tsx
+    change: 删除 projects 分组依赖，只按最近对话排序
+  - path: frontend/src/components/workspace/input-box.tsx
+    change: 删除 project 附件与 voice-input 接入，保留附件/输入主链
+  - path: frontend/tests/unit/core/api/static-mode.test.ts
+    change: 删除 channels/integrations/mcp 静态兜底断言，保留 KEEP 路由断言
+  - path: frontend/tests/unit/core/threads/archive.dom.test.tsx
+    change: 删除 projects api 依赖的 fixture，保留归档用例
+  - path: frontend/tests/unit/core/threads/infinite.test.ts
+    change: 删除 projects api 依赖的 fixture，保留分页用例
+  - path: frontend/tests/e2e/thread-history.spec.ts
+    change: 删除 /showcase 用例，保留 /workspace/chats 历史用例
+  - path: frontend/tests/e2e/settings-model-sync.spec.ts
+    change: 删除 /workspace/agents 用例，保留普通 chat 模型同步用例
+  - path: frontend/tests/e2e/thread-ordering.spec.ts
+    change: 删除 /workspace/agents/ordering-agent 用例，保留 chats 排序用例
+  - path: frontend/src/components/workspace/chats/chat-box.tsx
+    change: 删除 browser-view 右侧面板与 browserEnabled，保留 artifact/sidecar 面板
+  - path: frontend/src/components/workspace/messages/message-group.tsx
+    change: 删除 browser-view provider 依赖，保留浏览器截图预览与工具标签
+  - path: frontend/src/components/workspace/messages/message-list.tsx
+    change: 删除 browser frame 推送 effect，保留消息分组主链
+  - path: frontend/src/components/workspace/messages/message-list-item.tsx
+    change: 会话引用 chip 只走 /workspace/chats/{id}
+  - path: frontend/src/components/workspace/workspace-sidebar.tsx
+    change: 删除 channels 列表与 projects 分区挂载
+  - path: frontend/src/components/workspace/thread-delete-dialog.tsx
+    change: 删除 agent_name 路由参数依赖
+  - path: frontend/src/components/workspace/workspace-settings-deep-link.tsx
+    change: settings 深链允许集合去掉 channels
+  - path: frontend/src/components/workspace/chats/use-thread-chat.ts
+    change: isMock 只看 ?mock=true，删除 showcase 前缀
+  - path: frontend/src/core/threads/archive.ts
+    change: 删除 PROJECTS_QUERY_KEY 失效调用，保留归档失效语义
+  - path: frontend/src/core/threads/hooks.ts
+    change: 删除 5 处 PROJECTS_QUERY_KEY 失效调用，保留线程缓存失效语义
+  - path: frontend/src/core/features/api.ts
+    change: 删除 browser_control 能力字段与 fetchBrowserControlEnabled
+  - path: frontend/scripts/measure-route-assets.mjs
+    change: ROUTES 去掉 /en/docs 与 /blog/posts，加入 /workspace/metrics
+  - path: frontend/tests/e2e/chat.spec.ts
+    change: 删除 Project-scoped submit staleness 与 project 预创建断言，保留 /goal 主链用例
+  - path: frontend/tests/e2e-auth/artifact-viewer-showcase.spec.ts
+    change: 删除依赖 public/demo 夹具的匿名渲染用例，保留两条鉴权边界断言
+  - path: frontend/tests/unit/app/layout-boundaries.test.ts
+    change: 删除 docs/blog 布局的 katex 断言，保留 KEEP 路由断言
+  - path: frontend/tests/unit/components/ui/animation-scheduling.test.ts
+    change: 删除 landing/sections 两个已删组件的调度断言，保留 hero Galaxy 断言
+  - path: frontend/tests/unit/components/workspace/lazy-panels.test.ts
+    change: 动态导入计数改为 6/3，保留懒加载边界断言
+  - path: frontend/tests/unit/components/workspace/settings/settings-dialog-store.test.ts
+    change: channels 段落改用 subagents
+  - path: frontend/tests/unit/components/workspace/conversation-references-flow.dom.test.tsx
+    change: chip href 断言改为 /workspace/chats/source-1
+  - path: frontend/tests/unit/core/threads/static-demo.test.ts
+    change: 删除 public/demo 夹具同步断言与 pathOfPublicDemoThread 用例
+  - path: frontend/tests/unit/scripts/measure-route-assets.test.ts
+    change: ROUTES 断言改为 metrics 且不含 docs/blog
   keep_exceptions:
   - frontend/src/components/workspace/channels/buzz-provider-icon.LICENSE.txt
   - frontend/src/components/workspace/channels/buzz-provider-icon.tsx
@@ -407,8 +492,24 @@ batches:
   - env.NEXT_PUBLIC_*（GITHUB_OAUTH_TOKEN 随 /github-stars 路由删除）
   dependencies: []
   tests_to_delete:
+  - frontend/tests/e2e-real-backend/project-trash.spec.ts
+  - frontend/tests/e2e/agent-chat.spec.ts
+  - frontend/tests/e2e/agent-settings-layout.spec.ts
+  - frontend/tests/e2e/agents-feature-disabled.spec.ts
+  - frontend/tests/e2e/browser-feature.spec.ts
+  - frontend/tests/e2e/capability-center.spec.ts
+  - frontend/tests/e2e/channels.spec.ts
+  - frontend/tests/e2e/docs-localized-links.spec.ts
+  - frontend/tests/e2e/integrations.spec.ts
+  - frontend/tests/e2e/mcp-settings.spec.ts
+  - frontend/tests/e2e/project-documents.spec.ts
+  - frontend/tests/e2e/skill-export.spec.ts
+  - frontend/tests/unit/app/github-stars.test.ts
+  - frontend/tests/unit/app/projects-page.dom.test.tsx
   - frontend/tests/unit/components/docs/docs-page-map.test.ts
   - frontend/tests/unit/components/docs/localized-links.test.ts
+  - frontend/tests/unit/components/landing/case-study-section.dom.test.tsx
+  - frontend/tests/unit/components/landing/star-counter.dom.test.tsx
   - frontend/tests/unit/components/workspace/agents/agent-display-name.dom.test.tsx
   - frontend/tests/unit/components/workspace/agents/agent-settings-dialog-helpers.test.ts
   - frontend/tests/unit/components/workspace/browser-view/browser-stream-source.test.ts
@@ -419,6 +520,7 @@ batches:
   - frontend/tests/unit/components/workspace/capabilities/skill-export-dialog.dom.test.tsx
   - frontend/tests/unit/components/workspace/capabilities/skill-presentation.test.ts
   - frontend/tests/unit/components/workspace/channels/channel-provider-icon.dom.test.tsx
+  - frontend/tests/unit/components/workspace/input-box-project-attachment.dom.test.tsx
   - frontend/tests/unit/components/workspace/projects/project-documents-section.dom.test.tsx
   - frontend/tests/unit/components/workspace/projects/project-threads-section.dom.test.tsx
   - frontend/tests/unit/components/workspace/trash/trash-view.dom.test.tsx
@@ -430,6 +532,10 @@ batches:
   - frontend/tests/unit/core/channels/connect-poll.test.ts
   - frontend/tests/unit/core/channels/open-connect-url.test.ts
   - frontend/tests/unit/core/channels/provider-state.test.ts
+  - frontend/tests/unit/core/integrations/lark/api.test.ts
+  - frontend/tests/unit/core/mcp/api.test.ts
+  - frontend/tests/unit/core/mcp/hooks.test.ts
+  - frontend/tests/unit/core/mcp/parse.test.ts
   - frontend/tests/unit/core/projects/composer-attach-hook.dom.test.tsx
   - frontend/tests/unit/core/projects/composer-attach.dom.test.ts
   - frontend/tests/unit/core/projects/documents-api.test.ts
@@ -456,20 +562,20 @@ batches:
   cumulative_gates:
   - B1 结束时的 KEEP 前端路由全部可渲染（见上）
   rollback: git revert <B1 commit>（该批一个 commit，revert 后 KEEP 主链自洽）
-  forecast_tracked_deleted: 263
-  forecast_source_deleted: 122
-  forecast_tests_deleted: 30
-  forecast_text_loc_deleted: 29406
+  forecast_tracked_deleted: 286
+  forecast_source_deleted: 124
+  forecast_tests_deleted: 51
+  forecast_text_loc_deleted: 34766
   before:
     tracked: 3073
     source: 1399
     tests: 1078
     text_loc: 717429
   forecast_after:
-    tracked: 2810
-    source: 1277
-    tests: 1048
-    text_loc: 688023
+    tracked: 2787
+    source: 1275
+    tests: 1027
+    text_loc: 682663
 - id: B2
   objective: 删除 IM 渠道、Custom/Managed Agent、Projects/Documents/Trash/Browser 与 Console 的全部后端入口，并解除 thread/artifact/scheduler 对它们的耦合。
   delete_roots:
@@ -882,15 +988,15 @@ batches:
   forecast_tests_deleted: 83
   forecast_text_loc_deleted: 79507
   before:
-    tracked: 2810
-    source: 1277
-    tests: 1048
-    text_loc: 688023
+    tracked: 2787
+    source: 1275
+    tests: 1027
+    text_loc: 682663
   forecast_after:
-    tracked: 2639
-    source: 1199
-    tests: 965
-    text_loc: 608516
+    tracked: 2616
+    source: 1197
+    tests: 944
+    text_loc: 603156
 - id: B3
   objective: 删除 ACP/durable batch、远程 sandbox 与 provisioner/Helm、web search/model/memory 的备用实现，只留下默认配置真正加载的那一条主链。
   delete_roots:
@@ -1368,15 +1474,15 @@ batches:
   forecast_tests_deleted: 59
   forecast_text_loc_deleted: 47015
   before:
-    tracked: 2639
-    source: 1199
-    tests: 965
-    text_loc: 608516
+    tracked: 2616
+    source: 1197
+    tests: 944
+    text_loc: 603156
   forecast_after:
-    tracked: 2454
-    source: 1112
-    tests: 906
-    text_loc: 561501
+    tracked: 2431
+    source: 1110
+    tests: 885
+    text_loc: 556141
 - id: B4
   objective: 删除 Skill 平台与媒体技能、移除随之失去最后一个 importer 的依赖与配置键、同步 CI 与文档，并把版本契约从三源收敛为两源。
   delete_roots:
@@ -1624,15 +1730,15 @@ batches:
   forecast_tests_deleted: 11
   forecast_text_loc_deleted: 11834
   before:
-    tracked: 2454
-    source: 1112
-    tests: 906
-    text_loc: 561501
+    tracked: 2431
+    source: 1110
+    tests: 885
+    text_loc: 556141
   forecast_after:
-    tracked: 2351
-    source: 1074
-    tests: 895
-    text_loc: 549667
+    tracked: 2328
+    source: 1072
+    tests: 874
+    text_loc: 544307
 - id: B5
   objective: 清除孤儿引用、死 i18n 键、被删主题的历史文档与实验包袱，更新 README/AGENTS/文档，并对最终规模做一次对账。
   delete_roots:
@@ -1730,10 +1836,10 @@ batches:
   forecast_tests_deleted: 1
   forecast_text_loc_deleted: 1771
   before:
-    tracked: 2351
-    source: 1074
-    tests: 895
-    text_loc: 549667
+    tracked: 2328
+    source: 1072
+    tests: 874
+    text_loc: 544307
   forecast_after: *id001
 keep_whitelist:
   gateway_routers:

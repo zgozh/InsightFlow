@@ -49,8 +49,9 @@ export function ThreadDeleteDialogProvider({
   const { t } = useI18n();
   const router = useRouter();
   const pathname = usePathname();
-  const { thread_id: threadIdFromPath, agent_name: agentNameFromPath } =
-    useParams<{ thread_id: string; agent_name?: string }>();
+  const { thread_id: threadIdFromPath } = useParams<{
+    thread_id: string;
+  }>();
   const {
     mutateAsync: deleteThread,
     isPending: isDeleting,
@@ -74,9 +75,7 @@ export function ThreadDeleteDialogProvider({
     const currentPathname =
       typeof window === "undefined" ? pathname : window.location.pathname;
     const threadPath = pathOfThread(thread);
-    const nextThreadPath = pathOfThread("new", {
-      agent_name: agentNameFromPath,
-    });
+    const nextThreadPath = pathOfThread("new");
     const isNewThreadPath = currentPathname === nextThreadPath;
     const isCurrentThread =
       thread.thread_id === threadIdFromPath ||
@@ -109,7 +108,6 @@ export function ThreadDeleteDialogProvider({
       deleteInFlight.current = false;
     }
   }, [
-    agentNameFromPath,
     deleteThread,
     pathname,
     router,

@@ -39,7 +39,7 @@ export async function staticApiResponse(
 
   const path = url.pathname.slice(root.pathname.length).replace(/\/$/, "");
   // These routes already own the demo settings data; do not maintain a second copy.
-  if (["skills", "mcp/config", "integrations/lark/status"].includes(path)) {
+  if (["skills", "mcp/config"].includes(path)) {
     return globalThis.fetch(new URL(`/mock/api/${path}`, origin).href, init);
   }
 
@@ -48,7 +48,6 @@ export async function staticApiResponse(
     case "features":
       data = {
         agents_api: { enabled: false },
-        browser_control: { enabled: false },
         mcp_tasks: { enabled: false },
         subagent_batches: {
           enabled: false,
@@ -58,12 +57,6 @@ export async function staticApiResponse(
         },
         conversation_references: { enabled: false, max_references: 0 },
       } satisfies FeaturesResponse;
-      break;
-    case "channels/providers":
-      data = { enabled: false, providers: [] };
-      break;
-    case "channels/connections":
-      data = { connections: [] };
       break;
     case "agents":
       data = { agents: [] };

@@ -8,13 +8,13 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const DEMO_THREAD_ID = "7cfa5f8f-a2f8-47ad-acbd-da7137baf990";
+// Phase 5 删除了上游文档站与博客路由，预算只覆盖 InsightFlow 保留的页面。
 export const ROUTES = [
   "/",
   "/login",
   "/workspace/chats",
   `/workspace/chats/${DEMO_THREAD_ID}`,
-  "/en/docs",
-  "/blog/posts",
+  "/workspace/metrics",
 ];
 
 /**

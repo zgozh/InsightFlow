@@ -5,8 +5,8 @@ export type FooterProps = {
   className?: string;
 };
 
-// 页脚始终以品牌词条为唯一来源。它同时被 /、/blog 与 /[lang]/docs 复用，
-// 这三条路由的布局都是服务端组件，因此这里可以直接读词条常量，无须再走 provider。
+// 页脚始终以品牌词条为唯一来源。Phase 5 之后它只被产品首页复用，
+// 该路由的布局是服务端组件，因此这里可以直接读词条常量，无须再走 provider。
 const { productName, aboutDerivation, aboutLicense } = analyticsEnUS.branding;
 
 export function Footer({ className }: FooterProps) {

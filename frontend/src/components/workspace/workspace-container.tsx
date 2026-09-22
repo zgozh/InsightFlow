@@ -19,7 +19,6 @@ import { cn } from "@/lib/utils";
 // Workspace sections that have an index route (/workspace/<section>/page.tsx)
 // and can therefore be linked to from the breadcrumb.
 const LINKABLE_SECTIONS: Record<string, true> = {
-  agents: true,
   chats: true,
   datasources: true,
   history: true,

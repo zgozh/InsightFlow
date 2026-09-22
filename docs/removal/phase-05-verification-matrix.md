@@ -7,14 +7,21 @@
 
 | 批次 | 目标 | 依赖 | 回滚 |
 | --- | --- | --- | --- |
-| B1 `frontend-legacy-and-brand` | 前端遗留面与品牌资产 | 无 | `git revert <B1>` |
-| B2 `backend-product-faces` | IM/Custom Agent/Projects/Browser/Console 后端入口 | B1（前端调用方已消失） | `git revert <B2>` |
-| B3 `runtime-surplus` | ACP/durable batch、远程 sandbox/provisioner/Helm、provider zoo、memory zoo | B2（共享 config/registry 已收敛） | `git revert <B3>` |
-| B4 `skills-deps-config` | Skills/media、依赖、config 键、CI job、文档 | B3（最后一个 importer 已消失） | `git revert <B4>` |
-| B5 `convergence` | 孤儿引用、i18n、README/AGENTS、规模收敛 | B4 | `git revert <B5>` |
+| B1 `frontend-legacy-and-brand` | 前端遗留面与品牌资产 | 无 | 见 §1.1 |
+| B2 `backend-product-faces` | IM/Custom Agent/Projects/Browser/Console 后端入口 | B1（前端调用方已消失） | 见 §1.1 |
+| B3 `runtime-surplus` | ACP/durable batch、远程 sandbox/provisioner/Helm、provider zoo、memory zoo | B2（共享 config/registry 已收敛） | 见 §1.1 |
+| B4 `skills-deps-config` | Skills/media、依赖、config 键、CI job、文档 | B3（最后一个 importer 已消失） | 见 §1.1 |
+| B5 `convergence` | 孤儿引用、i18n、README/AGENTS、规模收敛 | B4 | 见 §1.1 |
 
-依赖方向是**有向无环的**：只允许 B1→B2→B3→B4→B5。回滚任意一批都不得要求回滚其后批次——
-每批结束时 KEEP 主链必须自洽可运行（见 §3 的逐批最小门禁）。
+### 1.1 回滚语义（Phase 5B 修正）
+
+依赖方向是**有向无环的**：只允许 B1→B2→B3→B4→B5。**整链回滚必须逆序执行 B5→B1**
+（`docs/decisions/0002-phase-05-size-budget-reconciliation.md`）；"任意旧批次可在保留后续批次的情况下
+单独 revert"**不是有效承诺**，因为 B2–B5 的 modify_files 建立在 B1 已删除前端调用方的前提上。
+
+单批 `git revert <Bn>` 只在**其后批次尚未应用**时成立；若后续批次已提交，必须先逆序回滚它们。
+每批结束时 KEEP 主链必须自洽可运行（见 §3 的十一条不变量），这是"可以停在任何一批"的含义，
+不是"可以只回滚任何一批"。
 
 ## 2. 每批最小门禁（focused，不通跑全量）
 

@@ -35,7 +35,10 @@ Phase 5A 结束时的实测结果：
 | B4 | Skill 平台/媒体技能、依赖、配置键、CI job、文档 | 只有 B3 删掉最后一个 importer 后，依赖与 extras 才能安全移除 |
 | B5 | 收敛：孤儿引用、i18n、README/AGENTS、历史文档与实验资产 | 收尾批，只做"最后一公里"对齐 |
 
-每批都可独立 `git revert`，且 revert 任意一批不得要求 revert 其后批次——每批结束 KEEP 主链必须自洽（门禁见 `phase-05-verification-matrix.md` §3）。
+每批结束时 KEEP 主链必须自洽（门禁见 `phase-05-verification-matrix.md` §3）。
+**回滚语义（Phase 5B 修正）**：B1→B5 是依赖链，整链回滚必须逆序 B5→B1；单批 `git revert <Bn>`
+只在其后批次尚未应用时成立。Phase 5A 曾写成"任意批次可单独 revert"，该表述过强，已在
+`phase-05-verification-matrix.md` §1.1 更正。
 
 ## 2. 逐域依赖影响
 
@@ -47,7 +50,7 @@ Phase 5A 结束时的实测结果：
 - **解除方式**：先按 §4.1 清 `deer.svg` 可见引用（登录/初始化页），删路由与孤儿组件，再修剪共享外壳（导航、i18n、mock、perf fixture）。`mock-api.ts` 与 `performance-budgets.json` 是**修剪不是删除**。
 - **替代**：KEEP 路由为 `/`、`/login`、`/setup`、`/auth/callback`、`/workspace`、`/workspace/analysis/**`、`/workspace/chats/**`、`/workspace/{datasources,metrics,reports,history,scheduled-tasks}`、`/artifacts/view`、`/api/memory/**`。
 - **风险**：`components/landing/section.tsx`（KEEP）与 `sections/**`（删）名字相近但用途不同；`thread-channel-source.tsx` 是 KEEP，因此 `components/workspace/channels` 删除时必须把 `channel-provider-icon.tsx`、`buzz-provider-icon.tsx`（含 `.LICENSE.txt`）列为 `keep_exceptions`。
-- **回滚**：`git revert <B1>`。
+- **回滚**：随该批次提交，依赖链逆序回滚（见 §1）；`git revert <B1>`。
 
 ### 2.2 Channels / IM（B2）
 
@@ -57,7 +60,7 @@ Phase 5A 结束时的实测结果：
 - **跨树共享依赖**：`deerflow/integrations/lark_cli.py` 被 **KEEP** 文件引用——`community/aio_sandbox/aio_sandbox_provider.py:42-43,1194,2252-2324`（lark 挂载/broker）与 `sandbox/tools.py:2108,2149`（lark 环境注入）。**这两个 KEEP 文件必须与本批同时修改**，删掉 lark 装配但保留 AIO 沙箱与命令工具主路径。这是 B2 最容易漏的一处。
 - **DB**：`channel_connections`、`channel_conversations`、`channel_credentials`、`channel_oauth_states`、`webhook_deliveries` 五张表**保留**（见 §3.3），只删 repository/store 实现。
 - **替代**：无——IM 接入整体退出产品面；`/api/channels*`、`/api/integrations`、`/api/webhooks/github` 全部 404。
-- **回滚**：`git revert <B2>`。
+- **回滚**：随该批次提交，依赖链逆序回滚（见 §1）；`git revert <B2>`。
 
 ### 2.3 Custom / Managed Agents（B2）
 
@@ -67,7 +70,7 @@ Phase 5A 结束时的实测结果：
 - **`assistants_compat` 的裁决证据**（结论：可删）：LangGraph SDK 1.5.3 的 `dist/**` 未调用任何 `assistants.*` 方法（只有 `AssistantsClient` 定义，无调用点）；`frontend/src` 从不请求 `/assistants`；`useStream({assistantId:"lead_agent"})`（`core/threads/hooks.ts:1852`）只把 `assistantId` 透传给被覆写的 `client.runs.stream`（`core/api/api-client.ts:459`）；`frontend/tests/e2e/utils/mock-api.ts` 未 mock 任何 `/assistants` 路由，而 chat/sidecar/thread E2E 全绿。
 - **替代**：普通 `task` 委派（`deerflow.subagents` runtime + builtin 定义）与 `config.yaml` 内的静态 subagent 定义保留。
 - **风险**：`config/agents_config.py` 还被 KEEP 的 lead agent、client、context_compaction 引用，**不能整文件删除**，只能裁剪。
-- **回滚**：`git revert <B2>`。
+- **回滚**：随该批次提交，依赖链逆序回滚（见 §1）；`git revert <B2>`。
 
 ### 2.4 Projects / Documents / Trash / Browser（B2）
 
@@ -76,7 +79,7 @@ Phase 5A 结束时的实测结果：
 - **DB**：`projects`、`project_documents`、`threads.meta.project_id` 表/列保留（§3.3），只删 repository 与写入路径；`metadata.deerflow_project_id` 的写入点全部移除。
 - **解除方式**：先删 router 与前端调用方（B1 已完成），再删 runtime 投影，最后删 store。`/api/features` 的 `browser_control` 键在 B1（前端 hook 侧）与 B2（后端键侧）各改一次，清单里两批都登记为 modify——这不是重复，而是跨批一致性要求。
 - **替代**：thread ownership、artifact 下载与分析历史完全不受影响。
-- **回滚**：`git revert <B2>`。
+- **回滚**：随该批次提交，依赖链逆序回滚（见 §1）；`git revert <B2>`。
 
 ### 2.5 ACP 与 durable batch（B3）
 
@@ -86,7 +89,7 @@ Phase 5A 结束时的实测结果：
 - **DB**：`subagent_batches`、`subagent_batch_items` 两张表保留（§3.3）；只删 store 与 `__init__.py` 的导出。
 - **替代**：普通 `task` 委派（超时/取消/令牌/回执/循环护栏）完全保留。
 - **风险**：`prompt.py` 与 `tools/builtins/__init__.py` 是 KEEP 热路径，改动必须只删条目、不动结构。
-- **回滚**：`git revert <B3>`。
+- **回滚**：随该批次提交，依赖链逆序回滚（见 §1）；`git revert <B3>`。
 
 ### 2.6 Remote sandbox / provisioner / Helm（B3）
 
@@ -95,7 +98,7 @@ Phase 5A 结束时的实测结果：
 - **共享工具的最后引用者**：`sandbox/remote_search.py` 与 `community/url_safety.py` 只有被删 provider 引用（`boxlite/box.py:29`、`e2b_sandbox.py:15`、`opensandbox/sandbox.py:16`、`tenki/sandbox.py:33`；`browser_automation`、`browserless`、`crawl4ai`、`fastcrw`），因此同批删除。**注意：AIO 沙箱的搜索输出解析不走 `remote_search.py`**（`aio_sandbox.py:701` 只是注释），不影响 KEEP 路径。
 - **替代**：Local + AIO/Docker 沙箱；`deploy/helm` 整体退出后，版本契约从"三源"（`backend/pyproject.toml`、`frontend/package.json`、`deploy/helm/.../Chart.yaml`）降为"两源"，B4 同步改 `scripts/verify_versions.sh`、`scripts/bump_version.sh`、`RELEASING.md`、`AGENTS.md` 与三个 workflow。**这是本阶段唯一有意缩小的发布契约，必须在报告里明写。**
 - **风险**：Kubernetes/Helm 部署方式随本批消失；若将来需要，只能以新批次重建。
-- **回滚**：`git revert <B3>`。
+- **回滚**：随该批次提交，依赖链逆序回滚（见 §1）；`git revert <B3>`。
 
 ### 2.7 Provider zoo（B3）
 
@@ -107,14 +110,14 @@ Phase 5A 结束时的实测结果：
 - **替代**：Web Search = DuckDuckGo（`deerflow.community.ddg_search`）、Web Fetch = Jina AI Reader（`deerflow.community.jina_ai`）；模型 = OpenAI-compatible + DeepSeek。
 - **能力损失（必须明写）**：`RAGFlow` 与 `LightRAG` 删除意味着**整个 `knowledge_search` RAG 知识检索能力消失**；`image_search` 消失意味着图像搜索能力消失；多个 search 后端消失意味着去中心化/自建搜索（SearXNG）与商业搜索（Brave/Serper/Sofya/Exa/InfoQuest/TencentWSA）全部退出。
 - **风险**：删除 `url_safety.py` 后，**本地不再有任何 SSRF 防护模块**；剩余 web fetch（Jina）走外部服务，安全边界从"本地 URL 校验"变为"仅信任目标服务"。此风险必须写进产品文档。
-- **回滚**：`git revert <B3>`。
+- **回滚**：随该批次提交，依赖链逆序回滚（见 §1）；`git revert <B3>`。
 
 ### 2.8 Memory providers（B3）
 
 - **入口**：`agents/memory/backends/{honcho,mem0,openviking}/**`、`docker/docker-compose.openviking.yaml`、`docs/OPENVIKING.md`、`docs/plans/OPENVIKING_HTTP_MEMORY_INTEGRATION.md`。
 - **解除方式**：`memory.backend` 取值收敛为 `deermem` / `noop`；config 校验与 wizard 选项同步删除；`deerflow.mcp` 与 OpenViking 的集成点同批移除。
 - **替代**：DeerMem（含 `select_facts_for_capacity`）与 Noop 后端、业务偏好主链（`user/preferences.py`）保留。
-- **回滚**：`git revert <B3>`。
+- **回滚**：随该批次提交，依赖链逆序回滚（见 §1）；`git revert <B3>`。
 
 ### 2.9 Skill platform / media（B4）
 
@@ -123,7 +126,7 @@ Phase 5A 结束时的实测结果：
 - **必须保留的相邻能力**：`deerflow/skills/{loader,parser,permissions,projection,security_scanner,security_static_scanner,skillscan}/**` 是**安装期**安全门禁，被 KEEP 的 `/api/skills`、`skills/installer.py`、`tools/skill_manage_tool.py`、`lead_agent/agent.py` 使用，**不随 review 平台删除**。判据：`skillscan/**` 的引用者全部是 KEEP 文件（`routers/skills.py`、`installer.py`、`skill_manage_tool.py`、`lead_agent/agent.py`），与 `skills/review/**` 的引用者（只有被删的 review tool）形成清晰对比。
 - **CI 影响**：`.github/workflows/skill-review-ci.yml` 与其 waiver 清单删除后，公开技能的评审门禁消失——这与"只保留 loader/policy/activation 与业务分析技能"的 KEEP 契约一致。
 - **替代**：KEEP 技能 = `business-analysis`、`data-analysis`、`chart-visualization`、`consulting-analysis`、`bootstrap`；`/api/skills` 的安装/启用/列表契约不变。
-- **回滚**：`git revert <B4>`。
+- **回滚**：随该批次提交，依赖链逆序回滚（见 §1）；`git revert <B4>`。
 
 ### 2.10 Dependencies / config / tests / docs（B4 + B5）
 
@@ -131,7 +134,7 @@ Phase 5A 结束时的实测结果：
 - **配置键**：`config.example.yaml`、`extensions_config.example.json`、`backend/packages/harness/deerflow/config/app_config.py`；配置结构变化必须同步 `config_version` 与 `scripts/check_config_version.sh`（该脚本在 B4 删除，故 `config_version` 校验改为在 B5 用 wizard/doctor 复验）。
 - **测试**：删除判据是"被测模块被删"，不是文件数。混合覆盖的测试**改而不删**（清单 `modify_files` 已逐条列出，例如 `test_web_search_time_range.py` 只删商业 provider 用例、保留 KEEP 的 DDG `time_range` 覆盖；`test_token_budget_middleware.py`/`test_tool_call_metadata.py` 把 claude_provider 换成 KEEP 的 OpenAI-compatible 模型）。
 - **文档/CI**：README/AGENTS/backend docs/CHANGELOG 同步；CI job 只在对应脚本删除后移除。
-- **回滚**：`git revert <B4>`、`git revert <B5>`。
+- **回滚**：随该批次提交，依赖链逆序回滚（见 §1）；`git revert <B4>`、`git revert <B5>`。
 
 ## 3. 引用证明与特别裁决
 

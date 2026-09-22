@@ -11,7 +11,7 @@ Baseline: DeerFlow `v2.1.0-rc0` (`769589e8daee14c2587a634b6b43bd96471a41a1`), im
 | 2 Safe data access | Complete | 2A `8a11d0e`, `f2d35d3`; 2B1 `44f62c3` + Fix 01; 2B2 `3a65865` + Fix 01; 2C1 `eda8878` + Fix 01 `0fc32bd`; 2C2 `568a3d6` + Fix 01 `c450c8c`，各切片均已复验 | Phase 3 implementation |
 | 3 Agent workflow | Complete | `7bd21d7`：受控查询 Agent 工具、确定性 evidence、经营分析 skill、operator-owned 加法式 subagent denylist；schema 层排除多余参数的 V1 裁决已记录 | Phase 4 implementation |
 | 4 Product UI | Complete | `ae89805` + Fix 01 `65b499d7`：报告索引、Analytics 管理页、安全 trace 投影、InsightFlow 产品工作台与最终保留界面品牌闭环 | Phase 5 removal audit |
-| 5 Capability removal | In progress | Phase 5A 审计完成：四份交付物（现状清单、删除清单、依赖影响、验证矩阵）已产出；五批共删 783 tracked 文件、删后 2290，Phase 0 规模目标在 KEEP 契约下不可达并附按域不可删成本证明；生产删除尚未开始 | Phase 5A GPT review |
+| 5 Capability removal | In progress | Phase 5A `5af2a68` 完成首轮删除清单：已证明可删 783 tracked files；目标预算待删除后复核 | Phase 5B GPT review |
 | 6 Deployment and acceptance | Not started | — | Full acceptance evidence |
 
 Phase 2 is delivered in four independently reviewed slices: **2A** deterministic SQL policy core, **2B1** semantic authorization core, **2B2** governed datasource execution, and **2C** persistence and delivery. A slice is not complete until its own gates and review pass.

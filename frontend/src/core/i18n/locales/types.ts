@@ -111,8 +111,7 @@ export interface Translations {
   };
 
   home: {
-    docs: string;
-    blog: string;
+    workspace: string;
   };
 
   // Welcome

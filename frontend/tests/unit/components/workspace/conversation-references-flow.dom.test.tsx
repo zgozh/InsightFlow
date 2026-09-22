@@ -67,7 +67,7 @@ beforeAll(() => {
 afterEach(cleanup);
 
 describe("conversation reference picker-to-transcript flow", () => {
-  it("links the transcript chip to a custom-agent source conversation", () => {
+  it("keeps the picker's agent metadata but routes the chip through chats", () => {
     // 1. Select the custom-agent conversation in the picker.
     let selected: ConversationReference | undefined;
     render(
@@ -95,7 +95,8 @@ describe("conversation reference picker-to-transcript flow", () => {
       additional_kwargs: buildConversationReferenceMetadata([selected!]),
     } as unknown as Message;
 
-    // 3. The transcript chip routes back to the custom-agent conversation.
+    // 3. Phase 5 删除 Custom/Managed Agent 路由后，历史引用仍带 agentName 元数据，
+    //    但 chip 统一走 /workspace/chats/{id}。
     cleanup();
     render(
       <MessageListItem
@@ -106,9 +107,7 @@ describe("conversation reference picker-to-transcript flow", () => {
       />,
     );
     const chip = screen.getByTestId("conversation-reference-chip");
-    expect(chip.getAttribute("href")).toBe(
-      "/workspace/agents/writer/chats/source-1",
-    );
+    expect(chip.getAttribute("href")).toBe("/workspace/chats/source-1");
   });
 
   it("links a default-agent source to the plain chats path", () => {

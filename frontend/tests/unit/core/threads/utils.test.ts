@@ -22,7 +22,7 @@ function makeThread(
   } as unknown as AgentThread;
 }
 
-test("uses standard chat route when thread has no agent context", () => {
+test("uses the standard chat route when the thread has no agent context", () => {
   expect(pathOfThread("thread-123")).toBe("/workspace/chats/thread-123");
   expect(
     pathOfThread({
@@ -37,50 +37,32 @@ test("encodes thread ids in standard chat routes", () => {
   );
 });
 
-test("encodes thread ids in agent chat routes", () => {
-  expect(pathOfThread("thread#1?draft", { agent_name: "researcher" })).toBe(
-    "/workspace/agents/researcher/chats/thread%231%3Fdraft",
-  );
-});
-
-test("uses agent chat route when thread context has agent_name", () => {
+// Phase 5 删除了 Custom/Managed Agent 产品面：历史 thread 的 agent_name 元数据
+// 不再参与路由，所有会话都落在 /workspace/chats/{id}。
+test("ignores agent_name context and metadata after the custom-agent removal", () => {
   expect(
     pathOfThread({
       thread_id: "thread-123",
       context: { agent_name: "researcher" },
     }),
-  ).toBe("/workspace/agents/researcher/chats/thread-123");
-});
-
-test("uses provided context when pathOfThread is called with a thread id", () => {
-  expect(pathOfThread("thread-123", { agent_name: "ops agent" })).toBe(
-    "/workspace/agents/ops%20agent/chats/thread-123",
-  );
-});
-
-test("routes an IM-selected thread to its custom agent from search metadata", () => {
+  ).toBe("/workspace/chats/thread-123");
   expect(
     pathOfThread({
       thread_id: "thread-456",
-      // Thread-search results do not include run context. The channel manager
-      // therefore persists both its restart key and this canonical routing key.
       metadata: {
         channel_source: { type: "im_channel", provider: "telegram" },
         channel_agent_name: "coder",
         agent_name: "coder",
       },
     }),
-  ).toBe("/workspace/agents/coder/chats/thread-456");
-});
-
-test("prefers context.agent_name over metadata.agent_name", () => {
+  ).toBe("/workspace/chats/thread-456");
   expect(
     pathOfThread({
       thread_id: "thread-789",
       context: { agent_name: "from-context" },
       metadata: { agent_name: "from-metadata" },
     }),
-  ).toBe("/workspace/agents/from-context/chats/thread-789");
+  ).toBe("/workspace/chats/thread-789");
 });
 
 test("reads pinned thread metadata strictly from the pinned metadata key", () => {

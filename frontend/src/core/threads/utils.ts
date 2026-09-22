@@ -35,6 +35,9 @@ type ThreadRouteTarget =
 /**
  * The custom agent owning a thread, from its run context first and then its
  * stored metadata; undefined for default-agent conversations.
+ *
+ * Phase 5 之后产品面只保留默认 lead agent，但历史 thread 的元数据仍可能带
+ * `agent_name`，会话引用选择器用它做只读展示，因此助手保留。
  */
 export function agentNameOfThread(thread: {
   context?: Pick<AgentThreadContext, "agent_name"> | null;
@@ -48,20 +51,13 @@ export function agentNameOfThread(thread: {
   return typeof metaAgent === "string" && metaAgent ? metaAgent : undefined;
 }
 
-export function pathOfThread(
-  thread: ThreadRouteTarget,
-  context?: Pick<AgentThreadContext, "agent_name"> | null,
-) {
+/**
+ * 线程的 Web UI 路径。Phase 5 删除了 Custom/Managed Agent 产品面，路由只剩
+ * `/workspace/chats/{id}` 一条；历史 thread 的 `agent_name` 元数据不再参与路由。
+ */
+export function pathOfThread(thread: ThreadRouteTarget) {
   const threadId = typeof thread === "string" ? thread : thread.thread_id;
-  const encodedThreadId = encodeURIComponent(threadId);
-  const agentName =
-    typeof thread === "string"
-      ? context?.agent_name
-      : agentNameOfThread(thread);
-
-  return agentName
-    ? `/workspace/agents/${encodeURIComponent(agentName)}/chats/${encodedThreadId}`
-    : `/workspace/chats/${encodedThreadId}`;
+  return `/workspace/chats/${encodeURIComponent(threadId)}`;
 }
 
 export function textOfMessage(message: Message) {
