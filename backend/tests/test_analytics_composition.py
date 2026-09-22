@@ -237,13 +237,12 @@ async def test_management_plan_and_execute_run_end_to_end_on_sqlite(tmp_path, mo
 
 
 @pytest.mark.asyncio
-async def test_a_query_limit_below_the_transport_cap_is_rejected_as_stale(tmp_path, monkeypatch):
-    """固定 ExecutionLimits 与 2B2「传输上限不得高于 SQL row_limit」不变量的交互。
+async def test_a_query_limit_below_the_transport_cap_is_clamped_not_rejected(tmp_path, monkeypatch):
+    """配置的 `max_result_rows` 是全局服务器上限，不是每条查询必须达到的下限。
 
-    默认 `max_result_rows=1000` 时，`LIMIT 10` 的查询会被 `CreateQueryExecutionPlan` 判为
-    `authorization_stale`：SQL 只授权 10 行，而传输层被允许读 1000 行。运维要么把
-    `max_result_rows` 配到不超过用户最小的 LIMIT，要么不使用比它更小的 LIMIT。
-    这里把该行为钉住，避免它悄悄变成"偶尔失败"。
+    Phase 2C2 Fix 01：服务端为每条计划取 `min(配置上限, prepared.row_limit)`，所以默认
+    `max_result_rows=1000` 时 `LIMIT 10` 的查询会正常建出 plan，而不是被判 `authorization_stale`。
+    收紧只向下发生，且 2B2 那条"传输上限大于授权 row_limit 直接拒绝"的校验原样保留为纵深防御。
     """
 
     monkeypatch.setattr(composition, "SQLAlchemyDatasourceQueryGateway", lambda **kwargs: _StubGateway(**kwargs))
@@ -271,8 +270,10 @@ async def test_a_query_limit_below_the_transport_cap_is_rejected_as_stale(tmp_pa
 
         delivery = await services.plan_query.execute(principal_id="user-9", datasource_id=datasource.id, raw_sql="SELECT id FROM orders LIMIT 10")
 
-        assert delivery.code == ExecutionDecisionCode.AUTHORIZATION_STALE.value
-        assert delivery.receipt is None
+        assert delivery.code == ExecutionDecisionCode.PLAN_CREATED.value
+        assert delivery.receipt is not None
+        # 配置上限仍是 1000（未被服务端改写），收紧只作用于本次计划。
+        assert services.config.max_result_rows == 1_000
     finally:
         await engine.dispose()
 

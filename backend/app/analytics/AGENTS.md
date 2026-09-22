@@ -132,9 +132,11 @@ HTTP 契约（`/api/analytics`）的安全约束：
 - owner 不匹配与不存在统一 404（不泄露"存在但不是你的"），版本冲突 409，存储/驱动失败 503 且不带文本；
 - 审计读取只有 exact-principal：管理员也必须给出精确 `principal_id`，`*` 不是通配符。
 
-行数上限的运维含义：`CreateQueryExecutionPlan` 要求配置的 `max_result_rows` 不高于该查询自身 LIMIT
-折算出的 `row_limit`（Phase 2B2 不变量），因此带更小 LIMIT 的查询会以 `authorization_stale` 被拒绝；
-`max_result_rows` 必须配到"用户会写的最小 LIMIT"以内。
+行数上限：`max_result_rows` 是**全局服务器上限，不是每条查询必须达到的下限**。`PlanAnalyticsQuery`
+在拿到服务端生成的 `AuthorizedQuerySpec` 后派生本次计划的 `ExecutionLimits`，只把该字段向下收紧到
+`min(配置上限, authorized.prepared.row_limit)`，其余字段固定来自启动配置。这是服务端派生而不是客户端
+override：上限只可能变小，`CreateQueryExecutionPlan` 里 `limits.max_result_rows <= prepared.row_limit`
+的校验继续作为纵深防御，plan payload 保存收紧后的 limits，execute 不会重新放宽。
 
 ## 语言规范
 

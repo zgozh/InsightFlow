@@ -3033,9 +3033,10 @@ authorization:
 #   稳定 503，也不会退化成内存 plan store。enabled=false 同理。
 # - 限额只来自这里，客户端没有任何覆盖入口。query_max_rows 是 SQL 层 row_limit 的上限，
 #   max_result_rows 是传输层上限，后者不得高于前者。
-# - 行数上限与执行链的交互（重要）：CreateQueryExecutionPlan 要求 max_result_rows 不高于
-#   该查询自身 LIMIT 折算出的 row_limit。因此 max_result_rows 应当配到"用户会写的最小
-#   LIMIT"以内，否则带更小 LIMIT 的查询会以 authorization_stale 被拒绝。
+# - max_result_rows 是全局服务器上限，不是每条查询必须达到的下限：服务端会为每条计划按
+#   min(max_result_rows, 该查询授权后的 row_limit) 自动向下收紧，因此 SELECT ... LIMIT 10
+#   在默认配置下也能正常建 plan。收紧是服务端派生，客户端无法覆盖；上限只可能变小，
+#   配置值本身不会被改写。
 # - max_engine_cost 必须是十进制精确值（带引号的字符串或整数），float 会被拒绝。
 # - datasource 只保存 opaque reference：secret_ref 形如 env://ANALYTICS_DS，指向一个受限
 #   JSON 环境变量（engine/host/port/database/username/password，可选 tls_mode/ca_pem）。

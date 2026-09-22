@@ -19,7 +19,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from app.analytics.application.authorization import AuthorizePreparedQuery
 from app.analytics.application.execution import CreateQueryExecutionPlan, ExecuteQueryPlan
@@ -30,8 +30,10 @@ from app.analytics.application.query_policy import QueryPolicy
 from app.analytics.config import AnalyticsConfig
 from app.analytics.domain import (
     AuthorizationDecisionCode,
+    AuthorizedQuerySpec,
     DatasourceStatus,
     ExecutionDecisionCode,
+    ExecutionLimits,
     QueryAuditCompletion,
     QueryAuditPhase,
     QueryAuditStart,
@@ -139,6 +141,23 @@ class PlanAnalyticsQuery:
             return False
         return True
 
+    def _plan_limits(self, authorized: AuthorizedQuerySpec) -> ExecutionLimits:
+        """为本次计划派生执行限额：只把传输行上限向下收紧到授权查询的 row_limit。
+
+        `max_result_rows` 是**全局服务器上限**，不是每条查询必须达到的下限——否则
+        `SELECT ... LIMIT 10` 会因为 1000 > 10 被判 `authorization_stale`。这里取
+        `min(配置上限, prepared.row_limit)`：客户端仍然无法提交或覆盖任何限额，结果上限只可能
+        变小而不可能变大，其余字段继续固定来自启动配置。`CreateQueryExecutionPlan` 里
+        `limits.max_result_rows <= prepared.row_limit` 的校验保留为纵深防御。
+        """
+
+        configured = self._config.execution_limits()
+        effective = min(configured.max_result_rows, authorized.prepared.row_limit)
+        if effective == configured.max_result_rows:
+            return configured
+        # `replace` 会重跑 ExecutionLimits 的不变量校验，收紧后的值仍然必须自洽。
+        return replace(configured, max_result_rows=effective)
+
     async def execute(self, *, principal_id: str, datasource_id: str, raw_sql: str) -> QueryPlanDelivery:
         try:
             datasource = await self._datasource_catalog.get_accessible(principal_id=principal_id, datasource_id=datasource_id)
@@ -201,7 +220,7 @@ class PlanAnalyticsQuery:
                 principal_id=principal_id,
                 datasource_id=datasource_id,
                 authorized=authorized,
-                limits=self._config.execution_limits(),
+                limits=self._plan_limits(authorized),
             )
         except Exception:  # noqa: BLE001 - 未知失败默认拒绝且不泄漏文本
             return QueryPlanDelivery(code=ExecutionDecisionCode.DATABASE_UNAVAILABLE.value)

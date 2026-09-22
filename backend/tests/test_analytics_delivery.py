@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -260,7 +261,10 @@ async def test_the_plan_use_case_receives_only_server_derived_values():
 
     call = create_plan.calls[0]
     assert call["authorized"] is authorized
-    assert call["limits"] == config.execution_limits()
+    # 限额来自服务端配置，唯一的变化是把传输行上限向下收紧到该查询的 row_limit。
+    configured = config.execution_limits()
+    assert configured.max_result_rows == 300 and authorized.prepared.row_limit == 10
+    assert call["limits"] == replace(configured, max_result_rows=10)
     assert (call["principal_id"], call["datasource_id"]) == ("user-1", "ds-1")
 
 
@@ -495,3 +499,155 @@ async def test_execute_maps_a_plan_unavailable_decision_without_a_result():
 
     assert delivery == QueryExecutionDelivery(code=ExecutionCode.PLAN_UNAVAILABLE.value)
     assert delivery.result is None
+
+
+_SMALL_LIMIT_SQL = "SELECT id FROM orders LIMIT 10"
+
+
+def _config(**overrides):
+    return AnalyticsConfig.from_app_config(type("C", (), {"analytics": overrides or None})())
+
+
+def _authorized_with_row_limit(row_limit):
+    prepared = _prepared(sql=_SMALL_LIMIT_SQL, row_limit=row_limit)
+    return prepared, _authorized(prepared=prepared)
+
+
+@pytest.mark.asyncio
+async def test_a_small_query_limit_clamps_the_transport_row_cap_and_still_creates_a_plan():
+    """配置上限 1000、查询 LIMIT 10：传给 plan use case 的上限被收紧为 10。"""
+
+    events: list[str] = []
+    config = AnalyticsConfig()
+    assert config.max_result_rows == 1_000
+    prepared, authorized = _authorized_with_row_limit(10)
+    create_plan = _CreatePlan(_plan_created(), events=events)
+    use_case = _use_case(
+        catalog=_Catalog(_datasource(), events=events),
+        policy=_Policy(_allow_policy(prepared=prepared), events=events),
+        authorizer=_Authorizer(_allow_authorization(authorized), events=events),
+        create_plan=create_plan,
+        audit=_Audit(events=events),
+        config=config,
+    )
+
+    delivery = await use_case.execute(principal_id="user-1", datasource_id="ds-1", raw_sql=_SMALL_LIMIT_SQL)
+
+    assert delivery.code == ExecutionDecisionCode.PLAN_CREATED.value
+    assert delivery.receipt is not None
+    assert create_plan.calls[0]["limits"].max_result_rows == 10
+
+
+@pytest.mark.asyncio
+async def test_a_query_limit_above_the_cap_keeps_the_configured_cap():
+    """查询 row_limit 高于配置上限时，仍然使用配置上限。"""
+
+    events: list[str] = []
+    config = _config(max_result_rows=100)
+    prepared, authorized = _authorized_with_row_limit(5_000)
+    create_plan = _CreatePlan(_plan_created(), events=events)
+    use_case = _use_case(
+        catalog=_Catalog(_datasource(), events=events),
+        policy=_Policy(_allow_policy(prepared=prepared), events=events),
+        authorizer=_Authorizer(_allow_authorization(authorized), events=events),
+        create_plan=create_plan,
+        audit=_Audit(events=events),
+        config=config,
+    )
+
+    await use_case.execute(principal_id="user-1", datasource_id="ds-1", raw_sql=_SMALL_LIMIT_SQL)
+
+    assert create_plan.calls[0]["limits"].max_result_rows == 100
+
+
+@pytest.mark.asyncio
+async def test_a_query_without_a_limit_uses_the_smaller_of_the_two_server_values():
+    """没有显式 LIMIT 时 Phase 2A 会套用 query_max_rows，取两者较小值。"""
+
+    events: list[str] = []
+    config = _config(query_max_rows=1_000, max_result_rows=250)
+    prepared, authorized = _authorized_with_row_limit(1_000)
+    create_plan = _CreatePlan(_plan_created(), events=events)
+    use_case = _use_case(
+        catalog=_Catalog(_datasource(), events=events),
+        policy=_Policy(_allow_policy(prepared=prepared), events=events),
+        authorizer=_Authorizer(_allow_authorization(authorized), events=events),
+        create_plan=create_plan,
+        audit=_Audit(events=events),
+        config=config,
+    )
+
+    await use_case.execute(principal_id="user-1", datasource_id="ds-1", raw_sql="SELECT id FROM orders")
+
+    assert create_plan.calls[0]["limits"].max_result_rows == 250
+
+
+@pytest.mark.asyncio
+async def test_only_the_result_row_cap_is_clamped_and_everything_else_matches_the_config():
+    events: list[str] = []
+    config = AnalyticsConfig()
+    prepared, authorized = _authorized_with_row_limit(10)
+    create_plan = _CreatePlan(_plan_created(), events=events)
+    use_case = _use_case(
+        catalog=_Catalog(_datasource(), events=events),
+        policy=_Policy(_allow_policy(prepared=prepared), events=events),
+        authorizer=_Authorizer(_allow_authorization(authorized), events=events),
+        create_plan=create_plan,
+        audit=_Audit(events=events),
+        config=config,
+    )
+
+    await use_case.execute(principal_id="user-1", datasource_id="ds-1", raw_sql=_SMALL_LIMIT_SQL)
+
+    configured = config.execution_limits()
+    delivered = create_plan.calls[0]["limits"]
+    assert delivered.max_result_rows == 10
+    for field_name in configured.__dataclass_fields__:
+        if field_name == "max_result_rows":
+            continue
+        assert getattr(delivered, field_name) == getattr(configured, field_name), field_name
+
+
+@pytest.mark.asyncio
+async def test_the_row_cap_is_left_untouched_when_no_clamping_is_needed():
+    """相等时不做无谓的复制：传下去的仍是配置生成的那个值。"""
+
+    events: list[str] = []
+    config = AnalyticsConfig()
+    prepared, authorized = _authorized_with_row_limit(config.max_result_rows)
+    create_plan = _CreatePlan(_plan_created(), events=events)
+    use_case = _use_case(
+        catalog=_Catalog(_datasource(), events=events),
+        policy=_Policy(_allow_policy(prepared=prepared), events=events),
+        authorizer=_Authorizer(_allow_authorization(authorized), events=events),
+        create_plan=create_plan,
+        audit=_Audit(events=events),
+        config=config,
+    )
+
+    await use_case.execute(principal_id="user-1", datasource_id="ds-1", raw_sql=_SMALL_LIMIT_SQL)
+
+    assert create_plan.calls[0]["limits"] == config.execution_limits()
+
+
+@pytest.mark.asyncio
+async def test_a_denied_policy_still_never_reaches_the_plan_use_case():
+    """收紧只发生在授权通过之后：拒绝路径的行为完全不变。"""
+
+    events: list[str] = []
+    prepared, _authorized_spec = _authorized_with_row_limit(10)
+    create_plan = _CreatePlan(_plan_created(), events=events)
+    use_case = _use_case(
+        catalog=_Catalog(_datasource(), events=events),
+        policy=_Policy(_deny_policy(), events=events),
+        authorizer=_Authorizer(_allow_authorization(), events=events),
+        create_plan=create_plan,
+        audit=_Audit(events=events),
+        config=AnalyticsConfig(),
+    )
+
+    delivery = await use_case.execute(principal_id="user-1", datasource_id="ds-1", raw_sql=_SMALL_LIMIT_SQL)
+
+    assert delivery.receipt is None
+    assert create_plan.calls == []
+    assert prepared.row_limit == 10

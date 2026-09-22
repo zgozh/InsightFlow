@@ -1108,11 +1108,13 @@ startup. The parsed values are frozen at startup — changing them requires a re
 Two constraints matter operationally:
 
 - `max_result_rows` must not exceed `query_max_rows`, and both must stay at or below 10,000.
-- `CreateQueryExecutionPlan` requires `max_result_rows` to be **no larger than the query's own
-  effective `row_limit`** (the Phase 2B2 invariant: the transport layer must not be allowed to
-  read more rows than the authorization granted). A query carrying a smaller `LIMIT` is therefore
-  denied with `authorization_stale`, so keep `max_result_rows` at or below the smallest `LIMIT`
-  users are expected to write.
+- `max_result_rows` is a **global server ceiling, not a per-query floor**. For every plan the
+  server derives its limits by clamping the transfer cap down to
+  `min(max_result_rows, authorized row_limit)`, so `SELECT ... LIMIT 10` works with the default
+  cap of 1000. Every other limit stays exactly as configured, the cap can only shrink, and the
+  clamp is server-derived — clients still cannot submit or override any limit. The Phase 2B2
+  check inside `CreateQueryExecutionPlan` (`limits.max_result_rows <= prepared.row_limit`) stays
+  in place as defense in depth.
 
 `database.backend: memory` disables the whole block: no Analytics migration runs, every
 `/api/analytics` route answers 503, and the durable plan store is never replaced by an

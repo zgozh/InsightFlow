@@ -80,7 +80,8 @@ def _build_app(services):
 async def services(tmp_path, monkeypatch):
     monkeypatch.setattr(composition, "SQLAlchemyDatasourceQueryGateway", lambda **kwargs: _StubGateway(**kwargs))
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'api.db'}", poolclass=NullPool, echo=False)
-    backend = SimpleNamespace(analytics={"max_result_rows": 10}, database=SimpleNamespace(backend="sqlite"))
+    # 默认配置：不覆盖任何限额，用真实的 1000/1000 证明小 LIMIT 查询也能建 plan。
+    backend = SimpleNamespace(database=SimpleNamespace(backend="sqlite"))
     try:
         built = await build_analytics_services(config=backend, engine=engine, session_factory=async_sessionmaker(engine, expire_on_commit=False), backend="sqlite")
         yield built
@@ -346,6 +347,33 @@ def test_plan_returns_a_stable_code_and_the_token_only_on_success(services, conf
     assert body["estimated_rows"] == 10 and body["engine_cost"] == "12.5"
     # raw SQL 绝不出现在响应里。
     assert _SQL not in created.text
+
+
+def test_a_small_limit_query_reaches_the_plan_use_case_with_the_default_server_cap(services, configured):
+    """配置的 max_result_rows 是全局上限，不是每条查询必须达到的下限。
+
+    `SELECT ... LIMIT 10` 必须在默认配置下直接建出 plan：服务端把传输行上限自动收紧为
+    min(1000, 10) = 10，而不是因为 1000 > 10 判 `authorization_stale`。
+    """
+
+    client = _as(_client(services), f"{_USER}:user")
+
+    response = client.post("/api/analytics/query-plans", json={"datasource_id": configured.id, "sql": _SQL})
+
+    assert response.status_code == 200
+    assert response.json()["code"] == "plan_created"
+    assert response.json()["plan_id"]
+
+
+def test_the_client_still_cannot_supply_any_limit(services, configured):
+    client = _as(_client(services), f"{_USER}:user")
+
+    for forged in ({"limits": {"max_result_rows": 999999}}, {"max_result_rows": 10}, {"query_max_rows": 10}):
+        payload = {"datasource_id": configured.id, "sql": _SQL}
+        payload.update(forged)
+        response = client.post("/api/analytics/query-plans", json=payload)
+        assert response.status_code == 422
+        assert response.json() == {"detail": {"code": "invalid_analytics_request"}}
 
 
 def test_an_unknown_datasource_is_denied_with_a_stable_code(services):

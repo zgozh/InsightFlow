@@ -103,8 +103,10 @@ schema/policy 操作必须先确认 datasource 属于当前管理员。管理员
 3. policy 拒绝时写 `policy` start/completion 审计并返回稳定码；
 4. policy 通过后运行 Phase 2B1；
 5. authorization 拒绝时写 `authorization` start/completion 审计并返回稳定码；
-6. 只把服务端产生的 `AuthorizedQuerySpec` 与固定 `ExecutionLimits` 交给
-   `CreateQueryExecutionPlan`；后者继续承担 plan 审计与业务库 I/O 门禁。
+6. 只把服务端产生的 `AuthorizedQuerySpec` 与服务端派生的 `ExecutionLimits` 交给
+   `CreateQueryExecutionPlan`；后者继续承担 plan 审计与业务库 I/O 门禁。除 `max_result_rows`
+   会按 `min(配置上限, authorized.prepared.row_limit)` 向下收紧外，其余字段固定来自启动配置；
+   客户端在任何情况下都不能提交或覆盖限额。
 
 raw SQL 不得进入日志、异常、审计或响应；只有 Phase 2A 产生的 SHA-256 `query_hash` 可进审计。
 审计 start 失败统一 `AUDIT_UNAVAILABLE`，不能继续后续业务数据库步骤。
