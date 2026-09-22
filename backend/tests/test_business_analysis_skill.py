@@ -46,6 +46,7 @@ def test_the_frontmatter_matches_the_directory_name():
     [
         "inspect_business_catalog",
         "query_business_data",
+        "publish_analysis_report",
         "general-purpose",
         "Data Analyst",
         "Reviewer",
@@ -60,11 +61,26 @@ def test_the_workflow_names_every_required_element(marker):
 
 
 def test_the_workflow_orders_catalog_then_a_single_query_then_analysis_then_review():
-    # 只看 frontmatter 之后的正文：description 里也会提到这些角色名。
-    body = _text().split("---", 2)[2]
+    # 只看「步骤」正文：frontmatter 与「工具」小节里也会出现同样的名字。
+    body = _text().split("## 步骤", 1)[1]
     positions = [body.index(token) for token in ("inspect_business_catalog", "每次只调用一次", "Data Analyst", "委派 Reviewer", "最多一次定向修订")]
+    # Phase 4：报告索引登记必须排在 artifact 交付之后。
+    positions.append(body.index("`present_files` 交付"))
+    positions.append(body.index("**登记报告索引**"))
+    positions.append(body.index("publish_analysis_report", body.index("**登记报告索引**")))
 
     assert positions == sorted(positions)
+
+
+def test_the_skill_publishes_only_after_a_successful_presentation():
+    text = _text()
+
+    assert "只有** `present_files` 成功之后才调用 `publish_analysis_report`" in text
+    # 发布失败不得被描述成"已保存"。
+    assert "绝不能把未登记的报告说成" in text
+    assert "report_conflict" in text and "existing" in text
+    # 索引不含文件内容：工具不复制、不上传。
+    assert "不读文件内容" in text or "不会复制或上传文件" in text
 
 
 def test_the_skill_requires_serial_queries_and_forbids_automatic_retry():

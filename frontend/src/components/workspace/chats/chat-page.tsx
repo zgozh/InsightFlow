@@ -3,11 +3,12 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Folder } from "lucide-react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { type PromptInputMessage } from "@/components/ai-elements/prompt-input";
+import { AnalyticsTracePanel } from "@/components/analytics/analytics-trace-panel";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { ArtifactTrigger } from "@/components/workspace/artifacts";
 import { BrowserTrigger } from "@/components/workspace/browser-view";
@@ -71,13 +72,16 @@ import { cn } from "@/lib/utils";
 import { ChatBox } from "./chat-box";
 import { useSpecificChatMode } from "./use-chat-mode";
 import { useThreadChat } from "./use-thread-chat";
-
 export default function ChatPage() {
   const { t } = useI18n();
   const { user } = useAuth();
   const canStopStreaming = hasPermission(user, PERMISSIONS.RUNS_CANCEL);
   const router = useRouter();
   const searchParams = useSearchParams();
+  // 分析路由只在既有 chat 主链上加一个纯投影面板：不复制 streaming 状态机，也不改
+  // `/workspace/chats/**` 的行为。
+  const pathname = usePathname();
+  const analyticsTraceEnabled = pathname.startsWith("/workspace/analysis");
   const { threadId, setThreadId, isNewThread, setIsNewThread, isMock } =
     useThreadChat();
   // Project-scoped new chat: `/workspace/chats/new?project={id}` assigns the
@@ -428,151 +432,160 @@ export default function ChatPage() {
               </div>
             </header>
             <main className="flex min-h-0 max-w-full grow flex-col">
-              <div className="flex min-h-0 flex-1 justify-center">
-                <MessageList
-                  archiveDownloadsEnabled={
-                    isNewThread || isMock || threadMetadata.data != null
-                  }
-                  className={cn("size-full", !isWelcomeMode && "pt-10")}
-                  testId="main-message-list"
-                  threadId={threadId}
-                  thread={thread}
-                  enableConversationOutline
-                  paddingBottom={MESSAGE_LIST_DEFAULT_PADDING_BOTTOM}
-                  hasMoreHistory={hasMoreHistory}
-                  loadMoreHistory={loadMoreHistory}
-                  isHistoryLoading={isHistoryLoading}
-                  tokenUsageInlineMode={tokenUsageInlineMode}
-                  canRegenerate={
-                    !isNewThread &&
-                    !isMock &&
-                    env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" &&
-                    !isUploading &&
-                    !thread.isLoading
-                  }
-                  onRegenerateMessage={handleRegenerate}
-                  canEdit={
-                    !isNewThread &&
-                    !isMock &&
-                    env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" &&
-                    !isUploading &&
-                    !thread.isLoading &&
-                    !branchThread.isPending &&
-                    !hasGoal &&
-                    !hasOpenHumanInputCard
-                  }
-                  onEditAndRegenerateMessage={handleEditAndRegenerate}
-                  onSubmitHumanInput={
-                    isMock || env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true"
-                      ? undefined
-                      : handleSubmitHumanInput
-                  }
-                  canBranch={
-                    !isNewThread &&
-                    !isMock &&
-                    env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" &&
-                    !isUploading &&
-                    !thread.isLoading &&
-                    !branchThread.isPending
-                  }
-                  onBranchTurn={handleBranchTurn}
-                />
-              </div>
-              <div
-                className={cn(
-                  "right-0 bottom-0 left-0 z-30 flex justify-center px-3 sm:px-4",
-                  isWelcomeMode ? "absolute" : "relative shrink-0 pb-4",
-                )}
-              >
-                <div
-                  className={cn(
-                    "relative w-full",
-                    isWelcomeMode &&
-                      "-translate-y-[calc(50vh-48px)] sm:-translate-y-[calc(50vh-96px)]",
-                    isWelcomeMode
-                      ? "max-w-(--container-width-sm)"
-                      : "max-w-(--container-width-md)",
-                  )}
-                >
-                  {(hasGoal || hasTodos) && (
+              <div className="flex min-h-0 flex-1 overflow-hidden">
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                  <div className="flex min-h-0 flex-1 justify-center">
+                    <MessageList
+                      archiveDownloadsEnabled={
+                        isNewThread || isMock || threadMetadata.data != null
+                      }
+                      className={cn("size-full", !isWelcomeMode && "pt-10")}
+                      testId="main-message-list"
+                      threadId={threadId}
+                      thread={thread}
+                      enableConversationOutline
+                      paddingBottom={MESSAGE_LIST_DEFAULT_PADDING_BOTTOM}
+                      hasMoreHistory={hasMoreHistory}
+                      loadMoreHistory={loadMoreHistory}
+                      isHistoryLoading={isHistoryLoading}
+                      tokenUsageInlineMode={tokenUsageInlineMode}
+                      canRegenerate={
+                        !isNewThread &&
+                        !isMock &&
+                        env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" &&
+                        !isUploading &&
+                        !thread.isLoading
+                      }
+                      onRegenerateMessage={handleRegenerate}
+                      canEdit={
+                        !isNewThread &&
+                        !isMock &&
+                        env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" &&
+                        !isUploading &&
+                        !thread.isLoading &&
+                        !branchThread.isPending &&
+                        !hasGoal &&
+                        !hasOpenHumanInputCard
+                      }
+                      onEditAndRegenerateMessage={handleEditAndRegenerate}
+                      onSubmitHumanInput={
+                        isMock || env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true"
+                          ? undefined
+                          : handleSubmitHumanInput
+                      }
+                      canBranch={
+                        !isNewThread &&
+                        !isMock &&
+                        env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" &&
+                        !isUploading &&
+                        !thread.isLoading &&
+                        !branchThread.isPending
+                      }
+                      onBranchTurn={handleBranchTurn}
+                    />
+                  </div>
+                  <div
+                    className={cn(
+                      "right-0 bottom-0 left-0 z-30 flex justify-center px-3 sm:px-4",
+                      isWelcomeMode ? "absolute" : "relative shrink-0 pb-4",
+                    )}
+                  >
                     <div
                       className={cn(
-                        "right-0 left-0 z-0",
-                        isWelcomeMode ? "absolute -top-4" : "relative",
+                        "relative w-full",
+                        isWelcomeMode &&
+                          "-translate-y-[calc(50vh-48px)] sm:-translate-y-[calc(50vh-96px)]",
+                        isWelcomeMode
+                          ? "max-w-(--container-width-sm)"
+                          : "max-w-(--container-width-md)",
                       )}
                     >
-                      <div
-                        className={cn(
-                          "right-0 bottom-0 left-0 flex flex-col",
-                          isWelcomeMode ? "absolute" : "relative",
-                        )}
-                      >
-                        {activeGoal && <GoalStatus goal={activeGoal} />}
-                        {hasTodos && (
-                          <TodoList
-                            className="bg-background/5"
-                            todos={thread.values.todos ?? []}
-                            hidden={false}
-                          />
-                        )}
-                      </div>
-                    </div>
-                  )}
-                  {mountedRef.current ? (
-                    <InputBox
-                      className={cn(
-                        "bg-background/5 w-full",
-                        isWelcomeMode && "-translate-y-2 sm:-translate-y-4",
+                      {(hasGoal || hasTodos) && (
+                        <div
+                          className={cn(
+                            "right-0 left-0 z-0",
+                            isWelcomeMode ? "absolute -top-4" : "relative",
+                          )}
+                        >
+                          <div
+                            className={cn(
+                              "right-0 bottom-0 left-0 flex flex-col",
+                              isWelcomeMode ? "absolute" : "relative",
+                            )}
+                          >
+                            {activeGoal && <GoalStatus goal={activeGoal} />}
+                            {hasTodos && (
+                              <TodoList
+                                className="bg-background/5"
+                                todos={thread.values.todos ?? []}
+                                hidden={false}
+                              />
+                            )}
+                          </div>
+                        </div>
                       )}
-                      isWelcomeMode={isWelcomeMode}
-                      threadId={threadId}
-                      draftThreadId={isNewThread ? "new" : threadId}
-                      autoFocus={isWelcomeMode}
-                      status={
-                        thread.error
-                          ? "error"
-                          : thread.isLoading
-                            ? "streaming"
-                            : "ready"
-                      }
-                      context={settings.context}
-                      extraHeader={
-                        isWelcomeMode &&
-                        !hasGoal &&
-                        !hasTodos && <Welcome mode={settings.context.mode} />
-                      }
-                      disabled={
-                        isMock ||
-                        env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" ||
-                        isUploading ||
-                        (!isNewThread && isHistoryLoading)
-                      }
-                      onContextChange={(context, options) => {
-                        if (options?.automatic)
-                          resolveThreadContext(threadId, context);
-                        else setSettings("context", context);
-                      }}
-                      onGoalChange={setLocalGoal}
-                      onPrepareThread={ensureProjectThread}
-                      onSubmit={handleSubmit}
-                      onStop={handleStop}
-                      canStopStreaming={canStopStreaming}
-                    />
-                  ) : (
-                    <div
-                      aria-hidden="true"
-                      className={cn(
-                        "bg-background/5 h-32 w-full rounded-2xl",
-                        isWelcomeMode && "-translate-y-2 sm:-translate-y-4",
+                      {mountedRef.current ? (
+                        <InputBox
+                          className={cn(
+                            "bg-background/5 w-full",
+                            isWelcomeMode && "-translate-y-2 sm:-translate-y-4",
+                          )}
+                          isWelcomeMode={isWelcomeMode}
+                          threadId={threadId}
+                          draftThreadId={isNewThread ? "new" : threadId}
+                          autoFocus={isWelcomeMode}
+                          status={
+                            thread.error
+                              ? "error"
+                              : thread.isLoading
+                                ? "streaming"
+                                : "ready"
+                          }
+                          context={settings.context}
+                          extraHeader={
+                            isWelcomeMode &&
+                            !hasGoal &&
+                            !hasTodos && (
+                              <Welcome mode={settings.context.mode} />
+                            )
+                          }
+                          disabled={
+                            isMock ||
+                            env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" ||
+                            isUploading ||
+                            (!isNewThread && isHistoryLoading)
+                          }
+                          onContextChange={(context, options) => {
+                            if (options?.automatic)
+                              resolveThreadContext(threadId, context);
+                            else setSettings("context", context);
+                          }}
+                          onGoalChange={setLocalGoal}
+                          onPrepareThread={ensureProjectThread}
+                          onSubmit={handleSubmit}
+                          onStop={handleStop}
+                          canStopStreaming={canStopStreaming}
+                        />
+                      ) : (
+                        <div
+                          aria-hidden="true"
+                          className={cn(
+                            "bg-background/5 h-32 w-full rounded-2xl",
+                            isWelcomeMode && "-translate-y-2 sm:-translate-y-4",
+                          )}
+                        />
                       )}
-                    />
-                  )}
-                  {env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" && (
-                    <div className="text-muted-foreground/67 w-full translate-y-12 text-center text-xs">
-                      {t.common.notAvailableInDemoMode}
+                      {env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" && (
+                        <div className="text-muted-foreground/67 w-full translate-y-12 text-center text-xs">
+                          {t.common.notAvailableInDemoMode}
+                        </div>
+                      )}
                     </div>
-                  )}
+                  </div>
                 </div>
+                {analyticsTraceEnabled && (
+                  <AnalyticsTracePanel messages={thread.messages} />
+                )}
               </div>
             </main>
           </div>

@@ -2,6 +2,29 @@
 
 English | [中文](./README_zh.md) | [日本語](./README_ja.md) | [Français](./README_fr.md) | [Русский](./README_ru.md)
 
+> ## InsightFlow
+>
+> 本仓库是 **InsightFlow**：基于 DeerFlow `v2.1.0-rc0` 的深度重构，把上游的通用
+> SuperAgent harness 收敛成一个**受控、可审计的企业经营分析工作台**。上游的 MIT 许可证、
+> 版权声明与派生说明全部保留；下面的上游 README 内容仍然有效，直到 Phase 5 完成品牌清理。
+>
+> 产品工作台（`/workspace`）现在包含：
+>
+> - **新建经营分析 / 经营分析**（`/workspace/analysis/new`、`/workspace/analysis/{thread_id}`）：
+>   复用既有会话主链，右侧多一个**分析轨迹**面板，把工具事件投影成结构化步骤（计划 →
+>   目录发现 → 受控查询 → 委派 → artifact → 报告登记）。轨迹只显示状态与安全事实，
+>   不显示 SQL、结果行或思维过程。
+> - **数据源**（`/workspace/datasources`）：普通用户只看自己可访问的目录；管理员维护
+>   datasource、schema 与访问策略（engine 创建后不可变更；写入必须携带 `expected_version`，
+>   版本漂移时提示"刷新后重试"，绝不静默覆盖）。
+> - **指标中心**（`/workspace/metrics`）：版本化指标目录，退役保留历史。
+> - **分析报告**（`/workspace/reports`）：principal-scoped 的报告索引；只登记
+>   "谁在哪个会话里发布了哪个 artifact"，打开文件仍要经过会话归属校验，不签发公共 URL。
+> - **历史分析**（`/workspace/history`）：SQL 审计历史，只展示安全字段（阶段/状态/决定码/
+>   风险/行数/字节/成本/时延与 hash 缩略）与 keyset 分页。
+>
+> 安全边界由服务端执行：管理员 UI 只是体验门禁，真正的授权始终是服务器判定。
+
 [![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](./backend/pyproject.toml)
 [![Node.js](https://img.shields.io/badge/Node.js-22%2B-339933?logo=node.js&logoColor=white)](./Makefile)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)

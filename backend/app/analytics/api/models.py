@@ -28,6 +28,7 @@ from app.analytics.domain import (
     QueryAuditPhase,
     QueryAuditStatus,
     QueryRisk,
+    ReportStatus,
 )
 
 #: 原始 SQL 与 plan token 的长度上限。它们只是拒绝异常膨胀的输入，不是业务限额。
@@ -293,6 +294,34 @@ class QueryAuditPageResponse(BaseModel):
     audits: tuple[QueryAuditView, ...]
     has_more: bool
     next_before_started_at: datetime | None = None
+    next_before_id: str | None = None
+
+
+# --- 响应：分析报告索引 -----------------------------------------------------
+
+
+class AnalysisReportView(BaseModel):
+    """报告索引的公开投影。
+
+    只有索引元数据：没有 artifact 内容，也没有签发的 URL。打开 artifact 仍然要经过
+    `/api/threads/{thread_id}/artifacts/{path}` 的 thread ownership 检查。
+    """
+
+    id: str
+    principal_id: str
+    thread_id: str
+    run_id: str
+    artifact_path: str
+    title: str
+    status: ReportStatus
+    evidence_ids: tuple[str, ...]
+    created_at: datetime
+
+
+class AnalysisReportPageResponse(BaseModel):
+    reports: tuple[AnalysisReportView, ...]
+    has_more: bool
+    next_before_created_at: datetime | None = None
     next_before_id: str | None = None
 
 

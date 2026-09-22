@@ -160,10 +160,42 @@ Harness 自身不 import App，也没有 Analytics 专用开关。
 
 Lead-only 与 subagent 隔离：DeerFlow 会把父级 tool group 原样继承给 subagent，因此
 `config.example.yaml` 用 operator-owned、**加法式**的 `subagents.agents.general-purpose.disallowed_tools`
-拒绝这两个工具。它只能追加拒绝项，永远不能解除内置拒绝项，客户端与 run context 都无法覆盖。
+与 `subagents.agents.bash.disallowed_tools` 拒绝 `inspect_business_catalog` / `query_business_data` /
+`publish_analysis_report`。它只能追加拒绝项，永远不能解除内置拒绝项，客户端与 run context 都无法覆盖。
 
 `agent/` 模块不得 import SQLGlot、SQLAlchemy、驱动、secret resolver 或 repository；它只调用
 `AnalyticsServices` 应用入口，Phase 4 的 UI 与 Phase 3 的 Agent 因此共用同一条 Phase 2 安全闭环。
+
+## 分析报告索引与产品工作台（Phase 4）
+
+报告索引是 Phase 3 artifact 的**补口**：`analytics_analysis_reports` 只登记
+`principal_id / thread_id / run_id / artifact_path / title / status / evidence_ids / created_at`，
+**不保存** artifact 内容、原始 SQL、结果行、prompt、token 或凭证。字段白名单由
+`tests/test_analytics_report_domain.py` 的字段集合断言钉住；表结构本身也没有这些列。
+
+- 迁移是纯前向的 `0002_analytics_analysis_reports`：Analytics 自有链照旧只 `upgrade head`，
+  Harness 链与 `alembic_version` 完全不受影响。该表**没有**指向 Harness 表的跨链外键：报告索引
+  必须比会话活得更久。
+- `artifact_path` 必须是 `/mnt/user-data/outputs/` 下的规范化相对目标（拒绝绝对路径、反斜杠、
+  空段、`.`、`..`、目录本身、控制字符与超长值）。打开它仍然要经过
+  `/api/threads/{thread_id}/artifacts/{path}` 的 thread ownership 检查——报告索引**不是**公共 URL，
+  也不签发任何 URL。
+- `evidence_ids` 只接受 1..20 个 64 位小写 SHA-256，且不重复。没有 evidence 的"分析报告"正是
+  Phase 3 要禁止的无依据数字，因此领域层直接拒绝空列表。
+- 发布幂等键是 `(principal_id, thread_id, run_id, artifact_path)`，**全部由服务端从受信 runtime
+  派生**（`agent/runtime.py::trusted_principal` 与 `trusted_thread_run`）。`publish` 返回稳定结果码：
+  `published`（新建）/ `existing`（逐字重试）/ `report_conflict`（同键不同内容，绝不静默覆盖）。
+  并发重试由唯一约束兜底，最多留下一行。
+- `publish_analysis_report` 是 Lead-only 工具：模型可见参数只有 `title` / `artifact_path` /
+  `evidence_ids`，工具结果也**不**回显 principal/thread/run。它在 `present_files` 成功之后才应被
+  调用，且只登记索引——不读、不复制、不上传 artifact。
+- `GET /api/analytics/reports`（principal-scoped）与 `GET /api/analytics/admin/reports?principal_id=`
+  （显式 admin 端点）都只返回索引元数据；游标成对出现，keyset 语义与审计读取一致。
+- 读取侧对损坏行整体失败：状态、evidence JSON、路径或标题被绕过领域层改写时，整页返回稳定错误，
+  绝不返回"部分正确"的证据。
+
+`agent/reports.py` 与 `agent/tools.py` 一样，不得 import 文件系统、sandbox、SQLAlchemy 或驱动；
+它只调用 `AnalyticsServices.publish_report`。
 
 ## 语言规范
 

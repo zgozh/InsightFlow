@@ -190,6 +190,9 @@ def test_the_example_config_parses_and_declares_the_analytics_group():
     assert tools["inspect_business_catalog"].group == "analytics"
     assert tools["query_business_data"].group == "analytics"
     assert tools["query_business_data"].use == "app.analytics.agent.tools:query_business_data"
+    # Phase 4：Lead-only 的报告发布工具也在同一个 group 里。
+    assert tools["publish_analysis_report"].group == "analytics"
+    assert tools["publish_analysis_report"].use == "app.analytics.agent.reports:publish_analysis_report"
 
 
 def test_the_lead_sees_the_analytics_tools_and_the_subagent_schema_does_not():
@@ -202,7 +205,7 @@ def test_the_lead_sees_the_analytics_tools_and_the_subagent_schema_does_not():
     lead_tools = get_available_tools(groups=None, app_config=config, include_mcp=False)
     lead_names = {tool.name for tool in lead_tools}
 
-    assert {"inspect_business_catalog", "query_business_data"} <= lead_names
+    assert {"inspect_business_catalog", "query_business_data", "publish_analysis_report"} <= lead_names
 
     # general-purpose 继承 Lead 的 groups，因此同一份小组也会到它手里……
     subagent_groups = None
@@ -214,5 +217,22 @@ def test_the_lead_sees_the_analytics_tools_and_the_subagent_schema_does_not():
     # ……但 denylist 把它们从实际工具 schema 里摘掉了。
     assert "inspect_business_catalog" not in subagent_names
     assert "query_business_data" not in subagent_names
+    assert "publish_analysis_report" not in subagent_names
     assert "bash" not in subagent_names  # builtin denial is untouched
     assert subagent_names, "the subagent must still get its ordinary tools"
+
+
+def test_the_bash_subagent_also_loses_the_lead_only_analytics_tools():
+    """两个内置 subagent 都必须被拒绝，而不是只堵住 general-purpose。"""
+
+    from deerflow.tools import get_available_tools
+
+    config = _example_app_config()
+    inherited = get_available_tools(groups=None, app_config=config, include_mcp=False)
+    bash_agent = get_subagent_config("bash", app_config=config)
+    filtered = _real_filter_tools()(inherited, bash_agent.tools, bash_agent.disallowed_tools)
+    names = {tool.name for tool in filtered}
+
+    for denied in ("inspect_business_catalog", "query_business_data", "publish_analysis_report"):
+        assert denied not in names
+    assert names, "the bash subagent must still get its ordinary tools"

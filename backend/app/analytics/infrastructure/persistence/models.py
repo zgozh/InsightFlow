@@ -41,6 +41,8 @@ METRIC_STATUSES = ("draft", "active", "retired")
 AUDIT_PHASES = ("policy", "authorization", "plan", "execute")
 AUDIT_STATUSES = ("started", "completed")
 RISK_LEVELS = ("low", "medium", "high", "blocked")
+# Phase 4：报告索引 V1 只有"已登记"一种状态，中间态会让 UI 有理由展示未通过 Reviewer 的报告。
+REPORT_STATUSES = ("published",)
 
 VERSION_TABLE_NAME = "analytics_alembic_version"
 
@@ -168,3 +170,37 @@ class QueryAuditRow(AnalyticsBase):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     # 长期停留在 started 表示 worker 崩溃或终态写入失败；读取接口不得把它伪装成成功。
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AnalysisReportRow(AnalyticsBase):
+    """分析报告索引（Phase 4 §6）。
+
+    只登记"哪个 principal 在哪个 thread/run 发布了哪个 artifact"：表结构里**不存在** artifact
+    内容、原始 SQL、结果行、prompt、token 或凭证字段。因此即使某条读取路径被写错，也不可能
+    经由这张表把敏感内容带出去。
+
+    幂等键是 `(principal_id, thread_id, run_id, artifact_path)`，全部由服务端从受信 runtime
+    派生；模型可见参数里没有它们，客户端无法把报告挂到别人名下。
+    """
+
+    __tablename__ = "analytics_analysis_reports"
+    __table_args__ = (
+        UniqueConstraint("principal_id", "thread_id", "run_id", "artifact_path", name="uq_analytics_analysis_reports_identity"),
+        CheckConstraint(f"status IN ({_quoted(REPORT_STATUSES)})", name="ck_analytics_analysis_reports_status"),
+        Index("ix_analytics_analysis_reports_principal_created_at", "principal_id", "created_at"),
+        Index("ix_analytics_analysis_reports_thread_id", "thread_id"),
+        Index("ix_analytics_analysis_reports_run_id", "run_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # 刻意没有指向 Harness `threads_meta` / `runs` 的外键：跨链外键是禁止的，而且报告索引
+    # 必须比会话活得更久。
+    principal_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    thread_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    artifact_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    # evidence 的**顺序**是发布内容的一部分：逐字重试相等，顺序不同即视为不同内容。
+    evidence_ids_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

@@ -9,9 +9,12 @@ import {
   VideoIcon,
 } from "lucide-react";
 
+import { analyticsEnUS } from "./analytics.en-US";
 import type { Translations } from "./types";
 
 export const enUS: Translations = {
+  ...analyticsEnUS,
+
   // Locale meta
   locale: {
     localName: "English",
@@ -131,11 +134,11 @@ export const enUS: Translations = {
   welcome: {
     greeting: "Hello, again!",
     description:
-      "Welcome to 🦌 DeerFlow, an open source super agent. With built-in and custom skills, DeerFlow helps you search on the web, analyze data, and generate artifacts like slides, web pages and do almost anything.",
+      "Welcome to InsightFlow, a governed business-analysis workspace. With built-in and custom skills, InsightFlow queries data under your access policy and audit trail, checks metric definitions, and turns the result into a traceable report backed by evidence.",
 
     createYourOwnSkill: "Create Your Own Skill",
     createYourOwnSkillDescription:
-      "Create your own skill to release the power of DeerFlow. With customized skills,\nDeerFlow can help you search on the web, analyze data, and generate\n artifacts like slides, web pages and do almost anything.",
+      "Create your own skill to extend InsightFlow. Custom skills run under the same governed query and audit path — they extend the workflow, they never bypass it.",
   },
 
   // Clipboard
@@ -965,7 +968,7 @@ export const enUS: Translations = {
 
   // Page titles (document title)
   pages: {
-    appName: "DeerFlow",
+    appName: "InsightFlow",
     chats: "Chats",
     newChat: "New chat",
     untitled: "Untitled",

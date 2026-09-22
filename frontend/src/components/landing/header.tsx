@@ -1,14 +1,10 @@
-import { GitHubLogoIcon } from "@radix-ui/react-icons";
 import Link from "next/link";
 
-import { Button } from "@/components/ui/button";
 import { DEFAULT_LOCALE, type Locale } from "@/core/i18n/locale";
 import { getI18n } from "@/core/i18n/server";
-import { env } from "@/env";
 import { cn } from "@/lib/utils";
 
 import { MobileNav } from "./mobile-nav";
-import { StarCounter } from "./star-counter";
 
 export type HeaderProps = {
   className?: string;
@@ -17,9 +13,11 @@ export type HeaderProps = {
 };
 
 export async function Header({ className, homeURL, locale }: HeaderProps) {
-  const isExternalHome = !homeURL;
   const { locale: resolvedLocale, t } = await getI18n(locale ?? DEFAULT_LOCALE);
   const lang = resolvedLocale.substring(0, 2);
+  // 缺省入口回到站内首页：产品品牌不应再把上游 GitHub 仓库当作自己的主页。
+  // 只有显式给出 http(s) 地址时才作为外部链接，否则一律站内跳转。
+  const isExternalHome = homeURL?.startsWith("http") ?? false;
   return (
     <header
       className={cn(
@@ -29,12 +27,12 @@ export async function Header({ className, homeURL, locale }: HeaderProps) {
     >
       <div className="flex min-w-0 items-center gap-6">
         <a
-          href={homeURL ?? "https://github.com/bytedance/deer-flow"}
+          href={homeURL ?? "/"}
           target={isExternalHome ? "_blank" : "_self"}
           rel={isExternalHome ? "noopener noreferrer" : undefined}
           className="font-serif text-xl whitespace-nowrap"
         >
-          DeerFlow
+          {t.branding.productName}
         </a>
       </div>
       <nav className="ml-auto hidden items-center gap-5 text-sm font-medium sm:flex md:mr-8 md:gap-8">
@@ -51,32 +49,8 @@ export async function Header({ className, homeURL, locale }: HeaderProps) {
           {t.home.blog}
         </Link>
       </nav>
-      <div className="relative">
-        <div
-          className="pointer-events-none absolute inset-0 z-0 h-full w-full rounded-full opacity-30 blur-2xl"
-          style={{
-            background: "linear-gradient(90deg, #ff80b5 0%, #9089fc 100%)",
-            filter: "blur(16px)",
-          }}
-        />
-        <Button
-          variant="outline"
-          size="sm"
-          asChild
-          className="group relative z-10"
-        >
-          <a
-            href="https://github.com/bytedance/deer-flow"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <GitHubLogoIcon className="size-4" />
-            <span className="hidden sm:inline">Star on GitHub</span>
-            {env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" && <StarCounter />}
-          </a>
-        </Button>
-      </div>
       <MobileNav
+        title={t.branding.productName}
         links={[
           { href: `/${lang}/docs`, label: t.home.docs },
           { href: "/blog/posts", label: t.home.blog },

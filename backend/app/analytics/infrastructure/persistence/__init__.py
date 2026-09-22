@@ -13,10 +13,12 @@ from app.analytics.infrastructure.persistence.catalogs import (
     SqlSchemaSnapshotRepository,
 )
 from app.analytics.infrastructure.persistence.plan_store import SqlExecutionPlanStore
+from app.analytics.infrastructure.persistence.reports import SqlAnalysisReportRepository
 
 __all__ = [
     "AnalyticsSchemaBootstrapError",
     "SqlAccessPolicyRepository",
+    "SqlAnalysisReportRepository",
     "SqlDatasourceRepository",
     "SqlExecutionPlanStore",
     "SqlMetricRepository",

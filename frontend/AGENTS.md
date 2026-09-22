@@ -197,3 +197,45 @@ mutation permissions, and cache ownership remain in the existing hooks. Skill di
 metadata; runtime names and full descriptions remain unchanged. Public, custom,
 integration, and legacy sources must stay distinct. Community currently offers
 archive import, not a remote marketplace. Screenshot E2E fixtures are demo data.
+
+## InsightFlow Analytics data layer (Phase 4)
+
+`src/core/analytics/` is the only path to the governed analytics API. It is split into
+`types.ts` (const-tuple enums + request/view types), `schemas.ts` (Zod + `parseExternal`),
+`api.ts`, `hooks.ts` and `trace.ts`. There is deliberately **no** barrel file: pages import the
+concrete module they need.
+
+- Every HTTP call goes through `@/core/api/fetcher` (credentials + CSRF inheritance). Never call
+  `globalThis.fetch` from this domain.
+- Every response is parsed by a **`.strict()`** Zod schema. `z.passthrough()` and undeclared
+  fields are forbidden: a schema that forwards an unknown payload is how a sensitive field reaches
+  the DOM. Parse failures raise `AnalyticsParseError`, which carries only the stable reason
+  `invalid_analytics_response` — never the offending value.
+- Request failures raise `AnalyticsRequestError` with `.status` and `.code` read from the server's
+  `{"detail": {"code": …}}` body. An unrecognised body yields `code: null`; server `detail` text is
+  never surfaced, and neither are URLs, query strings or headers.
+- Query keys are rooted at `analytics` (`analyticsKeys`). Keys carry only identifiers, page sizes
+  and non-sensitive values — never SQL, plan tokens, credentials, DSNs or result rows. Mutations
+  invalidate only the exact affected keys; never the whole root.
+- Keyset paging uses `useInfiniteQuery` with the server cursor as `pageParam`
+  (`nextAuditCursor` / `nextReportCursor` return `null` for "no more", which callers convert to
+  `undefined` because `null` would loop back to page one). `refetchOnWindowFocus` is off: audited
+  history is sensitive, so pages replay only on an explicit user action.
+- Admin controls are gated on `useAnalyticsIsAdmin()`, but that is a UX gate only. A server `403`
+  must still render the forbidden state.
+- `trace.ts` projects the existing LangGraph messages into a structured trace. It is a **pure
+  function over messages** — no second run-state source, no extra store, no extra SSE channel — and
+  it reads only approved tool names and approved JSON fields. `query_business_data` arguments (the
+  SQL), result rows, plan tokens, DSNs and exception text have no path into `AnalyticsTraceStep`;
+  unknown tools and malformed payloads become an "unparsed safe event" instead of a rendered object.
+  Never widen this whitelist to "just show the raw tool call".
+- The trace panel (`src/components/analytics/analytics-trace-panel.tsx`) is mounted from
+  `chat-page.tsx` only when the pathname is under `/workspace/analysis`; it is a right-hand
+  collapsible column on wide screens and a drawer below `lg`, and it never produces horizontal
+  overflow.
+- `/workspace/analysis/[thread_id]` (and `/workspace/analysis/new`, matched by the same dynamic
+  segment) reuses the existing `ChatPage` and chat providers verbatim. Do not fork the streaming
+  state machine, and do not change `/workspace/chats/**` behaviour.
+
+All new analytics copy lives in `src/core/i18n/locales/analytics.{ts,zh-CN.ts,en-US.ts}` and is
+merged into the existing dictionaries; the Chinese file is the design baseline.

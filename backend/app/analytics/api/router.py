@@ -28,6 +28,8 @@ from app.analytics.api.models import (
     AccessPolicyView,
     AdminDatasourceListResponse,
     AdminDatasourceView,
+    AnalysisReportPageResponse,
+    AnalysisReportView,
     AnalyticsErrorResponse,
     ColumnAccessRuleView,
     ColumnSchemaView,
@@ -54,6 +56,7 @@ from app.analytics.api.models import (
 from app.analytics.application import AnalyticsNotFoundError, AnalyticsStorageError, PersistenceConflictError, PersistenceDataError
 from app.analytics.composition import AnalyticsServices
 from app.analytics.domain import (
+    AnalysisReport,
     ColumnAccessRule,
     ColumnSchema,
     DatasourceDefinition,
@@ -73,6 +76,14 @@ _NOT_FOUND = {"code": "analytics_not_found"}
 _CONFLICT = {"code": "analytics_version_conflict"}
 _UNAVAILABLE = {"code": "analytics_unavailable"}
 _STORAGE_UNAVAILABLE = {"code": "analytics_storage_unavailable"}
+
+#: 报告索引分页的默认页大小与硬上限。
+#:
+#: 刻意不放进 `analytics:` 配置块：报告读取与审计读取共用同一条 keyset 读取路径，页面大小是
+#: 传输层参数而不是部署语义；把它做成可配置只会多一个需要运维对齐的旋钮。硬上限与审计一致
+#: （100），客户端只能向下请求。
+REPORT_PAGE_SIZE = 50
+MAX_REPORT_PAGE_SIZE = 100
 
 
 def install_request_error_handler(app) -> None:
@@ -224,6 +235,32 @@ def _audit_page(records: tuple[QueryAuditRecord, ...], limit: int) -> QueryAudit
     )
 
 
+def _report_view(report: AnalysisReport) -> AnalysisReportView:
+    return AnalysisReportView(
+        id=report.id,
+        principal_id=report.principal_id,
+        thread_id=report.thread_id,
+        run_id=report.run_id,
+        artifact_path=report.artifact_path,
+        title=report.title,
+        status=report.status,
+        evidence_ids=report.evidence_ids,
+        created_at=report.created_at,
+    )
+
+
+def _report_page(records: tuple[AnalysisReport, ...], limit: int) -> AnalysisReportPageResponse:
+    has_more = len(records) == limit
+    last = records[-1] if records else None
+    return AnalysisReportPageResponse(
+        reports=tuple(_report_view(record) for record in records),
+        has_more=has_more,
+        # 只有确实还有下一页时才给游标：否则客户端会多跑一次空查询。
+        next_before_created_at=last.created_at if (last is not None and has_more) else None,
+        next_before_id=last.id if (last is not None and has_more) else None,
+    )
+
+
 def _metric(owner_id: str, key: str, payload) -> MetricDefinition:
     return MetricDefinition(
         key=key,
@@ -275,6 +312,23 @@ async def _read_audits(request: Request, principal_id: str, limit: int | None, b
         )
     )
     return _audit_page(records, page_size)
+
+
+async def _read_reports(request: Request, principal_id: str, limit: int | None, before_created_at: datetime | None, before_id: str | None) -> AnalysisReportPageResponse:
+    services = _services(request)
+    page_size = REPORT_PAGE_SIZE if limit is None else limit
+    # 游标必须成对出现：只用其一无法表达"严格更早"，只会让客户端猜错边界。
+    if (before_created_at is None) != (before_id is None):
+        raise HTTPException(status_code=422, detail=_INVALID_REQUEST)
+    records = await _guarded(
+        services.list_reports.execute(
+            principal_id=principal_id,
+            limit=page_size,
+            before_created_at=before_created_at,
+            before_id=before_id,
+        )
+    )
+    return _report_page(records, page_size)
 
 
 # --- 用户接口 ---------------------------------------------------------------
@@ -338,6 +392,23 @@ async def list_audits(
     before_id: str | None = Query(default=None),
 ) -> QueryAuditPageResponse:
     return await _read_audits(request, principal, limit, before_started_at, before_id)
+
+
+@router.get("/reports", response_model=AnalysisReportPageResponse)
+async def list_reports(
+    request: Request,
+    principal: str = Depends(_principal),
+    limit: int | None = Query(default=None, ge=1, le=MAX_REPORT_PAGE_SIZE),
+    before_created_at: datetime | None = Query(default=None),
+    before_id: str | None = Query(default=None),
+) -> AnalysisReportPageResponse:
+    """principal-scoped 的报告索引。
+
+    只读索引元数据：不返回 artifact 字节，也不签发 URL。打开报告仍然要经过
+    `/api/threads/{thread_id}/artifacts/{path}` 的 thread ownership 检查。
+    """
+
+    return await _read_reports(request, principal, limit, before_created_at, before_id)
 
 
 # --- 管理员接口 -------------------------------------------------------------
@@ -502,6 +573,19 @@ async def admin_list_audits(
 ) -> QueryAuditPageResponse:
     # 跨用户列表被显式禁止：必须给出精确 principal，`*` 不是通配符，只是一个匹配不到的值。
     return await _read_audits(request, principal_id, limit, before_started_at, before_id)
+
+
+@admin_router.get("/reports", response_model=AnalysisReportPageResponse)
+async def admin_list_reports(
+    request: Request,
+    principal_id: str = Query(min_length=1, max_length=64),
+    limit: int | None = Query(default=None, ge=1, le=MAX_REPORT_PAGE_SIZE),
+    before_created_at: datetime | None = Query(default=None),
+    before_id: str | None = Query(default=None),
+) -> AnalysisReportPageResponse:
+    """跨用户的报告索引必须走显式 admin 端点，并给出精确 principal。"""
+
+    return await _read_reports(request, principal_id, limit, before_created_at, before_id)
 
 
 router.include_router(admin_router)

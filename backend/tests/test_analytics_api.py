@@ -453,3 +453,107 @@ def test_admin_audits_require_an_exact_principal(services, configured):
     page = client.get("/api/analytics/admin/audits", params={"principal_id": _USER}).json()
     assert [record["principal_id"] for record in page["audits"]] == [_USER]
     assert client.get("/api/analytics/admin/audits", params={"principal_id": "*"}).json()["audits"] == []
+
+
+# --- 报告索引读取（Phase 4） ------------------------------------------------
+
+_REPORT_FIELDS = {"id", "principal_id", "thread_id", "run_id", "artifact_path", "title", "status", "evidence_ids", "created_at"}
+_EVIDENCE = "a" * 64
+
+
+async def _publish(services, *, principal_id=_USER, thread_id="thread-1", run_id="run-1", artifact_path="/mnt/user-data/outputs/report.md", title="2026 Q3 经营分析"):
+    """直接调用应用用例发布索引：这与 Lead-only 工具走的是同一个入口。"""
+
+    return await services.publish_report.execute(
+        principal_id=principal_id,
+        thread_id=thread_id,
+        run_id=run_id,
+        title=title,
+        artifact_path=artifact_path,
+        evidence_ids=[_EVIDENCE],
+    )
+
+
+def test_report_listing_requires_authentication(services):
+    assert _client(services).get("/api/analytics/reports").status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_report_listing_is_exactly_principal_scoped(services):
+    await _publish(services)
+    await _publish(services, principal_id="someone-else", thread_id="thread-2", run_id="run-2")
+
+    page = _as(_client(services), f"{_USER}:user").get("/api/analytics/reports").json()
+
+    assert [report["principal_id"] for report in page["reports"]] == [_USER]
+    assert page["has_more"] is False
+    assert page["next_before_created_at"] is None and page["next_before_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_report_response_only_carries_index_fields(services):
+    await _publish(services)
+
+    report = _as(_client(services), f"{_USER}:user").get("/api/analytics/reports").json()["reports"][0]
+
+    assert set(report) == _REPORT_FIELDS
+    # 索引里没有 artifact 内容，也没有任何"已签发的 URL"。
+    assert report["artifact_path"] == "/mnt/user-data/outputs/report.md"
+    assert report["status"] == "published"
+    assert report["evidence_ids"] == [_EVIDENCE]
+    for banned in ("content", "url", "sql", "rows", "token", "secret_ref", "download_url"):
+        assert banned not in report
+
+
+@pytest.mark.asyncio
+async def test_report_keyset_pagination_is_stable(services):
+    for index in range(3):
+        await _publish(services, artifact_path=f"/mnt/user-data/outputs/report-{index}.md")
+    client = _as(_client(services), f"{_USER}:user")
+
+    first = client.get("/api/analytics/reports", params={"limit": 2}).json()
+    assert len(first["reports"]) == 2 and first["has_more"] is True
+    assert first["next_before_created_at"] and first["next_before_id"]
+
+    second = client.get("/api/analytics/reports", params={"limit": 2, "before_created_at": first["next_before_created_at"], "before_id": first["next_before_id"]}).json()
+    assert len(second["reports"]) == 1 and second["has_more"] is False
+
+    ids = {report["id"] for report in first["reports"]} | {report["id"] for report in second["reports"]}
+    assert len(ids) == 3
+
+
+@pytest.mark.asyncio
+async def test_a_half_specified_report_cursor_is_rejected(services):
+    await _publish(services)
+    client = _as(_client(services), f"{_USER}:user")
+
+    half = client.get("/api/analytics/reports", params={"before_id": "report-1"})
+    assert half.status_code == 422
+    assert half.json() == {"detail": {"code": "invalid_analytics_request"}}
+
+
+@pytest.mark.asyncio
+async def test_report_page_size_is_bounded(services):
+    client = _as(_client(services), f"{_USER}:user")
+
+    assert client.get("/api/analytics/reports", params={"limit": 0}).status_code == 422
+    assert client.get("/api/analytics/reports", params={"limit": 101}).status_code == 422
+
+
+def test_admin_report_listing_requires_an_admin_and_an_exact_principal(services):
+    client = _as(_client(services), f"{_ADMIN}:admin")
+
+    assert _as(_client(services), f"{_USER}:user").get("/api/analytics/admin/reports", params={"principal_id": _USER}).status_code == 403
+    assert _as(_client(services), f"{_ADMIN}:pat").get("/api/analytics/admin/reports", params={"principal_id": _USER}).status_code == 403
+    assert client.get("/api/analytics/admin/reports").status_code == 422
+    assert client.get("/api/analytics/admin/reports", params={"principal_id": ""}).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_admin_report_listing_needs_an_exact_principal(services):
+    await _publish(services)
+    client = _as(_client(services), f"{_ADMIN}:admin")
+
+    assert client.get("/api/analytics/admin/reports", params={"principal_id": "*"}).json()["reports"] == []
+    page = client.get("/api/analytics/admin/reports", params={"principal_id": _USER}).json()
+    assert [report["principal_id"] for report in page["reports"]] == [_USER]

@@ -1,13 +1,16 @@
-import { useMemo } from "react";
-
+import { analyticsEnUS } from "@/core/i18n/locales/analytics.en-US";
 import { cn } from "@/lib/utils";
 
 export type FooterProps = {
   className?: string;
 };
 
+// 页脚始终以品牌词条为唯一来源。它同时被 /、/blog 与 /[lang]/docs 复用，
+// 这三条路由的布局都是服务端组件，因此这里可以直接读词条常量，无须再走 provider。
+const { productName, aboutDerivation, aboutLicense } = analyticsEnUS.branding;
+
 export function Footer({ className }: FooterProps) {
-  const year = useMemo(() => new Date().getFullYear(), []);
+  const year = new Date().getFullYear();
   return (
     <footer
       className={cn(
@@ -16,14 +19,15 @@ export function Footer({ className }: FooterProps) {
       )}
     >
       <hr className="from-border/0 to-border/0 m-0 h-px w-full border-none bg-linear-to-r via-white/20" />
-      <div className="text-muted-foreground container flex h-20 flex-col items-center justify-center text-sm">
+      <div className="text-muted-foreground container flex max-w-3xl flex-col items-center justify-center gap-2 px-4 py-8 text-center text-xs">
         <p className="text-center font-serif text-lg md:text-xl">
           &quot;Originated from Open Source, give back to Open Source.&quot;
         </p>
-      </div>
-      <div className="text-muted-foreground container mb-8 flex flex-col items-center justify-center text-xs">
-        <p>Licensed under MIT License</p>
-        <p>&copy; {year} DeerFlow</p>
+        <p>{aboutDerivation}</p>
+        <p>{aboutLicense}</p>
+        <p>
+          &copy; {year} {productName}
+        </p>
       </div>
     </footer>
   );

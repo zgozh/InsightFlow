@@ -29,8 +29,11 @@ _MIGRATIONS_DIR = Path(_bootstrap_module.__file__).parent / "migrations"
 _VERSION_TABLE = "analytics_alembic_version"
 # 与 `versions/0001_analytics_control_plane.py` 的 revision id 逐字一致。
 _REVISION = "0001_analytics_control_plane"
+# 与 `versions/0002_analytics_analysis_reports.py` 的 revision id 逐字一致。
+_REVISION_0002 = "0002_analytics_analysis_reports"
 _ANALYTICS_TABLES = (
     "analytics_access_policies",
+    "analytics_analysis_reports",
     "analytics_datasources",
     "analytics_execution_plans",
     "analytics_metrics",
@@ -150,6 +153,32 @@ async def test_downgrade_then_upgrade_round_trips(tmp_path):
 
         await _run_alembic(engine, direction="upgrade", revision="head")
         assert set(_ANALYTICS_TABLES) <= await _table_names(engine)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_phase_4_report_table_is_a_pure_forward_addition(tmp_path):
+    """Phase 4 的报告索引必须是纯前向迁移：停在 0001 的库升级到 head 只新增一张表。"""
+
+    engine = _engine(tmp_path / "analytics.db")
+    try:
+        await _run_alembic(engine, direction="upgrade", revision=_REVISION)
+        assert await _scalar(engine, f"SELECT version_num FROM {_VERSION_TABLE}") == _REVISION
+        before = await _table_names(engine)
+        assert "analytics_analysis_reports" not in before
+
+        await _bootstrap(engine)
+
+        after = await _table_names(engine)
+        assert await _scalar(engine, f"SELECT version_num FROM {_VERSION_TABLE}") == _REVISION_0002
+        assert after - before == {"analytics_analysis_reports"}
+
+        # 单步 downgrade 只撤掉 0002，0001 的六张表原样保留。
+        await _run_alembic(engine, direction="downgrade", revision=_REVISION)
+        reverted = await _table_names(engine)
+        assert "analytics_analysis_reports" not in reverted
+        assert set(_ANALYTICS_TABLES) - {"analytics_analysis_reports"} <= reverted
     finally:
         await engine.dispose()
 

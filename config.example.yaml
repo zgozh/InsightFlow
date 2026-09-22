@@ -1203,6 +1203,12 @@ tools:
     group: analytics
     use: app.analytics.agent.tools:query_business_data
 
+  # Phase 4：只登记分析报告索引，不读 artifact 内容。模型可见参数只有
+  # title / artifact_path / evidence_ids，principal 与 thread/run 从受信 runtime 派生。
+  - name: publish_analysis_report
+    group: analytics
+    use: app.analytics.agent.reports:publish_analysis_report
+
 # ============================================================================
 # Tool Search Configuration (Deferred Tool Loading)
 # ============================================================================
@@ -1805,6 +1811,12 @@ subagents:
       disallowed_tools:
         - inspect_business_catalog
         - query_business_data
+        - publish_analysis_report
+    bash:
+      disallowed_tools:
+        - inspect_business_catalog
+        - query_business_data
+        - publish_analysis_report
 
 # Durable native-subagent batches. Disabled by default because enabling it can
 # materially increase model usage and requires database.backend sqlite/postgres.
@@ -3071,6 +3083,9 @@ authorization:
 #   JSON 环境变量（engine/host/port/database/username/password，可选 tls_mode/ca_pem）。
 #   明文 tls_mode: disable 只允许 loopback 主机。
 # - audit_page_size 是审计分页默认值，服务端硬上限 100。
+# - 报告索引读取沿用同一个审计分页上限常量（100），默认每页 50；报告索引只保存
+#   principal/thread/run/artifact_path/title/status/evidence_ids/created_at，绝不保存 artifact
+#   内容、原始 SQL、结果行或 prompt。
 analytics:
   enabled: true
   query_max_rows: 1000

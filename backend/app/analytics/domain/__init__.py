@@ -21,10 +21,27 @@ from app.analytics.domain.query import (
     QueryPolicyRequest,
     QueryRisk,
 )
+from app.analytics.domain.report import (
+    ANALYSIS_REPORT_ARTIFACT_ROOT,
+    MAX_REPORT_ARTIFACT_PATH_CHARACTERS,
+    MAX_REPORT_EVIDENCE_IDS,
+    MAX_REPORT_ID_CHARACTERS,
+    MAX_REPORT_TITLE_CHARACTERS,
+    AnalysisReport,
+    ReportPublishCode,
+    ReportStatus,
+    normalize_report_artifact_path,
+)
 from app.analytics.domain.schema import ColumnSchema, ColumnSensitivity, RelationSchema, SchemaSnapshot
 
 __all__ = [
+    "ANALYSIS_REPORT_ARTIFACT_ROOT",
     "MAX_QUERY_ROWS",
+    "MAX_REPORT_ARTIFACT_PATH_CHARACTERS",
+    "MAX_REPORT_EVIDENCE_IDS",
+    "MAX_REPORT_ID_CHARACTERS",
+    "MAX_REPORT_TITLE_CHARACTERS",
+    "AnalysisReport",
     "AuthorizationDecisionCode",
     "AuthorizedQuerySpec",
     "ColumnAccess",
@@ -58,5 +75,8 @@ __all__ = [
     "QueryRisk",
     "RelationAccessRule",
     "RelationSchema",
+    "ReportPublishCode",
+    "ReportStatus",
     "SchemaSnapshot",
+    "normalize_report_artifact_path",
 ]

@@ -1,6 +1,12 @@
 import type { LucideIcon } from "lucide-react";
 
+import type { AnalyticsTranslations, BrandingTranslations } from "./analytics";
+
 export interface Translations {
+  // InsightFlow 品牌与产品工作台（Phase 4）
+  branding: BrandingTranslations;
+  analytics: AnalyticsTranslations;
+
   // Locale meta
   locale: {
     localName: string;

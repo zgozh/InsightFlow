@@ -16,13 +16,15 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
 import { useI18n } from "@/core/i18n/hooks";
 import { cn } from "@/lib/utils";
 
-import { GithubIcon } from "./github-icon";
-import { Tooltip } from "./tooltip";
 // Workspace sections that have an index route (/workspace/<section>/page.tsx)
 // and can therefore be linked to from the breadcrumb.
 const LINKABLE_SECTIONS: Record<string, true> = {
   agents: true,
   chats: true,
+  datasources: true,
+  history: true,
+  metrics: true,
+  reports: true,
   "scheduled-tasks": true,
 };
 
@@ -100,16 +102,10 @@ export function WorkspaceHeader({
         </Breadcrumb>
       </div>
       <div className="pr-4">
-        <Tooltip content={t.workspace.githubTooltip}>
-          <a
-            href="https://github.com/bytedance/deer-flow"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="opacity-75 transition hover:opacity-100"
-          >
-            <GithubIcon className="size-6" />
-          </a>
-        </Tooltip>
+        {/*
+          Phase 4 移除了产品 UI 里的上游 GitHub CTA（ByteDance/deer-flow）。上游归属仍然保留在
+          MIT LICENSE、README 与设置里的「关于」段落，不通过页头按钮做产品导流。
+        */}
       </div>
     </header>
   );

@@ -28,10 +28,13 @@ from app.analytics.application.persistence_ports import (
 )
 from app.analytics.application.ports import DatasourceCatalog, MetricCatalog
 from app.analytics.application.query_policy import QueryPolicy
+from app.analytics.application.report_ports import AnalysisReportRepository, ReportPublication
+from app.analytics.application.reports import ListAnalysisReports, PublishAnalysisReport
 
 __all__ = [
     "AccessPolicyCatalog",
     "AccessPolicyRepository",
+    "AnalysisReportRepository",
     "AuthorizePreparedQuery",
     "Clock",
     "CreateQueryExecutionPlan",
@@ -48,15 +51,18 @@ __all__ = [
     "ExecutionPlanStoreError",
     "MetricCatalog",
     "MetricRepository",
+    "ListAnalysisReports",
     "PersistenceConflictError",
     "PersistenceDataError",
     "PlanAnalyticsQuery",
     "PlanTokenIssuer",
+    "PublishAnalysisReport",
     "QueryAuditLog",
     "QueryExecutionDelivery",
     "QueryPlanDelivery",
     "QueryAuditReader",
     "QueryPolicy",
+    "ReportPublication",
     "SchemaCatalog",
     "SchemaSnapshotRepository",
     "SemanticQueryAuthorizer",

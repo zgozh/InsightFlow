@@ -30,8 +30,10 @@ from app.analytics.application import (
     DatasourceCatalog,
     ExecuteAnalyticsQuery,
     ExecuteQueryPlan,
+    ListAnalysisReports,
     MetricCatalog,
     PlanAnalyticsQuery,
+    PublishAnalysisReport,
     QueryAuditReader,
 )
 from app.analytics.application.execution import CreateQueryExecutionPlan
@@ -43,6 +45,7 @@ from app.analytics.infrastructure.datasource_secrets import EnvironmentDatasourc
 from app.analytics.infrastructure.mysql_runtime import MySQLRuntime
 from app.analytics.infrastructure.persistence import (
     SqlAccessPolicyRepository,
+    SqlAnalysisReportRepository,
     SqlDatasourceRepository,
     SqlExecutionPlanStore,
     SqlMetricRepository,
@@ -80,6 +83,8 @@ class AnalyticsServices:
     plan_query: PlanAnalyticsQuery
     execute_query: ExecuteAnalyticsQuery
     audit_reader: QueryAuditReader
+    publish_report: PublishAnalysisReport
+    list_reports: ListAnalysisReports
 
 
 async def build_analytics_services(
@@ -115,6 +120,7 @@ async def build_analytics_services(
     policies = SqlAccessPolicyRepository(session_factory)
     metrics = SqlMetricRepository(session_factory)
     audit_log = SqlQueryAuditLog(session_factory)
+    reports = SqlAnalysisReportRepository(session_factory)
 
     query_policy = SqlglotQueryPolicy()
     authorizer = SqlglotSemanticAuthorizer(query_policy=query_policy)
@@ -179,6 +185,9 @@ async def build_analytics_services(
         plan_query=plan_query,
         execute_query=ExecuteAnalyticsQuery(execute_plan=execute_plan),
         audit_reader=audit_log,
+        # 报告索引与查询执行共用同一批应用入口；id/created_at 一律由服务端派生。
+        publish_report=PublishAnalysisReport(repository=reports, clock=clock, id_issuer=lambda: str(uuid.uuid4())),
+        list_reports=ListAnalysisReports(repository=reports),
     )
 
 

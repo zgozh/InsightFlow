@@ -17,6 +17,9 @@ description: 用平台受控查询工具完成经营数据分析。先确认分�
 - `query_business_data`
   参数只有 `datasource_id` 与 `sql`。它在一次调用内完成计划与执行，返回稳定 `code`、有界结果
   与 `evidence`。
+- `publish_analysis_report`
+  参数只有 `title`、`artifact_path` 与 `evidence_ids`。它只登记报告索引，**不读文件内容**，
+  也不接受 principal/thread/run/status/时间。它把这份报告挂到**当前登录用户**当前的这次分析会话上。
 - 委派用现有的 `task` 工具；报告文件用现有 sandbox 工具写入 `/mnt/user-data/outputs`，
   再用 `present_files` 交付。
 
@@ -41,8 +44,17 @@ description: 用平台受控查询工具完成经营数据分析。先确认分�
 8. **最多一次定向修订**：Reviewer 指出问题时，按它的意见做一次针对性修订并重新复核。
    仍然不通过就如实返回失败与原因，不要伪造通过，也不要无限循环。
 9. **交付**：通过后把报告写入 `/mnt/user-data/outputs`（Markdown，必要时附 CSV 或图），
-   用 `present_files` 交付。最终回复包含摘要、限制与风险、引用的 `evidence_id` 列表，
-   以及 artifact 链接；不要展示思维链或工具调用的中间草稿。
+   用 `present_files` 交付。
+10. **登记报告索引**：**只有** `present_files` 成功之后才调用 `publish_analysis_report`，
+   传入 `title`、`artifact_path`（必须与刚交付的 outputs 路径逐字一致）与该报告实际引用的
+   `evidence_ids`。这一步只是登记索引，不会复制或上传文件。
+    - 返回 `published` 表示索引已登记；
+    - 返回 `existing` 表示这次是重试，索引里已经有同一份报告——这是正常结果，不要重复登记；
+    - 返回 `report_conflict` 表示同一路径上已经登记过**内容不同**的报告。不要尝试覆盖，
+      改用新的文件名，或如实说明这次没有登记成功；
+    - 任何非成功 code 都必须如实报告，**绝不能把未登记的报告说成"已保存"**。
+11. **最终回复**包含摘要、限制与风险、引用的 `evidence_id` 列表、artifact 链接，以及报告是否
+    成功登记。不要展示思维链或工具调用的中间草稿。
 
 ## 回答纪律
 
@@ -57,3 +69,7 @@ description: 用平台受控查询工具完成经营数据分析。先确认分�
 - 不要自己实现权限判断、行数限制或成本估算——这些由工具负责。
 - 不要虚构数据源、表名、字段名或指标；只使用 `inspect_business_catalog` 返回的内容。
 - 不要并行发起多条业务查询，也不要因为一次失败就自动重新查询。
+- 不要在 `present_files` 之前登记报告，也不要在登记失败时声称报告已保存。
+- 不要把 `publish_analysis_report` 当成"上传报告"——它只写索引，不复制文件。
+- 不要提交 `artifact_path` 之外的路径（例如 `uploads/` 或带 `..` 的路径），也不要提交非
+  `evidence_id` 的字符串。

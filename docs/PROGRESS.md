@@ -8,9 +8,9 @@ Baseline: DeerFlow `v2.1.0-rc0` (`769589e8daee14c2587a634b6b43bd96471a41a1`), im
 | --- | --- | --- | --- |
 | 0 Baseline and governance | Complete | `936758c`, `aa516bd`; architecture report; ADR 0001 | Phase 1 implementation |
 | 1 Analytics boundary | Complete | `53ed1f4`; focused/guidance/Ruff review PASS | Phase 2A implementation |
-| 2 Safe data access | In progress | 2A `8a11d0e`, `f2d35d3`; 2B1 `44f62c3` + Fix 01; 2B2 `3a65865` + Fix 01（MySQL 超时语义与验收镜像基线）; 2C1 `eda8878` + Fix 01 `0fc32bd` 已验收; 2C2 认证交付与 Gateway 装配（配置块、管理用例、raw SQL 编排、严格 API、exact-principal 审计读取）+ Fix 01（结果上限按查询 LIMIT 收紧） | Phase 2C2 Fix 01 GPT 复验 |
-| 3 Agent workflow | In progress | 3 受控查询 Agent 工具（catalog + 单次调用内 plan→execute）、确定性 evidence、经营分析 skill、operator-owned 加法式 subagent denylist | Phase 3 GPT 复验 |
-| 4 Product UI | Not started | — | Approved Phase 4 prompt |
+| 2 Safe data access | Complete | 2A `8a11d0e`, `f2d35d3`; 2B1 `44f62c3` + Fix 01; 2B2 `3a65865` + Fix 01; 2C1 `eda8878` + Fix 01 `0fc32bd`; 2C2 `568a3d6` + Fix 01 `c450c8c`，各切片均已复验 | Phase 3 implementation |
+| 3 Agent workflow | Complete | `7bd21d7`：受控查询 Agent 工具、确定性 evidence、经营分析 skill、operator-owned 加法式 subagent denylist；schema 层排除多余参数的 V1 裁决已记录 | Phase 4 implementation |
+| 4 Product UI | In progress | Phase 4 架构、施工计划与实施提示词已批准 | Phase 4 GPT review |
 | 5 Capability removal | Not started | — | Approved deletion manifests |
 | 6 Deployment and acceptance | Not started | — | Full acceptance evidence |
 
