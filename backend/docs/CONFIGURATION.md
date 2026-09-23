@@ -1037,7 +1037,7 @@ VM created for another root.
 - Skills are automatically discovered and loaded
 - Available in both local and Docker sandbox via path mapping
 
-Skill installs and agent-managed skill writes also run through native deterministic SkillScan before the LLM scanner:
+Skill install and update requests run through native deterministic SkillScan before the LLM scanner. Agent runtime self-editing is disabled; this configuration continues to protect the user and administrator `/api/skills` management paths:
 
 ```yaml
 skill_scan:
@@ -1045,6 +1045,14 @@ skill_scan:
 ```
 
 Set `skill_scan.enabled: false` to disable only the deterministic analyzers. Safe archive extraction and the LLM-based skill scanner still run.
+
+```yaml
+skill_security:
+  moderation_model_name: null
+  security_fail_closed: true
+```
+
+`skill_security.moderation_model_name` selects the optional LLM moderation model; `null` uses the default chat model. If moderation is unavailable, `security_fail_closed: true` blocks non-executable writes. Executable content remains blocked by the existing scanner policy. Older `skill_evolution` configs migrate these two fields by precedence: explicit `skill_security` value, then the matching legacy value, then the safe default. The old `enabled` field is discarded and cannot enable an Agent tool or prompt.
 
 **Per-Agent Skill Filtering**:
 Custom agents can restrict which skills they discover and activate by defining a `skills` field in their `config.yaml` (located at `workspace/agents/<agent_name>/config.yaml`):

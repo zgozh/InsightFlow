@@ -39,7 +39,7 @@ def _make_user(system_role: str) -> User:
 def _make_app(*, system_role: str) -> FastAPI:
     config = SimpleNamespace(
         skills=SimpleNamespace(get_skills_path=lambda: "/tmp/skills", container_path="/mnt/skills", use="deerflow.skills.storage.local_skill_storage:LocalSkillStorage"),
-        skill_evolution=SimpleNamespace(enabled=True, moderation_model_name=None),
+        skill_security=SimpleNamespace(moderation_model_name=None),
     )
     app = make_authed_test_app(user_factory=lambda: _make_user(system_role))
     app.state.config = config

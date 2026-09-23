@@ -207,7 +207,7 @@ class SkillStorage(ABC):
     def delete_custom_skill(self, name: str, *, history_meta: dict | None = None) -> None:
         """Delete a custom skill (validation + optional history + directory removal).
 
-        Origin: ``app.gateway.routers.skills.delete_custom_skill`` + ``skill_manage_tool``.
+        Origin: ``app.gateway.routers.skills.delete_custom_skill``.
         """
 
     @abstractmethod

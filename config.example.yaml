@@ -20,7 +20,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 48
+config_version: 49
 
 # Optional per-model request pacing (inside a models[] entry):
 # request_admission:
@@ -1144,7 +1144,7 @@ skills:
 # SkillScan Configuration
 # ============================================================================
 # Native deterministic skill safety scanning. This runs before the LLM skill
-# scanner on skill install/update and agent-managed skill writes.
+# scanner on user and administrator skill install/update requests.
 skill_scan:
   # Set false to disable the new deterministic analyzers (nested-archive,
   # secret-pattern, and other content-level checks). Safe archive extraction
@@ -1449,12 +1449,11 @@ memory:
 # ============================================================================
 # Custom Agent Management API
 # ============================================================================
-# Controls whether the HTTP gateway exposes custom-agent SOUL/USER.md management.
-# Keep this disabled unless the gateway is behind a trusted authenticated admin boundary.
-skill_evolution:
-  enabled: false # Set to true to allow agent-managed writes under skills/custom
-  moderation_model_name: null # Model for LLM-based security scanning (null = use default model)
-  security_fail_closed: true # Moderation model unavailable: true blocks all writes; false allows non-executable content with a warning (executable is always blocked)
+# LLM moderation for user and administrator skill installation/update routes.
+# Agent runtime self-editing is not configurable; unavailable moderation fails closed by default.
+skill_security:
+  moderation_model_name: null # Optional moderation model (null = use the default chat model)
+  security_fail_closed: true # Block non-executable skill writes when moderation is unavailable
 
 # ============================================================================
 # Checkpointer Configuration (DEPRECATED — use `database` instead)

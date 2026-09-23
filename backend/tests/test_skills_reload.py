@@ -27,7 +27,7 @@ _SUCCESS_RESPONSE = {
 def _make_app(*, system_role: str) -> FastAPI:
     config = SimpleNamespace(
         skills=SimpleNamespace(get_skills_path=lambda: "/tmp/skills", container_path="/mnt/skills", use="deerflow.skills.storage.local_skill_storage:LocalSkillStorage"),
-        skill_evolution=SimpleNamespace(enabled=True, moderation_model_name=None),
+        skill_security=SimpleNamespace(moderation_model_name=None),
     )
     app = make_authed_test_app(
         user_factory=lambda: User(
@@ -152,7 +152,6 @@ def test_reload_invalidates_all_user_caches_and_rescans_external_changes(monkeyp
             use="deerflow.skills.storage.local_skill_storage:LocalSkillStorage",
             get_skills_path=lambda: tmp_path,
         ),
-        skill_evolution=SimpleNamespace(enabled=False),
     )
     monkeypatch.setattr(prompt_module, "get_or_new_skill_storage", lambda **_kwargs: storage)
     monkeypatch.setattr(prompt_module, "get_or_new_user_skill_storage", lambda _user_id, **_kwargs: storage)
@@ -196,7 +195,6 @@ def test_reload_does_not_allow_inflight_user_scan_to_repopulate_stale_cache(monk
             use="deerflow.skills.storage.local_skill_storage:LocalSkillStorage",
             get_skills_path=lambda: tmp_path,
         ),
-        skill_evolution=SimpleNamespace(enabled=False),
     )
     first_scan_started = threading.Event()
     release_first_scan = threading.Event()

@@ -52,7 +52,7 @@ deer-flow/
 │   │           │   ├── builtins/      # general-purpose, bash agents
 │   │           │   ├── executor.py    # Background execution engine
 │   │           │   └── registry.py    # Agent registry
-│   │           ├── tools/builtins/    # Built-in tools (present_files, ask_clarification, view_image, review_skill_package)
+│   │           ├── tools/builtins/    # Built-in tools (present_files, ask_clarification, view_image)
 │   │           ├── mcp/               # MCP integration (tools, cache, client)
 │   │           ├── integrations/      # Managed first-party integration installers (e.g. Lark CLI skill pack)
 │   │           ├── extensions/        # Python plugin loader, registry, placement, and isolation

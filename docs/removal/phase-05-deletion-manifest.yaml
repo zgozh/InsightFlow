@@ -25,12 +25,12 @@ baseline:
   tests: 1078
   text_loc: 717429
 forecast_after_all_batches: &id001
-  tracked: 2262
-  source: 1058
-  tests: 868
-  text_loc: 540774
+  tracked: 2259
+  source: 1056
+  tests: 867
+  text_loc: 540036
 target_reachable: false
-target_verdict: 五批共删除 811 tracked / 341 source / 210 tests / 176655 text-LOC；剩余 2262 tracked / 1058 source / 868 tests / 540774 text-LOC。相对 tracked 目标区间 850–1050 差 1212–1412，相对硬上限 1200 仍高 1062；生产源码比目标上限 650 高 408；测试比目标上限 350 高 518；有效文本 LOC 比目标上限 220k 高 320774。剩余部分由 KEEP 契约的不可删成本构成，见 keep_cost_breakdown。
+target_verdict: B4 边界裁决新增删除 3 个 tracked 文件（2 source、1 test），五批现预测共删除 814 tracked / 343 source / 211 tests / 177393 text-LOC；剩余 2259 tracked / 1056 source / 867 tests / 540036 text-LOC。新增的 config/skill_security_config.py 是 1 个生产文件，需在实际计数中单独计入，因此预计最终实际为 2260 tracked / 1057 source，LOC 另加该文件行数。相对 tracked 目标区间 850–1050 差 1209–1409，相对硬上限 1200 仍高 1059；生产源码比目标上限 650 高 406；测试比目标上限 350 高 517；有效文本 LOC 比目标上限 220k 高 320036。旧预估 2262 因本次 B4 范围纠正作废；历史文档/Decision 0002 的 2290 也不是当前预测依据。剩余部分由 KEEP 契约的不可删成本构成，见 keep_cost_breakdown。
 keep_cost_breakdown:
 - area: backend/tests（Phase 0–4 安全与运行期回归的唯一载体）
   tracked: 650
@@ -75,11 +75,11 @@ keep_cost_breakdown:
   text_loc: 49605
   why_kept: KEEP 契约内的不可删成本；410 tracked 文件
 - area: 合计（删除后仍保留的全部 tracked 文件）
-  tracked: 2262
-  source: 1058
-  tests: 868
-  text_loc: 540774
-  why_kept: baseline tracked=3073 → 保留 2262；text-LOC 717429 → 540774。剩余部分不是「尚未删干净」，而是 KEEP 契约指定的产品面本体。
+  tracked: 2259
+  source: 1056
+  tests: 867
+  text_loc: 540036
+  why_kept: 按五批删除预算 baseline tracked=3073 → 保留 2259；text-LOC 717429 → 540036。新增 skill_security_config.py 未计入删除预测，实际规模报告另加该文件。剩余部分由 KEEP 契约指定的产品面构成。
 batches:
 - id: B1
   objective: 删除 InsightFlow 最终产品面之外的全部前端路由、孤儿营销组件与上游品牌资产，并把共享外壳从这些路由上解耦。
@@ -1680,8 +1680,11 @@ batches:
   - .github/skill-review-waivers.v1.json
   - .github/workflows/skill-review-ci.yml
   - backend/packages/harness/deerflow/tools/builtins/review_skill_package_tool.py
+  - backend/packages/harness/deerflow/tools/skill_manage_tool.py
+  - backend/packages/harness/deerflow/config/skill_evolution_config.py
   - backend/tests/test_review_changed_public_skills.py
   - backend/tests/test_review_skill_package_tool.py
+  - backend/tests/test_skill_manage_tool.py
   - backend/tests/test_skill_creator_quick_validate.py
   - backend/tests/test_skill_review_core.py
   - backend/tests/test_skill_review_waivers.py
@@ -1704,7 +1707,35 @@ batches:
   - path: config.example.yaml
     change: 删除被删技能的配置；如结构变化则前进 config_version
   - path: backend/packages/harness/deerflow/config/app_config.py
-    change: 删除技能平台相关配置节
+    change: 删除 skill_evolution 并迁移安全字段到 skill_security；旧块按新值优先规则兼容读取
+  - path: backend/packages/harness/deerflow/config/__init__.py
+    change: 移除 SkillEvolutionConfig 导出
+  - path: backend/packages/harness/deerflow/tools/tools.py
+    change: 移除 Agent 运行时技能自编辑工具的条件装配
+  - path: backend/packages/harness/deerflow/tools/__init__.py
+    change: 移除 skill_manage_tool 延迟导出
+  - path: backend/packages/harness/deerflow/agents/lead_agent/prompt.py
+    change: 删除 Self-Evolution 指令和 skill_evolution 配置读取
+  - path: backend/packages/harness/deerflow/skills/describe.py
+    change: 移除 Self-Evolution prompt section 参数
+  - path: backend/packages/harness/deerflow/skills/security_scanner.py
+    change: 从独立 skill_security 配置读取 moderation 与 fail-closed 策略
+  - path: backend/packages/harness/deerflow/agents/lead_agent/agent.py
+    change: 删除 agent-managed skill_manage 安全入口注释，保留安装扫描说明
+  - path: backend/packages/harness/deerflow/tools/sync.py
+    change: 删除对 skill_manage_tool 的文档引用
+  - path: backend/packages/harness/deerflow/sandbox/tools.py
+    change: 删除 skill_manage 写入 custom skills 的失效注释
+  - path: backend/packages/harness/deerflow/sandbox/local/local_sandbox_provider.py
+    change: 删除 skill_manage host filesystem 的失效注释
+  - path: backend/packages/harness/deerflow/skills/storage/skill_storage.py
+    change: 移除 skill_manage 来源引用，保留 Gateway 管理路由
+  - path: backend/packages/harness/deerflow/skills/storage/user_scoped_skill_storage.py
+    change: 删除通过 skill_manage 创建技能的失效提示
+  - path: scripts/config-upgrade.sh
+    change: 迁移旧 skill_evolution 安全字段至 skill_security、删除旧块并保留备份
+  - path: backend/docs/CONFIGURATION.md
+    change: 记录 Agent 不再自写技能及 skill_security 的安全配置边界
   - path: backend/tests/conftest.py
     change: 删除只服务被删技能测试的 fixture
   - path: .github/workflows/backend-unit-tests.yml
@@ -1712,7 +1743,7 @@ batches:
   - path: scripts/check.py
     change: 删除对已删 skill review 脚本的调用
   - path: backend/packages/harness/deerflow/skills/AGENTS.md
-    change: 同步技能白名单与 review 平台删除说明
+    change: 同步技能白名单、review 平台删除和 Agent 自写能力删除边界
   - path: backend/packages/harness/deerflow/skills/tool_policy.py
     change: 删除 review_skill_package 工具策略条目
   - path: backend/packages/harness/deerflow/tools/builtins/__init__.py
@@ -1723,6 +1754,48 @@ batches:
     change: 删除 review_skill_package 策略断言，保留策略中间件覆盖
   - path: backend/tests/test_subagent_executor.py
     change: 删除 review_skill_package 工具清单断言，保留 subagent executor 覆盖
+  - path: backend/tests/test_skills_bundled.py
+    change: 更新公开技能注册表预期，确认 B4 删除 skill-reviewer 后不再装载该技能
+  - path: backend/tests/test_config_version.py
+    change: 覆盖旧 skill_evolution 安全字段迁移、显式优先级与 config-upgrade
+  - path: backend/tests/test_harness_packaging.py
+    change: 断言 B3 删除的 provider/sandbox Python extras 不再由 Harness 声明
+  - path: backend/tests/test_lead_agent_prompt.py
+    change: 移除 skill_evolution 测试配置并断言 prompt 不含 Self-Evolution
+  - path: backend/tests/test_mcp_routing_prompt.py
+    change: 移除失效 skill_evolution 测试配置
+  - path: backend/tests/test_read_conversation_tool.py
+    change: 移除失效 skill_evolution 测试配置
+  - path: backend/tests/test_sandbox_search_tools.py
+    change: 移除失效 skill_evolution 测试配置
+  - path: backend/tests/test_skill_describe.py
+    change: 移除已删除的 Self-Evolution 描述参数断言
+  - path: backend/tests/test_skill_metadata_prompt_injection.py
+    change: 移除已删除的 Self-Evolution prompt 参数，保留技能元数据转义注入覆盖
+  - path: backend/tests/test_lead_agent_skills.py
+    change: 删除自进化断言，验证旧 enabled=true 不再暴露 Lead 工具或 prompt
+  - path: backend/tests/test_security_scanner.py
+    change: 改用独立 skill_security 配置并保留 moderation/fail-closed 覆盖
+  - path: backend/tests/test_skillscan_native.py
+    change: 将 moderation 配置夹具迁移至 skill_security
+  - path: backend/tests/test_skills_custom_router.py
+    change: 移除 agent 自编辑开关夹具，保留管理员安装与安全扫描覆盖
+  - path: backend/tests/test_skills_router_authz.py
+    change: 移除 agent 自编辑开关夹具并保留授权断言
+  - path: backend/tests/test_skills_reload.py
+    change: 移除失效 skill_evolution 测试配置
+  - path: backend/tests/test_tool_args_schema_no_pydantic_warning.py
+    change: 删除 skill_manage 工具 schema 条目，保留其余工具覆盖
+  - path: backend/tests/test_tool_deduplication.py
+    change: 移除 skill_evolution 工具注册开关
+  - path: backend/tests/test_user_scoped_skill_storage.py
+    change: 移除失效 skill_evolution 测试注释与配置
+  - path: docs/removal/phase-05-dependency-impact.md
+    change: 修正 /api/skills KEEP 与 Agent 运行时 skill_manage DELETE 的边界
+  - path: docs/removal/phase-05-verification-matrix.md
+    change: 从 SkillScan KEEP 门禁移除待删除的 test_skill_manage_tool.py
+  - path: docs/superpowers/plans/2026-09-22-phase-05b-capability-removal.md
+    change: 记录 self-evolution 与管理员技能管理的拆分、配置迁移及新增门禁
   - path: AGENTS.md
     change: 删除 Skill quality review note 段与 skill-review CI waiver 说明
   - path: backend/AGENTS.md
@@ -1730,6 +1803,9 @@ batches:
   keep_exceptions: []
   entrypoints:
   - backend/packages/harness/deerflow/skills/**（loader/policy/activation，KEEP；只删 skills/review 平台）
+  - backend/packages/harness/deerflow/config/skill_security_config.py（新增安全配置模型）
+  - backend/packages/harness/deerflow/tools/skill_manage_tool.py（Agent 自编辑工具，DELETE）
+  - backend/packages/harness/deerflow/config/skill_evolution_config.py（专属开关配置，DELETE）
   - backend/packages/harness/deerflow/tools/builtins/review_skill_package_tool.py
   - scripts/review_changed_public_skills.py 与 scripts/skill_review_waivers.py
   - .github/skill-review-waivers.v1.json 与 .github/workflows/skill-review-ci.yml
@@ -1740,15 +1816,21 @@ batches:
   - frontend/package.json 的媒体相关依赖
   dynamic_references:
   - extensions_config.example.json 的 skill 启用项
+  - config.example.yaml 与旧 config.yaml 的 skill_evolution 安全字段迁移
+  - lead agent prompt 与 tool registry 中 skill_manage 的动态条件装配
+  - /api/skills 用户/管理员路由仍必须调用 SkillScan 和 LLM security moderation
   - backend/packages/harness/deerflow/skills/projection.py（只 import parser+types，不受影响）
   - backend/tests/test_agent_guidance_check.py（引导文档预算）
   - scripts/review_changed_public_skills.py 的 CI 调用点
   config_keys:
   - skills.*（被删技能的启用项）
-  - config_version（若配置结构变化则前进）
+  - skill_evolution（整体删除；enabled 不迁移）
+  - skill_security.moderation_model_name（从旧块逐字段兼容迁移，默认 null）
+  - skill_security.security_fail_closed（从旧块逐字段兼容迁移，默认 true）
+  - config_version（前进至 49）
   dependencies:
-  - 'python: 已删 provider/memory/sandbox 的剩余依赖'
-  - 'npm: 媒体/图像相关依赖（若有且无剩余 importer）'
+  - 'python: agent-client-protocol、boxlite、e2b-code-interpreter、exa-py、firecrawl-py、kubernetes、langchain-openviking、opensandbox、tavily-python、tenki；honcho/mem0ai/vllm/langchain-mistralai 在 B4 起点已不存在'
+  - 'npm: nuxt-og-image（全前端无 importer）'
   tests_to_delete:
   - backend/tests/test_review_changed_public_skills.py
   - backend/tests/test_review_skill_package_tool.py
@@ -1756,6 +1838,7 @@ batches:
   - backend/tests/test_skill_review_core.py
   - backend/tests/test_skill_review_waivers.py
   - backend/tests/test_skill_reviewer_public_skill.py
+  - backend/tests/test_skill_manage_tool.py
   - tests/skills/skill_loader.py
   - tests/skills/test_image_generation.py
   - tests/skills/test_music_generation.py
@@ -1766,33 +1849,33 @@ batches:
   - backend/tests/test_analytics_agent_*.py
   - backend/tests/test_agent_guidance_check.py
   - frontend/tests/unit/core/i18n/**
-  replacement: KEEP 技能：business-analysis、data-analysis、chart-visualization、consulting-analysis、bootstrap。skill loader/policy/activation 与 `/api/skills` 保持不变。
+  replacement: KEEP 技能：business-analysis、data-analysis、chart-visualization、consulting-analysis、bootstrap。skill loader/policy/activation、SkillScan、LLM security moderation 与 `/api/skills` 管理路由保持不变；Agent 运行时 skill_manage 和 Self-Evolution prompt 删除。新增 config/skill_security_config.py，并逐字段将旧 skill_evolution 安全字段迁入 skill_security。
   preconditions:
   - B3 合并（最后一个 importer 已消失）
   - pyproject 与 uv.lock 必须同批落地并 uv lock --check 通过
   - deploy/helm 已在 B3 删除，本批更新版本契约
   focused_gates:
   - cd backend && uv lock --check
-  - cd backend && PYTHONPATH=. uv run --locked pytest tests/test_business_analysis_skill.py tests/test_agent_guidance_check.py tests/test_skills_router.py -q
+  - cd backend && PYTHONPATH=. uv run --locked pytest tests/test_business_analysis_skill.py tests/test_agent_guidance_check.py tests/test_skills_router_authz.py tests/test_skills_validation.py -q
   - cd frontend && pnpm exec rstest run tests/unit/core/i18n tests/unit/components/analytics
   - rg -n "community\.(tavily|brave|exa|firecrawl|ragflow|lightrag|e2b_sandbox|boxlite|opensandbox|tenki)" backend || echo clean
   cumulative_gates:
   - B1–B4 之后 backend focused + 前端 KEEP 单测/E2E 全绿，uv lock --check 通过
   rollback: git revert <B4 commit>（该批一个 commit，revert 后 KEEP 主链自洽）
-  forecast_tracked_deleted: 99
-  forecast_source_deleted: 35
-  forecast_tests_deleted: 11
-  forecast_text_loc_deleted: 11669
+  forecast_tracked_deleted: 102
+  forecast_source_deleted: 37
+  forecast_tests_deleted: 12
+  forecast_text_loc_deleted: 12407
   before:
     tracked: 2422
     source: 1107
     tests: 880
     text_loc: 554214
   forecast_after:
-    tracked: 2323
-    source: 1072
-    tests: 869
-    text_loc: 542545
+    tracked: 2320
+    source: 1070
+    tests: 868
+    text_loc: 541807
 - id: B5
   objective: 清除孤儿引用、死 i18n 键、被删主题的历史文档与实验包袱，更新 README/AGENTS/文档，并对最终规模做一次对账。
   delete_roots:
@@ -1922,10 +2005,10 @@ batches:
   forecast_tests_deleted: 1
   forecast_text_loc_deleted: 1771
   before:
-    tracked: 2323
-    source: 1072
-    tests: 869
-    text_loc: 542545
+    tracked: 2320
+    source: 1070
+    tests: 868
+    text_loc: 541807
   forecast_after: *id001
 keep_whitelist:
   gateway_routers:

@@ -3,7 +3,7 @@ from .extensions_config import ExtensionsConfig, get_extensions_config
 from .loop_detection_config import LoopDetectionConfig
 from .memory_config import MemoryConfig, get_memory_config
 from .paths import Paths, get_paths
-from .skill_evolution_config import SkillEvolutionConfig
+from .skill_security_config import SkillSecurityConfig
 from .skills_config import SkillsConfig
 from .tracing_config import (
     get_enabled_tracing_providers,
@@ -16,7 +16,7 @@ from .tracing_config import (
 
 __all__ = [
     "get_app_config",
-    "SkillEvolutionConfig",
+    "SkillSecurityConfig",
     "Paths",
     "get_paths",
     "SkillsConfig",

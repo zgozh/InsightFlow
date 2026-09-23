@@ -72,13 +72,16 @@
 ### Task 4: B4 Skills、依赖、配置与 CI
 
 - [ ] 验证 B3 commit/clean tree，运行 B4 基线 focused gates。
-- [ ] 删除 manifest 指定的 skill marketplace/evolution/reviewer/creator/find 与媒体技能；保留五个业务/
-  基础技能和 loader/parser/permissions/projection/SkillScan 安全门禁。
+- [ ] 删除 manifest 指定的 skill marketplace/reviewer/creator/find 与媒体技能，并删除 Agent 运行期
+  `skill_manage`/Self-Evolution；保留五个业务/基础技能、`/api/skills` 管理契约和
+  loader/parser/permissions/projection/SkillScan/LLM moderation 安全门禁。
+- [ ] 先扩充 B4 manifest，精确登记 self-evolution 的删除路径、配置迁移和测试范围；将旧安全扫描字段
+  逐字段迁入 `skill_security`，丢弃旧 `enabled`，升级脚本保留备份并使用 `uv run --locked`。
 - [ ] 仅在最后 importer 已删除后移除 Python/npm dependencies，使用 uv/pnpm 正常更新 lock；记录 added/
   removed/changed 坐标，依赖只允许减少或因解析产生不可避免的同包版本收敛，禁止新增产品依赖。
 - [ ] 同步 config_version、example config、CI、README/AGENTS/backend docs；移除失效 skill review waiver/job。
-- [ ] 运行 B4 focused + cumulative、`uv lock --check`、`pnpm install --frozen-lockfile`、SkillScan 与
-  config/version gates。
+- [ ] 运行 B4 focused + cumulative、`uv lock --check`、`pnpm install --frozen-lockfile`、SkillScan、
+  config/version、安全扫描器、技能路由授权与 `/api/skills` 管理门禁。
 - [ ] 记录实际计数并提交 `refactor: remove unused skills and dependencies`。
 
 ### Task 5: B5 孤儿清理与累计收敛
@@ -100,4 +103,3 @@
 - [ ] 一次性汇报五个 commit、每批 exact delete/modify/dependency/lock/size、门禁命令与退出码。
 - [ ] 列出预测偏差、保留的 BLOCKED 项、能力损失、安全边界和反向归属扫描。
 - [ ] 明确 2290 不是自动接受的最终预算；等待 Phase 5C 对真实剩余 tree 做第二轮复核。
-

@@ -7,7 +7,7 @@ from deerflow.skills.security_scanner import _extract_json_object, scan_skill_co
 
 
 def _make_env(monkeypatch, response_content):
-    config = SimpleNamespace(skill_evolution=SimpleNamespace(moderation_model_name=None))
+    config = SimpleNamespace(skill_security=SimpleNamespace(moderation_model_name=None))
     fake_response = SimpleNamespace(content=response_content)
 
     class FakeModel:
@@ -31,7 +31,7 @@ def _make_traced_env(monkeypatch, *, model_name, response_content='{"decision":"
     """Like ``_make_env`` but with a concrete moderation model name and a known
     effective user, so Langfuse trace metadata (model tag + user_id) is assertable.
     """
-    config = SimpleNamespace(skill_evolution=SimpleNamespace(moderation_model_name=model_name))
+    config = SimpleNamespace(skill_security=SimpleNamespace(moderation_model_name=model_name))
     fake_response = SimpleNamespace(content=response_content)
 
     class FakeModel:
@@ -148,7 +148,7 @@ async def test_scan_skill_content_ignores_non_text_blocks_and_joins_text_blocks(
 
 @pytest.mark.anyio
 async def test_scan_skill_content_blocks_when_model_unavailable(monkeypatch):
-    config = SimpleNamespace(skill_evolution=SimpleNamespace(moderation_model_name=None))
+    config = SimpleNamespace(skill_security=SimpleNamespace(moderation_model_name=None))
     monkeypatch.setattr("deerflow.skills.security_scanner.get_app_config", lambda: config)
     monkeypatch.setattr("deerflow.skills.security_scanner.create_chat_model", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
 
@@ -302,7 +302,7 @@ async def test_scan_skill_content_omits_langfuse_metadata_when_in_graph(monkeypa
 
 def _make_unavailable_env(monkeypatch, *, security_fail_closed):
     config = SimpleNamespace(
-        skill_evolution=SimpleNamespace(
+        skill_security=SimpleNamespace(
             moderation_model_name=None,
             security_fail_closed=security_fail_closed,
         )

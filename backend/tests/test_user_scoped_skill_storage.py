@@ -451,11 +451,9 @@ class TestSkillToggleIsolation:
         from deerflow.sandbox.tools import _is_disabled_skill_path
         from deerflow.skills.storage import get_or_new_user_skill_storage
 
-        # Rich config that includes skill_evolution (required by
-        # get_skills_prompt_section) while keeping the test skills root.
+        # Keep the test skills root while using the regular prompt config shape.
         rich_config = SimpleNamespace(
             skills=config.skills,
-            skill_evolution=SimpleNamespace(enabled=False),
         )
 
         with patch("deerflow.config.paths.get_paths", return_value=Paths(base_dir=base_dir)):

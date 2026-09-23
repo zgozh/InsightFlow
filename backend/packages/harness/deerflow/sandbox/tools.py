@@ -343,7 +343,7 @@ def _resolve_skills_path(path: str) -> str:
     relative = path[len(skills_container) :].lstrip("/")
 
     # Per-user custom and globally managed integration skills.
-    # ``skill_manage_tool`` writes custom skills to the per-user directory,
+    # The Gateway `/api/skills` routes write custom skills to the per-user directory,
     # and ``LocalSandboxProvider._build_thread_path_mappings`` mounts
     # ``/mnt/skills/custom`` to that same per-user dir.  Without this
     # branch, ``_resolve_skills_path("/mnt/skills/custom")`` would map to

@@ -186,20 +186,10 @@ def test_skill_index_default_returns_empty():
     assert section == ""
 
 
-def test_skill_index_with_evolution_section():
-    section = get_skill_index_prompt_section(
-        skill_names=frozenset({"a"}),
-        skill_evolution_section="## Skill Self-Evolution\n...",
-    )
-    assert "Skill Self-Evolution" in section
-
-
-def test_skill_index_without_evolution_section():
-    section = get_skill_index_prompt_section(
-        skill_names=frozenset({"a"}),
-        skill_evolution_section="",
-    )
+def test_skill_index_does_not_include_agent_self_evolution_instructions():
+    section = get_skill_index_prompt_section(skill_names=frozenset({"a"}))
     assert "Skill Self-Evolution" not in section
+    assert "skill_manage" not in section
 
 
 def test_skill_index_custom_container_path():

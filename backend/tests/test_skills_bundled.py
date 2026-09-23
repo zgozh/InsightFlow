@@ -35,9 +35,9 @@ def test_skills_public_dir_has_skills() -> None:
     assert BUNDLED_SKILL_DIRS, f"no SKILL.md found under {SKILLS_PUBLIC_DIR}"
 
 
-def test_runtime_registry_excludes_skill_reviewer_eval_fixtures() -> None:
+def test_runtime_registry_excludes_deleted_skill_reviewer_and_eval_fixtures() -> None:
     skills = get_or_new_skill_storage(skills_path=SKILLS_PUBLIC_DIR.parent).load_skills(enabled_only=False)
     names = {skill.name for skill in skills}
 
-    assert "skill-reviewer" in names
+    assert "skill-reviewer" not in names
     assert all("evals/fixtures" not in skill.skill_file.as_posix() for skill in skills)

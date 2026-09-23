@@ -262,7 +262,7 @@ class UserScopedSkillStorage(LocalSkillStorage):
         is_global_public = (self._host_root / SkillCategory.PUBLIC.value / normalized_name / SKILL_MD_FILE).exists()
         is_global_custom_fallback = (self._global_custom_root / normalized_name / SKILL_MD_FILE).exists()
         if is_global_public:
-            raise ValueError(f"'{name}' is a built-in skill. Use the skill_manage tool to create your own version — it will shadow the built-in one.")
+            raise ValueError(f"'{name}' is a built-in skill. Create a user-scoped custom skill through the Gateway to shadow it.")
         is_integration = any((candidate / SKILL_MD_FILE).exists() for candidate in self._integrations_root.glob(f"*/{normalized_name}") if candidate.is_dir())
         if is_global_custom_fallback:
             raise ValueError(f"'{name}' is a legacy shared skill (not editable). To customise it, create your own version with the same name — it will shadow the shared one.")

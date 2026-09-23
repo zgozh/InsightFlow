@@ -59,7 +59,6 @@ def _default_app_config():
             deferred_discovery=True,
             container_path="/mnt/skills",
         ),
-        skill_evolution=SimpleNamespace(enabled=False),
     )
 
 
@@ -2278,19 +2277,19 @@ class TestSkillAllowedTools:
 
         final_state = {"messages": [msg.human("Task"), msg.ai("Done", "msg-1")]}
         mock_agent.astream = lambda *args, **kwargs: async_iterator([final_state])
-        tools = [NamedTool("bash"), NamedTool("read_file"), NamedTool("write_file"), NamedTool("review_skill_package")]
+        tools = [NamedTool("bash"), NamedTool("read_file"), NamedTool("write_file"), NamedTool("web_search")]
         executor = SubagentExecutor(config=base_config, tools=tools, thread_id="test-thread")
 
         async def load_skills():
-            return [_skill("skill-reviewer", ["review_skill_package"])]
+            return [_skill("research", ["web_search"])]
 
         with patch.object(executor, "_load_skills", load_skills), patch.object(executor, "_create_agent", return_value=mock_agent) as create_agent_mock:
             await executor._aexecute("Task")
 
         create_agent_mock.assert_called_once()
-        assert [tool.name for tool in create_agent_mock.call_args.args[0]] == ["bash", "read_file", "write_file", "review_skill_package", "describe_skill"]
-        assert [tool.name for tool in executor.tools] == ["bash", "read_file", "write_file", "review_skill_package"]
-        assert executor._available_skill_names == {"skill-reviewer"}
+        assert [tool.name for tool in create_agent_mock.call_args.args[0]] == ["bash", "read_file", "write_file", "web_search", "describe_skill"]
+        assert [tool.name for tool in executor.tools] == ["bash", "read_file", "write_file", "web_search"]
+        assert executor._available_skill_names == {"research"}
 
     @pytest.mark.anyio
     async def test_skill_load_failure_fails_without_creating_agent(self, classes, base_config, mock_agent):

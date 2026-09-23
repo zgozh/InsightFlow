@@ -91,24 +91,6 @@ servers + skills). Both real files are gitignored and may be edited at runtime v
 Gateway API. Config schema and resolution order are documented in
 [backend/AGENTS.md](backend/AGENTS.md).
 
-Skill quality review note:
-- `skills/public/skill-reviewer/` is the built-in read-only skill quality reviewer.
-  It uses the harness-layer `review_skill_package` tool and contracts in
-  `contracts/skill_review/`. Model-visible review data is compact and
-  tag-neutralized; full raw payloads stay in tool artifacts. See
-  [backend/AGENTS.md](backend/AGENTS.md) for the non-activation, SkillScan, and
-  `skill-creator` ownership boundaries.
-- CI waivers live in `.github/skill-review-waivers.v1.json` and are enforced by
-  `scripts/review_changed_public_skills.py`. Pull requests may validate waiver
-  edits from their head revision, but only the manifest from the trusted base
-  revision can suppress that run. Entries match one error finding exactly,
-  include the reviewed file's SHA-256 and an expiry date, remain visible in CI
-  output, and can never waive blocker findings. An entry may also preapprove
-  future full-file SHA-256 values, effective only once the manifest change lands
-  in the trusted base — so relying on a waiver takes two merges: the manifest
-  first, the skill change after, then promote the consumed hash to `file_sha256`
-  in a follow-up cleanup.
-
 Scheduled-task note:
 - The scheduled-task MVP adds a workspace page at `/workspace/scheduled-tasks` plus a background scheduler service gated by `config.yaml -> scheduler.enabled`.
 - Scheduled background runs are intentionally non-interactive: the lead-agent toolset excludes `ask_clarification` when `context.non_interactive=true`. That key, `disable_clarification`, and `github_token` are honored only for internally-authenticated callers; client-supplied copies are dropped from both `body.context` and `body.config`.

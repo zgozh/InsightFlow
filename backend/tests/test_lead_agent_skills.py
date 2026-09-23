@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from deerflow.agents.lead_agent.prompt import get_skills_prompt_section
 from deerflow.config.agents_config import AgentConfig
+from deerflow.config.app_config import AppConfig
 from deerflow.skills.types import Skill
 
 
@@ -36,7 +37,6 @@ def _mock_skill_storages(monkeypatch, skills):
         "deerflow.config.get_app_config",
         lambda: SimpleNamespace(
             skills=SimpleNamespace(container_path="/mnt/skills", use="deerflow.skills.storage.local_skill_storage:LocalSkillStorage", get_skills_path=lambda: Path("/tmp/skills")),
-            skill_evolution=SimpleNamespace(enabled=False),
         ),
     )
 
@@ -95,7 +95,6 @@ def test_get_skills_prompt_section_no_arg_cold_cache_loads_enabled_skills(monkey
         "deerflow.config.get_app_config",
         lambda: SimpleNamespace(
             skills=SimpleNamespace(container_path="/mnt/skills", use="deerflow.skills.storage.local_skill_storage:LocalSkillStorage", get_skills_path=lambda: Path("/tmp/skills")),
-            skill_evolution=SimpleNamespace(enabled=False),
         ),
     )
     # Cold cache: no warmed enabled-skills list, and the background refresh must
@@ -122,62 +121,27 @@ def test_get_skills_prompt_section_includes_slash_activation_guidance(monkeypatc
     assert "do not call `read_file` for that SKILL.md again" in result
 
 
-def test_get_skills_prompt_section_includes_self_evolution_rules(monkeypatch):
-    skills = [_make_skill("skill1")]
-    monkeypatch.setattr("deerflow.agents.lead_agent.prompt._get_enabled_skills", lambda: skills)
-    monkeypatch.setattr("deerflow.agents.lead_agent.prompt.get_or_new_skill_storage", lambda **kwargs: __import__("types").SimpleNamespace(load_skills=lambda *, enabled_only: skills))
-    monkeypatch.setattr("deerflow.agents.lead_agent.prompt.get_or_new_user_skill_storage", lambda user_id, **kwargs: __import__("types").SimpleNamespace(load_skills=lambda *, enabled_only: skills))
-    monkeypatch.setattr(
-        "deerflow.config.get_app_config",
-        lambda: SimpleNamespace(
-            skills=SimpleNamespace(container_path="/mnt/skills", use="deerflow.skills.storage.local_skill_storage:LocalSkillStorage", get_skills_path=lambda: Path("/tmp/skills")),
-            skill_evolution=SimpleNamespace(enabled=True),
-        ),
+def test_legacy_enabled_config_does_not_expose_skill_manage_or_self_evolution():
+    config = AppConfig.model_validate(
+        {
+            "sandbox": {"use": "deerflow.sandbox.local:LocalSandboxProvider"},
+            "skill_evolution": {"enabled": True},
+        }
     )
 
-    result = get_skills_prompt_section(available_skills=None)
-    assert "Skill Self-Evolution" in result
+    from deerflow.tools.tools import get_available_tools
 
+    tools = get_available_tools(include_mcp=False, app_config=config)
+    prompt = get_skills_prompt_section(app_config=config, skill_names=frozenset({"business-analysis"}))
 
-def test_get_skills_prompt_section_includes_self_evolution_rules_without_skills(monkeypatch):
-    monkeypatch.setattr("deerflow.agents.lead_agent.prompt._get_enabled_skills", lambda: [])
-    monkeypatch.setattr("deerflow.agents.lead_agent.prompt.get_or_new_skill_storage", lambda **kwargs: __import__("types").SimpleNamespace(load_skills=lambda *, enabled_only: []))
-    monkeypatch.setattr("deerflow.agents.lead_agent.prompt.get_or_new_user_skill_storage", lambda user_id, **kwargs: __import__("types").SimpleNamespace(load_skills=lambda *, enabled_only: []))
-    monkeypatch.setattr(
-        "deerflow.config.get_app_config",
-        lambda: SimpleNamespace(
-            skills=SimpleNamespace(container_path="/mnt/skills", use="deerflow.skills.storage.local_skill_storage:LocalSkillStorage", get_skills_path=lambda: Path("/tmp/skills")),
-            skill_evolution=SimpleNamespace(enabled=True),
-        ),
-    )
-
-    result = get_skills_prompt_section(available_skills=None)
-    assert "Skill Self-Evolution" in result
-
-
-def test_get_skills_prompt_section_cache_respects_skill_evolution_toggle(monkeypatch):
-    skills = [_make_skill("skill1")]
-    monkeypatch.setattr("deerflow.agents.lead_agent.prompt._get_enabled_skills", lambda: skills)
-    monkeypatch.setattr("deerflow.agents.lead_agent.prompt.get_or_new_skill_storage", lambda **kwargs: __import__("types").SimpleNamespace(load_skills=lambda *, enabled_only: skills))
-    monkeypatch.setattr("deerflow.agents.lead_agent.prompt.get_or_new_user_skill_storage", lambda user_id, **kwargs: __import__("types").SimpleNamespace(load_skills=lambda *, enabled_only: skills))
-    config = SimpleNamespace(
-        skills=SimpleNamespace(container_path="/mnt/skills", use="deerflow.skills.storage.local_skill_storage:LocalSkillStorage", get_skills_path=lambda: Path("/tmp/skills")),
-        skill_evolution=SimpleNamespace(enabled=True),
-    )
-    monkeypatch.setattr("deerflow.config.get_app_config", lambda: config)
-
-    enabled_result = get_skills_prompt_section(available_skills=None)
-    assert "Skill Self-Evolution" in enabled_result
-
-    config.skill_evolution.enabled = False
-    disabled_result = get_skills_prompt_section(available_skills=None)
-    assert "Skill Self-Evolution" not in disabled_result
+    assert "skill_manage" not in {tool.name for tool in tools}
+    assert "Skill Self-Evolution" not in prompt
+    assert not hasattr(config, "skill_evolution")
 
 
 def test_get_skills_prompt_section_uses_explicit_config_for_enabled_skills(monkeypatch):
     explicit_config = SimpleNamespace(
         skills=SimpleNamespace(container_path="/mnt/alt-skills", use="deerflow.skills.storage.local_skill_storage:LocalSkillStorage", get_skills_path=lambda: Path("/tmp/alt-skills")),
-        skill_evolution=SimpleNamespace(enabled=False),
     )
 
     def fail_get_app_config():
@@ -208,7 +172,6 @@ def test_get_skills_prompt_section_deferred_path_uses_skill_index(monkeypatch):
         "deerflow.config.get_app_config",
         lambda: SimpleNamespace(
             skills=SimpleNamespace(container_path="/mnt/skills"),
-            skill_evolution=SimpleNamespace(enabled=False),
         ),
     )
     # Deferred path never touches storage, but patch defensively in case of fallback.
@@ -238,7 +201,6 @@ def test_get_skills_prompt_section_legacy_path_when_skill_names_none(monkeypatch
         "deerflow.config.get_app_config",
         lambda: SimpleNamespace(
             skills=SimpleNamespace(container_path="/mnt/skills"),
-            skill_evolution=SimpleNamespace(enabled=False),
         ),
     )
     # Legacy path loads ALL skills (enabled + disabled) from storage for the disabled-skills section.
@@ -460,11 +422,11 @@ def test_default_lead_agent_does_not_apply_installed_skill_allowlists(monkeypatc
     monkeypatch.setattr(
         lead_agent_module,
         "_load_enabled_available_skills",
-        lambda available_skills, *, app_config, user_id=None: [_make_skill("skill-reviewer", ["review_skill_package"])],
+        lambda available_skills, *, app_config, user_id=None: [_make_skill("research", ["web_search"])],
     )
     monkeypatch.setattr(
         "deerflow.tools.get_available_tools",
-        lambda **kwargs: [NamedTool("bash"), NamedTool("browser_navigate"), NamedTool("review_skill_package")],
+        lambda **kwargs: [NamedTool("bash"), NamedTool("browser_navigate"), NamedTool("web_search")],
     )
 
     mock_app_config = MagicMock()

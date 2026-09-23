@@ -315,9 +315,9 @@ class LocalSandboxProvider(SandboxProvider):
         and /mnt/skills/custom.
 
         Uses the explicitly resolved user id when provided, falling back to
-        :func:`get_effective_user_id` for legacy callers.  Custom skills are
-        mounted per-user (read-only) because agent writes custom skills via
-        ``skill_manage_tool`` on the host filesystem, not inside the sandbox.
+        :func:`get_effective_user_id` for legacy callers. Custom skills are
+        mounted per-user (read-only); the Gateway skill-management routes write
+        them on the host filesystem, not inside the sandbox.
         """
         from deerflow.config import get_app_config
         from deerflow.config.paths import get_paths

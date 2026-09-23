@@ -707,7 +707,6 @@ def test_ls_tool_skills_path_uses_sandbox_mapping_user_id_not_contextvar(tmp_pat
             container_path="/mnt/skills",
             use="deerflow.skills.storage.local_skill_storage:LocalSkillStorage",
         ),
-        skill_evolution=SimpleNamespace(enabled=False),
     )
 
     # Leave contextvar unset → get_effective_user_id() returns "default"
@@ -932,7 +931,6 @@ def _make_custom_skills_sandbox(tmp_path, monkeypatch, *, user_id: str, disabled
             container_path="/mnt/skills",
             use="deerflow.skills.storage.local_skill_storage:LocalSkillStorage",
         ),
-        skill_evolution=SimpleNamespace(enabled=False),
     )
 
     sandbox = LocalSandbox(

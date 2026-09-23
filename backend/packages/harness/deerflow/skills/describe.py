@@ -152,7 +152,6 @@ def get_skill_index_prompt_section(
     *,
     skill_names: frozenset[str] = frozenset(),
     container_base_path: str = DEFAULT_SKILLS_CONTAINER_PATH,
-    skill_evolution_section: str = "",
 ) -> str:
     """Generate ``<skill_system>`` with a name-only ``<skill_index>``.
 
@@ -165,8 +164,6 @@ def get_skill_index_prompt_section(
         return ""
 
     names = ", ".join(html.escape(name, quote=False) for name in sorted(skill_names))
-    evolution = f"\n{skill_evolution_section}" if skill_evolution_section else ""
-
     return f"""<skill_system>
 You have access to skills that provide optimized workflows for specific tasks.
 
@@ -179,7 +176,6 @@ You have access to skills that provide optimized workflows for specific tasks.
 **Explicit Slash Skill Activation:**
 - If the user starts a request with `/<skill-name>`, that skill was explicitly requested.
 - The runtime injects the activated skill content; do not call `read_file` for that SKILL.md again unless the injected skill references supporting resources you need.
-{evolution}
 <skill_index>
 {names}
 </skill_index>

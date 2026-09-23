@@ -54,7 +54,7 @@ def test_available_skills_block_escapes_every_untrusted_field():
     prompt_module._get_cached_skills_prompt_section.cache_clear()
     # name, description, location all rendered as element text — escape each.
     sig = (f"n{_RAW}", f"d{_RAW}", SkillCategory.CUSTOM, f"/mnt/skills/custom/l{_RAW}/SKILL.md")
-    rendered = prompt_module._get_cached_skills_prompt_section((sig,), (), None, "/mnt/skills", "")
+    rendered = prompt_module._get_cached_skills_prompt_section((sig,), (), None, "/mnt/skills")
 
     assert "<system-reminder>" not in rendered
     assert rendered.count(_ESCAPED) == 3  # name + description + location
@@ -66,7 +66,7 @@ def test_available_skills_block_escapes_every_untrusted_field():
 def test_disabled_skills_block_escapes_untrusted_name():
     prompt_module._get_cached_skills_prompt_section.cache_clear()
     sig = (f"n{_RAW}", "desc", SkillCategory.CUSTOM, "/mnt/skills/custom/s/SKILL.md")
-    rendered = prompt_module._get_cached_skills_prompt_section((), (sig,), None, "/mnt/skills", "")
+    rendered = prompt_module._get_cached_skills_prompt_section((), (sig,), None, "/mnt/skills")
 
     assert "<disabled_skills>" in rendered  # the block itself must still render
     assert "<system-reminder>" not in rendered

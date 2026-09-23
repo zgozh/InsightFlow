@@ -66,8 +66,8 @@ def make_sync_tool_wrapper(coro: Callable[..., Any], tool_name: str) -> Callable
         and ``get_type_hints`` follows ``__wrapped__`` back to the coroutine's
         own ``__globals__``. That is why injected parameters such as
         ``runtime: Runtime`` are still detected here even when the caller was
-        compiled with ``from __future__ import annotations`` (mcp/tools.py,
-        skill_manage_tool.py) and the annotation is a string. Do not replace
+        compiled with ``from __future__ import annotations`` in built-in tool
+        modules and the annotation is a string. Do not replace
         ``wraps`` with a bare wrapper or a hand-copied signature: the string
         annotation would then be evaluated against the wrapper's module globals,
         or the ``runtime`` parameter would disappear entirely and the tool would

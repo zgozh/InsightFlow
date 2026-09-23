@@ -116,12 +116,12 @@ def test_skill_policy_middlewares_reject_invalid_slash_source_tokens(invalid_tok
 
 
 def test_passive_enabled_skill_does_not_filter_lead_tools():
-    middleware = _middleware([_skill("reviewer", ["review_skill_package"])])
-    request = ModelRequestStub([NamedTool("task"), NamedTool("web_search"), NamedTool("review_skill_package")])
+    middleware = _middleware([_skill("research", ["write_file"])])
+    request = ModelRequestStub([NamedTool("task"), NamedTool("web_search"), NamedTool("write_file")])
 
     filtered = middleware._filter_model_request(request)
 
-    assert _tool_names(filtered) == ["task", "web_search", "review_skill_package"]
+    assert _tool_names(filtered) == ["task", "web_search", "write_file"]
 
 
 def test_sync_passive_model_call_skips_storage():
@@ -152,7 +152,7 @@ def test_async_passive_model_call_skips_storage_and_thread_offload():
 
 
 def test_slash_activated_skill_filters_first_model_call_and_task():
-    skill = _skill("reviewer", ["review_skill_package"])
+    skill = _skill("research", ["write_file"])
     context = {}
     write_slash_skill_source_path(
         context,
@@ -161,13 +161,13 @@ def test_slash_activated_skill_filters_first_model_call_and_task():
     )
     middleware = _middleware([skill])
     request = ModelRequestStub(
-        [NamedTool("task"), NamedTool("read_file"), NamedTool("review_skill_package")],
+        [NamedTool("task"), NamedTool("read_file"), NamedTool("write_file")],
         context=context,
     )
 
     filtered = middleware._filter_model_request(request)
 
-    assert _tool_names(filtered) == ["read_file", "review_skill_package"]
+    assert _tool_names(filtered) == ["read_file", "write_file"]
 
 
 def test_slash_activation_normalizes_unscoped_portable_tools_but_not_command_patterns(tmp_path):
@@ -390,7 +390,7 @@ def test_caller_forged_slash_source_cannot_override_captured_skill_policy():
 def test_slash_activation_and_policy_compose_on_the_same_model_call(monkeypatch):
     from deerflow.agents.middlewares.skill_activation_middleware import SkillActivationMiddleware, _Activation, _ActivationResolution
 
-    skill = _skill("reviewer", ["review_skill_package"])
+    skill = _skill("research", ["write_file"])
     activation = _Activation(
         skill_name=skill.name,
         category="public",
@@ -404,7 +404,7 @@ def test_slash_activation_and_policy_compose_on_the_same_model_call(monkeypatch)
     monkeypatch.setattr(activation_middleware, "_resolve_activation", lambda _: _ActivationResolution(activation=activation))
     policy_middleware = _middleware([skill])
     request = ModelRequestStub(
-        [NamedTool("task"), NamedTool("read_file"), NamedTool("review_skill_package")],
+        [NamedTool("task"), NamedTool("read_file"), NamedTool("write_file")],
         messages=[HumanMessage(content="/reviewer review this")],
     )
 
@@ -413,7 +413,7 @@ def test_slash_activation_and_policy_compose_on_the_same_model_call(monkeypatch)
         lambda activated: policy_middleware.wrap_model_call(activated, lambda policy_request: policy_request),
     )
 
-    assert _tool_names(filtered) == ["read_file", "review_skill_package"]
+    assert _tool_names(filtered) == ["read_file", "write_file"]
 
 
 def test_loaded_skill_context_filters_follow_up_model_calls():
@@ -468,7 +468,6 @@ def test_explicit_empty_allowed_tools_keeps_only_framework_tools():
             NamedTool("list_background_tasks"),
             NamedTool("cancel_background_task"),
             NamedTool("read_file"),
-            NamedTool("review_skill_package"),
             NamedTool("tool_search"),
             NamedTool("describe_skill"),
         ],
@@ -477,7 +476,6 @@ def test_explicit_empty_allowed_tools_keeps_only_framework_tools():
 
     assert _tool_names(middleware._filter_model_request(request)) == [
         "read_file",
-        "review_skill_package",
         "tool_search",
         "describe_skill",
     ]
@@ -586,7 +584,6 @@ def test_all_unknown_active_paths_fail_closed_to_framework_tools():
         [
             NamedTool("task"),
             NamedTool("read_file"),
-            NamedTool("review_skill_package"),
             NamedTool("tool_search"),
             NamedTool("describe_skill"),
         ],
@@ -595,7 +592,6 @@ def test_all_unknown_active_paths_fail_closed_to_framework_tools():
 
     assert _tool_names(middleware._filter_model_request(request)) == [
         "read_file",
-        "review_skill_package",
         "tool_search",
         "describe_skill",
     ]
@@ -608,7 +604,6 @@ def test_all_disabled_active_paths_fail_closed_to_framework_tools():
         [
             NamedTool("task"),
             NamedTool("read_file"),
-            NamedTool("review_skill_package"),
             NamedTool("tool_search"),
             NamedTool("describe_skill"),
         ],
@@ -617,7 +612,6 @@ def test_all_disabled_active_paths_fail_closed_to_framework_tools():
 
     assert _tool_names(middleware._filter_model_request(request)) == [
         "read_file",
-        "review_skill_package",
         "tool_search",
         "describe_skill",
     ]
@@ -904,7 +898,6 @@ def test_active_policy_load_failure_fails_closed_to_framework_tools():
         [
             NamedTool("task"),
             NamedTool("read_file"),
-            NamedTool("review_skill_package"),
             NamedTool("tool_search"),
             NamedTool("describe_skill"),
         ],
@@ -913,7 +906,6 @@ def test_active_policy_load_failure_fails_closed_to_framework_tools():
 
     assert _tool_names(middleware._filter_model_request(request)) == [
         "read_file",
-        "review_skill_package",
         "tool_search",
         "describe_skill",
     ]

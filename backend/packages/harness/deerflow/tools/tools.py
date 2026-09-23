@@ -15,7 +15,6 @@ from deerflow.tools.builtins import (
     list_background_tasks,
     list_uploaded_files,
     present_file_tool,
-    review_skill_package,
     task_tool,
     view_image_tool,
 )
@@ -27,7 +26,6 @@ logger = logging.getLogger(__name__)
 BUILTIN_TOOLS = [
     present_file_tool,
     ask_clarification_tool,
-    review_skill_package,
 ]
 
 SUBAGENT_TOOLS = [
@@ -129,12 +127,6 @@ def get_available_tools(
         builtin_tools.extend((list_background_tasks, cancel_background_task))
     if include_upload_tool:
         builtin_tools.append(list_uploaded_files)
-    skill_evolution_config = getattr(config, "skill_evolution", None)
-    if getattr(skill_evolution_config, "enabled", False):
-        from deerflow.tools.skill_manage_tool import skill_manage_tool
-
-        builtin_tools.append(skill_manage_tool)
-
     # Add subagent tools only if enabled via runtime parameter
     if subagent_enabled:
         builtin_tools.extend(SUBAGENT_TOOLS)

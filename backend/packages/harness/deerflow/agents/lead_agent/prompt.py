@@ -272,34 +272,6 @@ async def refresh_user_skills_system_prompt_cache_async(user_id: str) -> None:
     invalidate_user_skill_cache(user_id)
 
 
-def _build_skill_evolution_section(skill_evolution_enabled: bool) -> str:
-    if not skill_evolution_enabled:
-        return ""
-    return """
-## Skill Self-Evolution
-After completing a task, consider creating or updating a skill when:
-- The task required 5+ tool calls to resolve
-- You overcame non-obvious errors or pitfalls
-- The user corrected your approach and the corrected version worked
-- You discovered a non-trivial, recurring workflow
-If you used a skill and encountered issues not covered by it, patch it immediately.
-
-**CRITICAL: You MUST use the `skill_manage` tool for ALL skill operations.**
-- `skill_manage(action="create", name="my-skill", content="...")` — Create a new skill
-- `skill_manage(action="patch", name="my-skill", find="...", replace="...")` — Patch an existing skill
-- `skill_manage(action="edit", name="my-skill", content="...")` — Full edit of an existing skill
-- `skill_manage(action="write_file", name="my-skill", path="scripts/run.py", content="...")` — Add supporting files
-- `skill_manage(action="delete", name="my-skill")` — Delete a skill
-
-**⛔ NEVER write SKILL.md files to `/mnt/user-data/workspace` or `/mnt/user-data/outputs`.**
-Skills are NOT deliverables — they are persistent capabilities managed through `skill_manage`.
-The tool stores skills in the per-user skills directory automatically; you do NOT need to specify a path.
-
-Prefer patch over edit. Before creating a new skill, confirm with the user first.
-Skip simple one-off tasks.
-"""
-
-
 def _build_available_subagents_description(available_names: list[str], bash_available: bool, *, app_config: AppConfig | None = None) -> str:
     """Dynamically build subagent type descriptions from registry.
 
@@ -653,7 +625,7 @@ You: "Deploying to staging..." [proceed]
 - Treat `/mnt/user-data/workspace` as your default current working directory for coding and file-editing tasks
 - When writing scripts or commands that create/read files from the workspace, prefer relative paths such as `hello.txt`, `../uploads/data.csv`, and `../outputs/report.md`
 - Avoid hardcoding `/mnt/user-data/...` inside generated scripts when a relative path from the workspace is enough
-- Final deliverables must be copied to `/mnt/user-data/outputs` and presented using `present_files` tool (⚠️ Skills are NOT deliverables — use `skill_manage` tool instead)
+- Final deliverables must be copied to `/mnt/user-data/outputs` and presented using the `present_files` tool.
 {custom_mounts_section}
 </working_directory>
 
@@ -730,7 +702,7 @@ combined with a FastAPI gateway for REST API access [citation:FastAPI](https://f
 - **Clarification First**: ALWAYS clarify unclear/missing/ambiguous requirements BEFORE starting work - never assume or guess
 {subagent_reminder}{skill_first_reminder}
 - Progressive Loading: Load skill resources incrementally as referenced
-- Output Files: Final deliverables must be in `/mnt/user-data/outputs` (⚠️ Skills are NOT deliverables — use `skill_manage` tool instead)
+- Output Files: Final deliverables must be in `/mnt/user-data/outputs`.
 - File Editing Workflow: When revising an existing file, prefer
   `str_replace` over `write_file` — it sends only the diff and avoids
   re-emitting the whole file (mirrors Claude Code's Edit and Codex's
@@ -817,7 +789,6 @@ def _get_cached_skills_prompt_section(
     disabled_skill_signature: tuple[tuple[str, str, str, str], ...],
     available_skills_key: tuple[str, ...] | None,
     container_base_path: str,
-    skill_evolution_section: str,
 ) -> str:
     filtered = [(name, description, category, location) for name, description, category, location in skill_signature if available_skills_key is None or name in available_skills_key]
     skills_list = ""
@@ -854,7 +825,6 @@ You have access to skills that provide optimized workflows for specific tasks. E
 - The runtime injects the activated skill content for explicit slash activations; do not call `read_file` for that SKILL.md again unless the injected skill references supporting resources you need.
 
 **Skills are located at:** {container_base_path}
-{skill_evolution_section}
 {skills_list}
 {disabled_section}
 
@@ -886,16 +856,11 @@ def get_skills_prompt_section(
             # synchronously-loaded disabled section was populated (#4144).
             app_config = get_app_config()
             container_base_path = app_config.skills.container_path
-            skill_evolution_enabled = app_config.skill_evolution.enabled
         except Exception:
             app_config = None
             container_base_path = DEFAULT_SKILLS_CONTAINER_PATH
-            skill_evolution_enabled = False
     else:
         container_base_path = app_config.skills.container_path
-        skill_evolution_enabled = app_config.skill_evolution.enabled
-
-    skill_evolution_section = _build_skill_evolution_section(skill_evolution_enabled)
 
     # ── Deferred discovery path — storage not needed (caller supplies names) ─
     if skill_names is not None:
@@ -904,7 +869,6 @@ def get_skills_prompt_section(
         return get_skill_index_prompt_section(
             skill_names=skill_names,
             container_base_path=container_base_path,
-            skill_evolution_section=skill_evolution_section,
         )
 
     # ── Legacy full-metadata path — load ALL skills for disabled-skill section
@@ -917,7 +881,7 @@ def get_skills_prompt_section(
 
     skills = get_enabled_skills_for_config(app_config, user_id=user_id)
 
-    if not skills and not disabled_skills and not skill_evolution_enabled:
+    if not skills and not disabled_skills:
         return ""
 
     if available_skills is not None and not any(skill.name in available_skills for skill in skills):
@@ -928,7 +892,7 @@ def get_skills_prompt_section(
     available_key = tuple(sorted(available_skills)) if available_skills is not None else None
     if not skill_signature and not disabled_skill_signature and available_key is not None:
         return ""
-    return _get_cached_skills_prompt_section(skill_signature, disabled_skill_signature, available_key, container_base_path, skill_evolution_section)
+    return _get_cached_skills_prompt_section(skill_signature, disabled_skill_signature, available_key, container_base_path)
 
 
 def get_agent_soul(agent_name: str | None, *, user_id: str | None = None) -> str:

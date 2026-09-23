@@ -13,13 +13,11 @@ middleware reachable from this graph (e.g. ``TitleMiddleware``) — MUST pass
 Forgetting that flag emits duplicate spans (one rooted at the graph, one at
 the model) AND prevents the Langfuse handler's ``propagate_attributes``
 path from firing, so ``session_id`` / ``user_id`` never reach the trace.
-The five current sites are: bootstrap agent, default agent, summarization
-middleware, the async path inside ``TitleMiddleware``, and the skill security
-scanner reached from the ``skill_manage`` tool (``skills/security_scanner.py``'s
-``scan_skill_content``, which is dual-use: ``_scan_or_raise`` in
-``tools/skill_manage_tool.py`` is the in-graph choke point and passes the flag,
-while its standalone callers keep the default). Any new in-graph
-``create_chat_model`` call must add to this list and pass the flag.
+The four current sites are: bootstrap agent, default agent, summarization
+middleware, and the async path inside ``TitleMiddleware``. Skill security
+moderation runs only through standalone Gateway and installer callers, outside
+this graph root. Any new in-graph ``create_chat_model`` call must add to this
+list and pass the flag.
 """
 
 from __future__ import annotations

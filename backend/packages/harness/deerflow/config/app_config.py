@@ -30,8 +30,8 @@ from deerflow.config.runtime_paths import existing_project_file
 from deerflow.config.safety_finish_reason_config import SafetyFinishReasonConfig
 from deerflow.config.sandbox_config import SandboxConfig
 from deerflow.config.scheduler_config import SchedulerConfig
-from deerflow.config.skill_evolution_config import SkillEvolutionConfig
 from deerflow.config.skill_scan_config import SkillScanConfig
+from deerflow.config.skill_security_config import SkillSecurityConfig
 from deerflow.config.skills_config import SkillsConfig
 from deerflow.config.stream_bridge_config import StreamBridgeConfig, load_stream_bridge_config_from_dict
 from deerflow.config.subagent_runtime_config import SubagentRuntimeConfig
@@ -230,7 +230,7 @@ class AppConfig(BaseModel):
     tool_groups: list[ToolGroupConfig] = Field(default_factory=list, description="Available tool groups")
     skills: SkillsConfig = Field(default_factory=SkillsConfig, description="Skills configuration")
     skill_scan: SkillScanConfig = Field(default_factory=SkillScanConfig, description="Native deterministic skill safety scanning configuration")
-    skill_evolution: SkillEvolutionConfig = Field(default_factory=SkillEvolutionConfig, description="Agent-managed skill evolution configuration")
+    skill_security: SkillSecurityConfig = Field(default_factory=SkillSecurityConfig, description="Security policy for user and administrator skill writes")
     extensions: ExtensionsConfig = Field(default_factory=ExtensionsConfig, description="Extensions configuration (MCP servers and skills state)")
     tool_output: ToolOutputConfig = Field(default_factory=ToolOutputConfig, description="Tool output budget protection configuration")
     tool_search: ToolSearchConfig = Field(default_factory=ToolSearchConfig, description="Tool search / deferred loading configuration")
@@ -339,7 +339,19 @@ class AppConfig(BaseModel):
         error when null — there is nothing to fall back to.
         """
         if isinstance(data, dict):
-            return {key: value for key, value in data.items() if value is not None}
+            cleaned = {key: value for key, value in data.items() if value is not None}
+            legacy_evolution = cleaned.pop("skill_evolution", None)
+            if isinstance(legacy_evolution, Mapping):
+                security = cleaned.get("skill_security")
+                if security is None:
+                    security = {}
+                if isinstance(security, Mapping):
+                    security = dict(security)
+                    for key in ("moderation_model_name", "security_fail_closed"):
+                        if key not in security and key in legacy_evolution:
+                            security[key] = legacy_evolution[key]
+                    cleaned["skill_security"] = security
+            return cleaned
         return data
 
     @classmethod

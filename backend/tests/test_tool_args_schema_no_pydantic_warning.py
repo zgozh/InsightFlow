@@ -34,7 +34,6 @@ from deerflow.tools.builtins.list_uploaded_files_tool import list_uploaded_files
 from deerflow.tools.builtins.present_file_tool import present_file_tool
 from deerflow.tools.builtins.task_tool import task_tool
 from deerflow.tools.builtins.view_image_tool import view_image_tool
-from deerflow.tools.skill_manage_tool import skill_manage_tool
 
 
 def _make_runtime(context: dict) -> ToolRuntime:
@@ -61,7 +60,6 @@ _TOOL_CASES = [
     (present_file_tool, {"filepaths": ["/tmp/x"], "tool_call_id": "call-1"}),
     (view_image_tool, {"image_path": "/tmp/img.png", "tool_call_id": "call-1"}),
     (task_tool, {"description": "do", "prompt": "go", "subagent_type": "general-purpose", "tool_call_id": "call-1"}),
-    (skill_manage_tool, {"action": "list", "name": "demo"}),
 ]
 
 _SANDBOX_TOOL_CASES = [

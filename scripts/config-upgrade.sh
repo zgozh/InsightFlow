@@ -43,7 +43,7 @@ else
     EXAMPLE_WIN="$EXAMPLE"
 fi
 
-cd "$REPO_ROOT/backend" && CONFIG_WIN_PATH="$CONFIG_WIN" EXAMPLE_WIN_PATH="$EXAMPLE_WIN" uv run python -c "
+cd "$REPO_ROOT/backend" && CONFIG_WIN_PATH="$CONFIG_WIN" EXAMPLE_WIN_PATH="$EXAMPLE_WIN" uv run --locked python -c "
 import os
 import sys, shutil, copy, re
 from pathlib import Path
@@ -63,7 +63,7 @@ with open(example_path, encoding='utf-8') as f:
 user_version = user.get('config_version', 0)
 example_version = example.get('config_version', 0)
 
-if user_version >= example_version:
+if user_version >= example_version and 'skill_evolution' not in user:
     print(f'OK config.yaml is already up to date (version {user_version}).')
     sys.exit(0)
 
@@ -106,6 +106,23 @@ for version in range(user_version + 1, example_version + 1):
 
 # Re-parse after text migrations
 user = yaml.safe_load(raw_text) or {}
+
+# Skill self-evolution is removed. Preserve only its two security settings;
+# explicit values in the replacement block win field by field.
+legacy_evolution = user.pop('skill_evolution', None)
+if legacy_evolution is not None:
+    if not isinstance(legacy_evolution, dict):
+        legacy_evolution = {}
+    skill_security = user.get('skill_security')
+    if skill_security is None:
+        skill_security = {}
+    if not isinstance(skill_security, dict):
+        raise SystemExit('Invalid skill_security section; refusing to overwrite it during migration.')
+    for key in ('moderation_model_name', 'security_fail_closed'):
+        if key not in skill_security and key in legacy_evolution:
+            skill_security[key] = legacy_evolution[key]
+    user['skill_security'] = skill_security
+    migrated.append('skill_evolution security fields -> skill_security; removed agent self-evolution toggle')
 
 if migrated:
     print(f'Applied {len(migrated)} migration(s):')

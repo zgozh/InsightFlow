@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 import yaml
+from pydantic import ValidationError
 from support.shell import find_script_bash
 
 from deerflow.config.app_config import AppConfig
@@ -203,11 +204,12 @@ def _merge_missing(target: dict, source: dict) -> None:
             _merge_missing(target[key], value)
 
 
-def test_security_fail_closed_bumped_config_version():
-    """The example must ship security_fail_closed under a version > 26 so v26 configs upgrade."""
+def test_skill_security_config_version_and_safe_defaults():
+    """The example carries the split security policy with fail-closed defaults."""
     example = _load_repo_example()
-    assert example.get("config_version", 0) >= 27
-    assert example["skill_evolution"]["security_fail_closed"] is True
+    assert example["config_version"] == 49
+    assert "skill_evolution" not in example
+    assert example["skill_security"] == {"moderation_model_name": None, "security_fail_closed": True}
 
 
 def test_version_26_config_reported_outdated_against_example(caplog):
@@ -227,27 +229,112 @@ def test_version_26_config_reported_outdated_against_example(caplog):
         assert f"version is {example_version}" in caplog.text
 
 
-def test_config_upgrade_adds_security_fail_closed_preserving_user_values():
-    """config-upgrade merges security_fail_closed: true without touching existing skill_evolution values."""
-    example = _load_repo_example()
-    # A version-26 user who customized skill_evolution but predates the new field.
-    user = {
-        "config_version": 26,
-        "skill_evolution": {
-            "enabled": True,
-            "moderation_model_name": "custom-moderation-model",
-        },
-    }
+def test_legacy_skill_evolution_migrates_security_and_discards_agent_toggle():
+    config = AppConfig.model_validate(
+        {
+            "sandbox": {"use": "deerflow.sandbox.local:LocalSandboxProvider"},
+            "skill_evolution": {
+                "enabled": True,
+                "moderation_model_name": "legacy-moderation",
+                "security_fail_closed": False,
+            },
+        }
+    )
 
-    _merge_missing(user, example)
-    user["config_version"] = example["config_version"]
+    assert config.skill_security.moderation_model_name == "legacy-moderation"
+    assert config.skill_security.security_fail_closed is False
+    assert not hasattr(config, "skill_evolution")
+    assert "skill_evolution" not in config.model_dump()
 
-    # New persisted field is merged in with the example's fail-closed default.
-    assert user["skill_evolution"]["security_fail_closed"] is True
-    # The user's existing skill_evolution values are preserved unchanged.
-    assert user["skill_evolution"]["enabled"] is True
-    assert user["skill_evolution"]["moderation_model_name"] == "custom-moderation-model"
-    assert user["config_version"] == example["config_version"]
+
+def test_explicit_skill_security_values_override_legacy_fields():
+    config = AppConfig.model_validate(
+        {
+            "sandbox": {"use": "deerflow.sandbox.local:LocalSandboxProvider"},
+            "skill_evolution": {
+                "enabled": True,
+                "moderation_model_name": "legacy-moderation",
+                "security_fail_closed": False,
+            },
+            "skill_security": {"moderation_model_name": "explicit-moderation", "security_fail_closed": True},
+        }
+    )
+
+    assert config.skill_security.moderation_model_name == "explicit-moderation"
+    assert config.skill_security.security_fail_closed is True
+    assert not hasattr(config, "skill_evolution")
+
+
+def test_invalid_legacy_security_policy_fails_validation():
+    with pytest.raises(ValidationError):
+        AppConfig.model_validate(
+            {
+                "sandbox": {"use": "deerflow.sandbox.local:LocalSandboxProvider"},
+                "skill_evolution": {"enabled": True, "security_fail_closed": "allow"},
+            }
+        )
+
+
+def test_from_file_applies_legacy_security_migration(tmp_path, monkeypatch):
+    from deerflow.config.extensions_config import ExtensionsConfig
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "sandbox": {"use": "deerflow.sandbox.local:LocalSandboxProvider"},
+                "skill_evolution": {"enabled": True, "security_fail_closed": False},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(ExtensionsConfig, "from_file", classmethod(lambda cls, *args, **kwargs: cls()))
+
+    config = AppConfig.from_file(str(config_path))
+
+    assert config.skill_security.security_fail_closed is False
+    assert not hasattr(config, "skill_evolution")
+
+
+@pytest.mark.skipif(SCRIPT_BASH is None, reason="repo shell-script tests need Git Bash on Windows")
+def test_config_upgrade_migrates_legacy_skill_security_and_keeps_backup(tmp_path):
+    import subprocess
+
+    repo_root = Path(__file__).resolve().parents[2]
+    example_src = repo_root / "config.example.yaml"
+    config_path = tmp_path / "config.yaml"
+    (tmp_path / "config.example.yaml").write_text(example_src.read_text(encoding="utf-8"), encoding="utf-8")
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "config_version": 48,
+                "sandbox": {"use": "deerflow.sandbox.local:LocalSandboxProvider"},
+                "skill_evolution": {
+                    "enabled": True,
+                    "moderation_model_name": "legacy-moderation",
+                    "security_fail_closed": False,
+                },
+                "skill_security": {"moderation_model_name": "explicit-moderation"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [SCRIPT_BASH, str(repo_root / "scripts" / "config-upgrade.sh")],
+        env={**os.environ, "DEER_FLOW_CONFIG_PATH": str(config_path)},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+    assert result.returncode == 0, result.stderr
+    upgraded = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    backup = yaml.safe_load(config_path.with_suffix(".yaml.bak").read_text(encoding="utf-8"))
+    assert upgraded["config_version"] == 49
+    assert "skill_evolution" not in upgraded
+    assert upgraded["skill_security"] == {"moderation_model_name": "explicit-moderation", "security_fail_closed": False}
+    assert backup["skill_evolution"]["enabled"] is True
 
 
 def test_the_example_analytics_block_parses_with_the_app_owned_parser():

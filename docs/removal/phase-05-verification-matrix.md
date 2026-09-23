@@ -73,8 +73,8 @@ PYTHONPATH=. uv run --locked pytest tests/test_persistence_scaffold.py tests/tes
 
 ```powershell
 cd backend && uv lock --check && PYTHONPATH=. uv run --locked pytest tests/test_business_analysis_skill.py -q
-# Skill 安装期安全门禁（SkillScan/security scanner）必须仍然绿——它不随 review 平台删除：
-PYTHONPATH=. uv run --locked pytest tests/test_skillscan_native.py tests/test_security_scanner.py tests/test_skills_installer.py tests/test_skill_manage_tool.py -q
+# Skill 安装期安全门禁（SkillScan/security scanner）必须仍然绿；Agent 自编辑工具及其专属测试随 self-evolution 删除：
+PYTHONPATH=. uv run --locked pytest tests/test_skillscan_native.py tests/test_security_scanner.py tests/test_skills_installer.py -q
 cd ..\frontend && pnpm exec rstest run tests/unit/core/i18n tests/unit/components/analytics
 # 依赖不得残留孤儿 import
 rg -n "import (slack|telegram|discord|dingtalk)|from deerflow\.community\.(tavily|brave|exa|firecrawl)" backend

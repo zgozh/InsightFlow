@@ -1,4 +1,4 @@
-"""Security screening for agent-managed skill writes."""
+"""Security screening for user and administrator skill writes."""
 
 from __future__ import annotations
 
@@ -30,7 +30,8 @@ def _resolve_fail_closed(app_config: AppConfig | None) -> bool:
     """Resolve the fail-closed policy, defaulting to True if config is unavailable."""
     try:
         config = app_config or get_app_config()
-        return bool(getattr(config.skill_evolution, "security_fail_closed", True))
+        security = getattr(config, "skill_security", None)
+        return bool(getattr(security, "security_fail_closed", True))
     except Exception:
         return True
 
@@ -110,8 +111,8 @@ async def scan_skill_content(
     model emits duplicate spans *and* blocks the Langfuse handler's
     ``propagate_attributes`` path. This function is dual-use, so the flag is the
     caller's to set — the in-graph choke point is ``_scan_or_raise`` in
-    ``tools/skill_manage_tool.py``. Standalone callers (Gateway skill routes,
-    ``skills/installer.py``) have no root to inherit from and keep the default.
+    Standalone callers (Gateway skill routes and ``skills/installer.py``) have
+    no root to inherit from and keep the default.
     """
     rubric = (
         "You are a security reviewer for AI agent skills. "
@@ -126,7 +127,8 @@ async def scan_skill_content(
     model_responded = False
     try:
         config = app_config or get_app_config()
-        model_name = config.skill_evolution.moderation_model_name
+        security = getattr(config, "skill_security", None)
+        model_name = getattr(security, "moderation_model_name", None)
         model_kwargs = {"thinking_enabled": False, "app_config": config, "attach_tracing": attach_tracing}
         model = create_chat_model(name=model_name, **model_kwargs) if model_name else create_chat_model(**model_kwargs)
         invoke_config: dict[str, Any] = {"run_name": "security_agent"}

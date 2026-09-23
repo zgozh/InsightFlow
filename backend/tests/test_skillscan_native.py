@@ -646,7 +646,7 @@ async def test_llm_scanner_receives_static_findings_context(monkeypatch: pytest.
             captured_messages.extend(messages)
             return SimpleNamespace(content='{"decision":"allow","reason":"ok"}')
 
-    config = SimpleNamespace(skill_evolution=SimpleNamespace(moderation_model_name=None))
+    config = SimpleNamespace(skill_security=SimpleNamespace(moderation_model_name=None))
     monkeypatch.setattr("deerflow.skills.security_scanner.create_chat_model", lambda **kwargs: FakeModel())
 
     result = await scan_skill_content(

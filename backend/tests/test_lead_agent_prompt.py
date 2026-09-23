@@ -115,14 +115,12 @@ def test_apply_prompt_template_includes_memory_tool_guidance_only_in_tool_mode(m
     tool_config = SimpleNamespace(
         sandbox=SimpleNamespace(mounts=[]),
         skills=SimpleNamespace(container_path="/mnt/skills", use="deerflow.skills.storage.local_skill_storage:LocalSkillStorage", get_skills_path=lambda: Path("/tmp/skills")),
-        skill_evolution=SimpleNamespace(enabled=False),
         tool_search=SimpleNamespace(enabled=False),
         memory=SimpleNamespace(enabled=True, mode="tool", injection_enabled=False),
     )
     middleware_config = SimpleNamespace(
         sandbox=SimpleNamespace(mounts=[]),
         skills=tool_config.skills,
-        skill_evolution=SimpleNamespace(enabled=False),
         tool_search=SimpleNamespace(enabled=False),
         memory=SimpleNamespace(enabled=True, mode="middleware"),
     )
@@ -149,7 +147,6 @@ def test_apply_prompt_template_threads_explicit_app_config_without_global_config
     explicit_config = SimpleNamespace(
         sandbox=SimpleNamespace(mounts=mounts),
         skills=SimpleNamespace(container_path="/mnt/explicit-skills", use="deerflow.skills.storage.local_skill_storage:LocalSkillStorage", get_skills_path=lambda: Path("/tmp/explicit-skills")),
-        skill_evolution=SimpleNamespace(enabled=False),
         tool_search=SimpleNamespace(enabled=False),
         memory=SimpleNamespace(enabled=False, injection_enabled=True, max_injection_tokens=2000),
     )
@@ -188,7 +185,6 @@ def test_apply_prompt_template_threads_explicit_app_config_to_subagents_without_
             }
         ),
         skills=SimpleNamespace(container_path="/mnt/skills", use="deerflow.skills.storage.local_skill_storage:LocalSkillStorage", get_skills_path=lambda: Path("/tmp/skills")),
-        skill_evolution=SimpleNamespace(enabled=False),
         tool_search=SimpleNamespace(enabled=False),
         memory=SimpleNamespace(enabled=False, injection_enabled=True, max_injection_tokens=2000),
     )
@@ -220,7 +216,6 @@ def test_apply_prompt_template_includes_subagent_total_limit(monkeypatch):
         subagents=SubagentsAppConfig(),
         subagent_runtime=SimpleNamespace(max_running=4),
         skills=SimpleNamespace(container_path="/mnt/skills", use="deerflow.skills.storage.local_skill_storage:LocalSkillStorage", get_skills_path=lambda: Path("/tmp/skills")),
-        skill_evolution=SimpleNamespace(enabled=False),
         tool_search=SimpleNamespace(enabled=False),
         memory=SimpleNamespace(enabled=False, injection_enabled=True, max_injection_tokens=2000),
     )
@@ -253,7 +248,6 @@ def test_apply_prompt_template_clamps_subagent_limits_to_enforced_bounds(monkeyp
         subagents=SubagentsAppConfig(),
         subagent_runtime=SimpleNamespace(max_running=4),
         skills=SimpleNamespace(container_path="/mnt/skills", use="deerflow.skills.storage.local_skill_storage:LocalSkillStorage", get_skills_path=lambda: Path("/tmp/skills")),
-        skill_evolution=SimpleNamespace(enabled=False),
         tool_search=SimpleNamespace(enabled=False),
         memory=SimpleNamespace(enabled=False, injection_enabled=True, max_injection_tokens=2000),
     )
@@ -286,7 +280,6 @@ def test_apply_prompt_template_prefers_startup_execution_capacity_after_reload(m
             use="deerflow.skills.storage.local_skill_storage:LocalSkillStorage",
             get_skills_path=lambda: Path("/tmp/skills"),
         ),
-        skill_evolution=SimpleNamespace(enabled=False),
         tool_search=SimpleNamespace(enabled=False),
         memory=SimpleNamespace(enabled=False, injection_enabled=True, max_injection_tokens=2000),
     )
@@ -323,7 +316,6 @@ def test_apply_prompt_template_single_subagent_limit_matches_middleware(monkeypa
         ),
         subagents=SubagentsAppConfig(),
         skills=SimpleNamespace(container_path="/mnt/skills", use="deerflow.skills.storage.local_skill_storage:LocalSkillStorage", get_skills_path=lambda: Path("/tmp/skills")),
-        skill_evolution=SimpleNamespace(enabled=False),
         tool_search=SimpleNamespace(enabled=False),
         memory=SimpleNamespace(enabled=False, injection_enabled=True, max_injection_tokens=2000),
     )
@@ -514,7 +506,6 @@ def test_explicit_config_enabled_skills_are_cached_by_config_identity(monkeypatc
             object,
             SimpleNamespace(
                 skills=SimpleNamespace(container_path="/mnt/skills", use="deerflow.skills.storage.local_skill_storage:LocalSkillStorage", get_skills_path=lambda: Path("/tmp/skills")),
-                skill_evolution=SimpleNamespace(enabled=False),
             ),
         ),
     )
@@ -668,7 +659,6 @@ def _make_minimal_app_config():
     return SimpleNamespace(
         sandbox=SimpleNamespace(mounts=[]),
         skills=SimpleNamespace(container_path="/mnt/skills"),
-        skill_evolution=SimpleNamespace(enabled=False),
         tool_search=SimpleNamespace(enabled=False),
         memory=SimpleNamespace(enabled=False, injection_enabled=True, max_injection_tokens=2000),
     )

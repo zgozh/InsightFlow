@@ -16,7 +16,6 @@ def _config(*, configured=True, name="read_conversation"):
     return SimpleNamespace(
         tools=[ToolConfig(name=name, group="conversation", use="deerflow.tools.conversation:read_conversation")] if configured else [],
         sandbox=SimpleNamespace(use="example.remote:Sandbox"),
-        skill_evolution=SimpleNamespace(enabled=False),
         models=[],
         acp_agents={},
         get_model_config=lambda name: None,
