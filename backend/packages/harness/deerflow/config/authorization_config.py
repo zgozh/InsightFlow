@@ -28,7 +28,7 @@ class AuthorizationConfig(BaseModel):
 
     enabled: bool = Field(default=False, description="Enable fine-grained authorization")
     fail_closed: bool = Field(default=True, description="Block access if the provider errors or identity is unresolved")
-    default_role: str = Field(default="user", description="Role applied when user_role is None (e.g. unbound IM channels)")
+    default_role: str = Field(default="user", description="Role applied when no user_role is available")
     provider: AuthorizationProviderConfig | None = Field(default=None, description="Authorization provider configuration")
 
 

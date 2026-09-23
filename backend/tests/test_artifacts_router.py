@@ -803,8 +803,7 @@ def test_get_artifact_scopes_to_trusted_owner_header(tmp_path, monkeypatch) -> N
 
 
 def test_get_artifact_normalizes_raw_owner_id_from_trusted_header(tmp_path, monkeypatch) -> None:
-    # The trusted header carries the raw platform owner id (channel workers
-    # send it unsanitized; see ChannelManager._owner_headers), while run files
+    # The trusted header carries the raw service owner id while run files
     # live under the make_safe_user_id bucket — so a raw id with chars outside
     # [A-Za-z0-9_-] must resolve to the normalized bucket, not the raw one.
     seen = _capture_resolved_user_id(monkeypatch, tmp_path)

@@ -4,7 +4,7 @@ DeerFlow's request-level correlation id — the `X-Trace-Id` header and the `dee
 
 **The ContextVar is the only source.** Every path that reaches a run binds one first; downstream treats the id as a plain `str`, no `if trace_id:` guards.
 
-Entry points and binders: Gateway HTTP — `TraceMiddleware`; scheduled occurrence — `ScheduledTaskService._attempt_queued_run` → `launch_scheduled_thread_run`; MCP task notification — `launch_mcp_task_notification_run`; IM inbound — `ChannelManager._worker_loop`; embedded / TUI / CLI turn — `DeerFlowClient.stream()`.
+Entry points and binders: Gateway HTTP — `TraceMiddleware`; scheduled occurrence — `ScheduledTaskService._attempt_queued_run` → `launch_scheduled_thread_run`; MCP task notification — `launch_mcp_task_notification_run`; embedded / TUI / CLI turn — `DeerFlowClient.stream()`.
 
 Only the first is HTTP; the rest run outside ASGI, so the binding cannot live in middleware alone. Each scopes **one unit of work**, never a poller loop — a leaked binding on a reused worker task would tag later occurrences with the first id. `ensure_trace_context` inherits, keeping layered scheduled bindings and a manual trigger inside a Gateway request on one trace.
 
@@ -26,29 +26,6 @@ Accepted divergence: a crash-recovered scheduled launch reuses its run via the i
 `logging.enhance.enabled` gates **log output only** (`trace_id` field presence and format) — not the id, the header, or the run metadata — so `TraceMiddleware` reads no `AppConfig`; `logging` stays restart-required (`STARTUP_ONLY_FIELDS["logging"]`). `X-Trace-Id` is in `CORS_EXPOSED_HEADERS` (not safelisted). Unhandled-exception 500s keep the header — `TraceMiddleware` sends its own plain 500 (CORS-opaque, see its docstring) before re-raising; mid-stream failures propagate unchanged.
 
 Tests: the `tests/test_trace_*` and `tests/test_worker_trace_binding.py` suites, `test_gateway_services.py`, `test_run_metadata_secret_safety.py`, plus the Langfuse suites in `tracing/AGENTS.md`.
-
-### Managed Lark CLI credentials (`integrations/lark_cli.py`)
-
-Installed `lark-shared` guidance points to Capability Center > Plugins > Lark
-(`/workspace/capabilities?tab=plugins&plugin=lark`). Guidance changes bump the
-version marker; reinstalling the managed skill pack refreshes the stored text.
-
-App registration and direct app switching replace the per-user Lark credential
-tree transactionally. Clear the old OAuth data before running `lark-cli config
-init`: on Linux that command writes the new app secret into the file-backed
-keychain under the data directory, so clearing the directory afterward would
-leave `config.json` with a dangling keychain reference. The transaction snapshot
-still supplies the previous OAuth data for logout and restores the complete old
-tree if any switch step fails.
-
-### Browser Progress Screenshots (`community/browser_automation/`)
-
-Hidden per-action browser progress frames use JPEG at quality 80 to keep their
-storage and transfer cost bounded relative to lossless PNG. The explicit
-`browser_screenshot` tool remains PNG because it creates a user-requested
-artifact. New automatic capture entry points must reuse the shared progress
-encoding definition in `tools.py` so the byte encoding and `.jpg` suffix cannot
-drift.
 
 ### Embedded Client (`packages/harness/deerflow/client.py`)
 
@@ -101,38 +78,6 @@ encrypted authority. Discovery and enumeration are read-only, including on a
 policy or network-mode mismatch; only the provider may replace it after the
 orphan grace, local teardown reservation, and cross-instance teardown lease.
 Destroy the sandbox, sidecar, and both networks together.
-
-### E2B Mount Uploads
-
-E2B uploads host mounts during sandbox creation using binary file objects.
-Per-mount limits: 100 MiB/file, 512 MiB total, 2,000 files. The full creation
-pass shares a 512 MiB / 2,000-file budget across skill projections and mounts.
-
-The pass has a cooperative deadline controlled by
-``mount_upload_deadline_seconds`` (default: 120 seconds). The provider checks it before
-each mount, during directory preflight, and before each SDK write. The deadline
-does not interrupt active filesystem or E2B SDK calls.
-
-The provider checks mount limits before upload. It rechecks each opened file descriptor against its preflight size before SDK upload.
-
-For policy-scoped turns, clearing the four managed remote skill categories and
-uploading their prepared projection is one per-user/thread/skills-root critical
-section, shared with acquire and release. The provider snapshots that canonical
-root at startup and carries it through warm-pool identity and E2B metadata; a VM
-from another root is never adopted. A second policy sync cannot reset the remote
-tree until the first upload pass has completed.
-
-An invalid mount does not block later mounts.
-
-Each successful upload logs its source, destination, file count, byte count, and elapsed time.
-
-A stopped pass logs its limit reason and elapsed time. It reports attempted and completed upload totals separately.
-
-After creation, ``E2BSandbox.mount_upload_result`` holds a ``MountUploadResult``.
-``result.truncated`` is true only for resource-limit stops (deadline, file count,
-bytes), not logged mount failures (missing paths, SDK errors). A provider-level
-map preserves creation results within the Gateway process; ``None`` on a
-reclaimed sandbox means unavailable.
 
 ### Workspace Snapshot Cancellation (`workspace_changes/recorder.py`)
 

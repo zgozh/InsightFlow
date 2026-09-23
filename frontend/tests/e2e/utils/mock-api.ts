@@ -20,11 +20,6 @@ export const MOCK_RUN_ID = "00000000-0000-0000-0000-000000000099";
 // constant; the mock must mirror the same metadata contract for pin ordering.
 export const THREAD_PINNED_METADATA_KEY = "deerflow_pinned";
 
-// Keep in sync with frontend runtime thread utils and the backend thread_meta
-// constant; the mock must mirror the same metadata contract for project
-// membership.
-export const THREAD_PROJECT_METADATA_KEY = "deerflow_project_id";
-
 const MOCK_AUTH_USER = {
   id: "default",
   email: "default@test.local",
@@ -40,63 +35,10 @@ export type MockThread = {
   thread_id: string;
   title?: string;
   updated_at?: string;
-  agent_name?: string;
   metadata?: Record<string, unknown>;
   messages?: unknown[];
   artifacts?: string[];
   goal?: Record<string, unknown> | null;
-};
-
-export type MockProject = {
-  id: string;
-  name: string;
-  instructions?: string;
-  presentation?: Record<string, unknown>;
-  status?: "active" | "archived";
-  created_at?: string;
-  updated_at?: string;
-};
-
-export type MockProjectDocument = {
-  id: string;
-  project_id: string;
-  name: string;
-  size_bytes: number;
-  sha256?: string;
-  content_missing?: boolean;
-  source_thread_id?: string | null;
-  source_kind?: "upload" | "output" | null;
-  source_name?: string | null;
-  created_at?: string;
-  updated_at?: string;
-};
-
-export type MockTrashDocument = MockProjectDocument & {
-  trashed_at: string;
-  trash_origin?: { project_id: string; project_name: string } | null;
-};
-
-export type MockThreadFileGroup = {
-  thread_id: string;
-  display_name: string;
-  updated_at: string;
-  files: Array<{
-    kind: "upload" | "output";
-    name: string;
-    size_bytes: number;
-    modified_at: string;
-    artifact_url: string;
-  }>;
-  truncated?: boolean;
-};
-
-export type MockAgent = {
-  name: string;
-  display_name?: string | null;
-  description?: string;
-  system_prompt?: string;
-  tool_groups?: string[] | null;
-  skills?: string[] | null;
 };
 
 export type MockSkill = {
@@ -109,16 +51,7 @@ export type MockSkill = {
 
 export type MockAPIOptions = {
   threads?: MockThread[];
-  projects?: MockProject[];
-  projectsConfig?: {
-    instructions_max_bytes?: number;
-    trash_retention_days?: number;
-  };
-  projectDocuments?: MockProjectDocument[];
-  trashDocuments?: MockTrashDocument[];
-  threadFileGroups?: MockThreadFileGroup[];
   createdThreadMessages?: unknown[];
-  agents?: MockAgent[];
   skills?: MockSkill[];
   scheduledTasks?: Array<{
     id: string;
@@ -152,8 +85,6 @@ export type MockAPIOptions = {
     max_total_size: number;
   };
   features?: {
-    agentsApiEnabled?: boolean;
-    browserControlEnabled?: boolean;
     mcpTasksEnabled?: boolean;
   };
   runStreamHandler?: (route: Route) => Promise<void>;
@@ -302,19 +233,6 @@ function runStreamThreadId(route: Route) {
  */
 export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
   let threads = [...(options?.threads ?? [])];
-  const projectsList = (options?.projects ?? []).map((project) => ({
-    instructions: "",
-    presentation: {},
-    status: "active" as const,
-    created_at: "2026-01-01T00:00:00Z",
-    updated_at: "2026-01-01T00:00:00Z",
-    ...project,
-  }));
-  let projectDocuments = [...(options?.projectDocuments ?? [])];
-  let trashDocuments = [...(options?.trashDocuments ?? [])];
-  const threadFileGroups = [...(options?.threadFileGroups ?? [])];
-  let projectDocumentSequence = 0;
-  const agents = options?.agents ?? [];
   const skills = options?.skills ?? DEFAULT_SKILLS;
   const scheduledTasks = options?.scheduledTasks ?? [];
   let mutableScheduledTasks = [...scheduledTasks];
@@ -347,45 +265,7 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
     max_file_size: 50 * 1024 * 1024,
     max_total_size: 100 * 1024 * 1024,
   };
-  let larkIntegrationStatus = {
-    installed: false,
-    version: "v1.0.65",
-    manifest_version: null as string | null,
-    latest_available_version: "v1.0.65" as string | null,
-    runtime_version_mismatch: false,
-    app_configured: false,
-    app_id: null as string | null,
-    app_brand: null as string | null,
-    skills_expected: 27,
-    skills_installed: 0,
-    installed_skills: [] as string[],
-    enabled_skills: [] as string[],
-    install_path: "/tmp/deer-flow/integrations/skills/lark-cli",
-    cli: {
-      available: false,
-      path: null as string | null,
-      version: null as string | null,
-      error: "lark-cli is not on PATH" as string | null,
-    },
-    auth: {
-      status: "unavailable",
-      message: "lark-cli is not installed on the Gateway" as string | null,
-      user: null as string | null,
-      verified: false,
-    },
-    sandbox_runtime_mode: "init-container" as
-      | "none"
-      | "gateway-download"
-      | "init-container",
-    sandbox_runtime_ready: false,
-    sandbox_runtime_detail:
-      "The provisioner has no lark-cli init image configured (LARK_CLI_INIT_IMAGE)." as
-        | string
-        | null,
-  };
   const featureFlags = {
-    agentsApiEnabled: options?.features?.agentsApiEnabled ?? true,
-    browserControlEnabled: options?.features?.browserControlEnabled ?? true,
     mcpTasksEnabled: options?.features?.mcpTasksEnabled ?? true,
   };
 
@@ -400,10 +280,7 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
     thread_id: thread.thread_id,
     created_at: "2025-01-01T00:00:00Z",
     updated_at: thread.updated_at ?? "2025-01-01T00:00:00Z",
-    metadata: {
-      ...(thread.metadata ?? {}),
-      ...(thread.agent_name ? { agent_name: thread.agent_name } : {}),
-    },
+    metadata: thread.metadata ?? {},
     status: "idle",
     values: { title: thread.title ?? "Untitled", goal: thread.goal ?? null },
   });
@@ -484,28 +361,6 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
   void page.route("**/api/v1/auth/logout", (route) => {
     if (route.request().method() === "POST") {
       return route.fulfill({ status: 204 });
-    }
-    return route.fallback();
-  });
-
-  void page.route("**/api/channels/providers", (route) => {
-    if (route.request().method() === "GET") {
-      return route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ enabled: false, providers: [] }),
-      });
-    }
-    return route.fallback();
-  });
-
-  void page.route("**/api/channels/connections", (route) => {
-    if (route.request().method() === "GET") {
-      return route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ connections: [] }),
-      });
     }
     return route.fallback();
   });
@@ -887,17 +742,9 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
       const body = route.request().postDataJSON() as {
         thread_id?: string;
         metadata?: Record<string, unknown>;
-        project_id?: string;
       };
       const threadId = body.thread_id ?? MOCK_SIDECAR_THREAD_ID;
-      // The backend stamps `metadata.deerflow_project_id` from the assigned
-      // project_id column; mirror that so project membership is readable.
-      const metadata = {
-        ...body.metadata,
-        ...(body.project_id
-          ? { [THREAD_PROJECT_METADATA_KEY]: body.project_id }
-          : {}),
-      };
+      const metadata = body.metadata ?? {};
       // Mirror the backend idempotency contract: a repeat POST for an
       // existing thread_id returns the record unchanged (goal and other
       // state intact) instead of resetting it.
@@ -985,424 +832,6 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
       threads = threads.filter((thread) => thread.thread_id !== threadId);
       return route.fulfill({
         status: 204,
-      });
-    }
-    return route.fallback();
-  });
-
-  // Projects API — Phase 1 default-empty mocks so existing specs are
-  // unaffected; project-aware specs register their own routes on top.
-  void page.route(/\/api\/projects(\?|$)/, (route) => {
-    if (route.request().method() === "GET") {
-      return route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ projects: projectsList }),
-      });
-    }
-    return route.fallback();
-  });
-
-  // Phase 2 project/trash API — default-empty mocks so project-unaware specs
-  // are unaffected; project specs seed rows via MockAPIOptions and drive the
-  // stateful routes below (upload -> shelf -> attach -> trash -> restore ->
-  // purge mirrors the gateway's lifecycle, spec §6.5/§8).
-
-  const json = (status: number, body: unknown) => ({
-    status,
-    contentType: "application/json",
-    body: JSON.stringify(body),
-  });
-  const notFound = (detail: string) => json(404, { detail });
-  const projectDocumentResponse = (document: MockProjectDocument) => ({
-    id: document.id,
-    name: document.name,
-    size_bytes: document.size_bytes,
-    sha256: document.sha256 ?? "mock-sha256",
-    content_missing: document.content_missing ?? false,
-    source_thread_id: document.source_thread_id ?? null,
-    source_kind: document.source_kind ?? null,
-    source_name: document.source_name ?? null,
-    created_at: document.created_at ?? "2026-01-01T00:00:00Z",
-    updated_at: document.updated_at ?? "2026-01-01T00:00:00Z",
-  });
-  const findProject = (projectId: string) =>
-    projectsList.find((project) => project.id === projectId);
-
-  void page.route(/\/api\/projects\/([^/]+)$/, (route) => {
-    if (route.request().method() !== "GET") {
-      return route.fallback();
-    }
-    const projectId = decodeURIComponent(
-      new URL(route.request().url()).pathname.split("/").at(-1) ?? "",
-    );
-    const project = findProject(projectId);
-    if (!project) {
-      return route.fulfill(notFound("Project not found"));
-    }
-    return route.fulfill(json(200, project));
-  });
-
-  // Registered after the catch-all ``/api/projects/{id}`` route so the last-
-  // registered-wins order lets ``config`` resolve here instead of 404ing as
-  // a project id — the gateway declares the route before ``/{project_id}``
-  // for the same reason.
-  void page.route(/\/api\/projects\/config$/, (route) => {
-    if (route.request().method() !== "GET") {
-      return route.fallback();
-    }
-    return route.fulfill(
-      json(200, {
-        instructions_max_bytes:
-          options?.projectsConfig?.instructions_max_bytes ?? 8192,
-        trash_retention_days:
-          options?.projectsConfig?.trash_retention_days ?? 30,
-      }),
-    );
-  });
-
-  void page.route(/\/api\/projects\/([^/]+)\/threads$/, (route) => {
-    if (route.request().method() !== "GET") {
-      return route.fallback();
-    }
-    const projectId = decodeURIComponent(
-      new URL(route.request().url()).pathname.split("/").at(-2) ?? "",
-    );
-    if (!findProject(projectId)) {
-      return route.fulfill(notFound("Project not found"));
-    }
-    const members = threads
-      .filter(
-        (thread) =>
-          thread.metadata?.[THREAD_PROJECT_METADATA_KEY] === projectId,
-      )
-      .map((thread) => ({
-        thread_id: thread.thread_id,
-        display_name: thread.title ?? null,
-        metadata: thread.metadata ?? {},
-        created_at: thread.updated_at,
-        updated_at: thread.updated_at,
-      }));
-    return route.fulfill(json(200, members));
-  });
-
-  void page.route(/\/api\/projects\/([^/]+)\/documents(?:\?|$)/, (route) => {
-    const projectId = decodeURIComponent(
-      new URL(route.request().url()).pathname.split("/").at(-2) ?? "",
-    );
-    if (!findProject(projectId)) {
-      return route.fulfill(notFound("Project not found"));
-    }
-    if (route.request().method() === "GET") {
-      const search = new URL(route.request().url()).searchParams;
-      const limit = Number(search.get("limit") ?? 100);
-      const offset = Number(search.get("offset") ?? 0);
-      const all = projectDocuments
-        .filter((document) => document.project_id === projectId)
-        .map(projectDocumentResponse);
-      return route.fulfill(
-        json(200, {
-          documents: all.slice(offset, offset + limit),
-          total: all.length,
-          limit,
-          offset,
-        }),
-      );
-    }
-    if (route.request().method() === "POST") {
-      const body = route.request().postData() ?? "";
-      const filename = /filename="([^"]+)"/.exec(body)?.[1] ?? "upload.bin";
-      projectDocumentSequence += 1;
-      const document: MockProjectDocument = {
-        id: `mock-doc-${projectDocumentSequence}`,
-        project_id: projectId,
-        name: filename,
-        size_bytes: body.length,
-        source_thread_id: null,
-        source_kind: null,
-        source_name: null,
-      };
-      projectDocuments = [...projectDocuments, document];
-      return route.fulfill(
-        json(201, {
-          document: projectDocumentResponse(document),
-          deduplicated: false,
-        }),
-      );
-    }
-    return route.fallback();
-  });
-
-  void page.route(
-    /\/api\/projects\/([^/]+)\/documents\/([^/]+)\/content$/,
-    (route) => {
-      if (route.request().method() !== "GET") {
-        return route.fallback();
-      }
-      const parts = new URL(route.request().url()).pathname.split("/");
-      const projectId = decodeURIComponent(parts.at(-4) ?? "");
-      const documentId = decodeURIComponent(parts.at(-2) ?? "");
-      const document = projectDocuments.find(
-        (candidate) =>
-          candidate.id === documentId && candidate.project_id === projectId,
-      );
-      if (!document) {
-        return route.fulfill(notFound("Project document not found"));
-      }
-      return route.fulfill({
-        status: 200,
-        contentType: "text/plain",
-        body: `mock content of ${document.name}`,
-      });
-    },
-  );
-
-  void page.route(/\/api\/projects\/([^/]+)\/documents\/([^/]+)$/, (route) => {
-    if (route.request().method() !== "DELETE") {
-      return route.fallback();
-    }
-    const parts = new URL(route.request().url()).pathname.split("/");
-    const projectId = decodeURIComponent(parts.at(-3) ?? "");
-    const documentId = decodeURIComponent(parts.at(-1) ?? "");
-    const document = projectDocuments.find(
-      (candidate) =>
-        candidate.id === documentId && candidate.project_id === projectId,
-    );
-    if (!document) {
-      return route.fulfill(notFound("Project document not found"));
-    }
-    const project = findProject(projectId);
-    projectDocuments = projectDocuments.filter(
-      (candidate) => candidate.id !== documentId,
-    );
-    trashDocuments = [
-      {
-        ...document,
-        trashed_at: new Date().toISOString(),
-        trash_origin: {
-          project_id: projectId,
-          project_name: project?.name ?? "Unknown",
-        },
-      },
-      ...trashDocuments,
-    ];
-    return route.fulfill({ status: 204 });
-  });
-
-  void page.route(
-    /\/api\/projects\/([^/]+)\/documents\/from-thread$/,
-    (route) => {
-      if (route.request().method() !== "POST") {
-        return route.fallback();
-      }
-      const projectId = decodeURIComponent(
-        new URL(route.request().url()).pathname.split("/").at(-3) ?? "",
-      );
-      if (!findProject(projectId)) {
-        return route.fulfill(notFound("Project not found"));
-      }
-      const body = route.request().postDataJSON() as {
-        thread_id: string;
-        kind: "upload" | "output";
-        name: string;
-        shelf_name?: string;
-      };
-      projectDocumentSequence += 1;
-      const document: MockProjectDocument = {
-        id: `mock-doc-${projectDocumentSequence}`,
-        project_id: projectId,
-        name: body.shelf_name ?? body.name,
-        size_bytes: 128,
-        source_thread_id: body.thread_id,
-        source_kind: body.kind,
-        source_name: body.name,
-      };
-      projectDocuments = [...projectDocuments, document];
-      return route.fulfill(
-        json(201, {
-          document: projectDocumentResponse(document),
-          deduplicated: false,
-        }),
-      );
-    },
-  );
-
-  void page.route(
-    /\/api\/projects\/([^/]+)\/documents\/([^/]+)\/attach-to-thread\/([^/]+)$/,
-    (route) => {
-      if (route.request().method() !== "POST") {
-        return route.fallback();
-      }
-      const parts = new URL(route.request().url()).pathname.split("/");
-      const projectId = decodeURIComponent(parts.at(-5) ?? "");
-      const documentId = decodeURIComponent(parts.at(-3) ?? "");
-      const threadId = decodeURIComponent(parts.at(-1) ?? "");
-      const document = projectDocuments.find(
-        (candidate) =>
-          candidate.id === documentId && candidate.project_id === projectId,
-      );
-      if (!document || !threads.some((t) => t.thread_id === threadId)) {
-        return route.fulfill(notFound("Project document not found"));
-      }
-      return route.fulfill(
-        json(200, {
-          filename: document.name,
-          size_bytes: document.size_bytes,
-          virtual_path: `/mnt/user-data/uploads/${document.name}`,
-          artifact_url: `/api/threads/${threadId}/artifacts/mnt/user-data/uploads/${encodeURIComponent(document.name)}`,
-        }),
-      );
-    },
-  );
-
-  void page.route(/\/api\/projects\/([^/]+)\/thread-files(?:\?|$)/, (route) => {
-    if (route.request().method() !== "GET") {
-      return route.fallback();
-    }
-    const projectId = decodeURIComponent(
-      new URL(route.request().url()).pathname.split("/").at(-2) ?? "",
-    );
-    if (!findProject(projectId)) {
-      return route.fulfill(notFound("Project not found"));
-    }
-    const projectThreadIds = new Set(
-      threads
-        .filter(
-          (thread) =>
-            thread.metadata?.[THREAD_PROJECT_METADATA_KEY] === projectId,
-        )
-        .map((thread) => thread.thread_id),
-    );
-    const groups = threadFileGroups
-      .filter((group) => projectThreadIds.has(group.thread_id))
-      .map((group) => ({ truncated: false, ...group }));
-    return route.fulfill(
-      json(200, {
-        groups,
-        next_offset: null,
-        truncated: groups.some((group) => group.truncated),
-      }),
-    );
-  });
-
-  void page.route(/\/api\/trash\/documents(?:\?|$)/, (route) => {
-    if (route.request().method() !== "GET") {
-      return route.fallback();
-    }
-    const search = new URL(route.request().url()).searchParams;
-    const limit = Number(search.get("limit") ?? 100);
-    const offset = Number(search.get("offset") ?? 0);
-    const all = trashDocuments.map((document) => ({
-      ...projectDocumentResponse(document),
-      trashed_at: document.trashed_at,
-      trash_origin: document.trash_origin ?? null,
-    }));
-    return route.fulfill(
-      json(200, {
-        documents: all.slice(offset, offset + limit),
-        total: all.length,
-        limit,
-        offset,
-      }),
-    );
-  });
-
-  void page.route(/\/api\/trash\/documents\/([^/]+)\/restore$/, (route) => {
-    if (route.request().method() !== "POST") {
-      return route.fallback();
-    }
-    const documentId = decodeURIComponent(
-      new URL(route.request().url()).pathname.split("/").at(-2) ?? "",
-    );
-    const document = trashDocuments.find(
-      (candidate) => candidate.id === documentId,
-    );
-    if (!document) {
-      return route.fulfill(notFound("Trash document not found"));
-    }
-    let target: string | undefined;
-    try {
-      const body = route.request().postDataJSON() as {
-        project_id?: string | null;
-      };
-      target = body.project_id ?? undefined;
-    } catch {
-      target = undefined;
-    }
-    if (!target) {
-      const originId = document.trash_origin?.project_id;
-      const origin = originId ? findProject(originId) : undefined;
-      if (origin && (origin.status ?? "active") === "active") {
-        target = origin.id;
-      }
-    }
-    const targetProject = target ? findProject(target) : undefined;
-    if (!targetProject || (targetProject.status ?? "active") !== "active") {
-      return route.fulfill(notFound("Trash document not found"));
-    }
-    trashDocuments = trashDocuments.filter(
-      (candidate) => candidate.id !== documentId,
-    );
-    const restored: MockProjectDocument = {
-      ...document,
-      project_id: targetProject.id,
-    };
-    projectDocuments = [...projectDocuments, restored];
-    return route.fulfill(
-      json(200, {
-        outcome: "restored",
-        document: projectDocumentResponse(restored),
-      }),
-    );
-  });
-
-  void page.route(/\/api\/trash\/documents\/([^/]+)\/purge$/, (route) => {
-    if (route.request().method() !== "POST") {
-      return route.fallback();
-    }
-    const documentId = decodeURIComponent(
-      new URL(route.request().url()).pathname.split("/").at(-2) ?? "",
-    );
-    if (!trashDocuments.some((candidate) => candidate.id === documentId)) {
-      return route.fulfill(notFound("Trash document not found"));
-    }
-    trashDocuments = trashDocuments.filter(
-      (candidate) => candidate.id !== documentId,
-    );
-    return route.fulfill({ status: 204 });
-  });
-
-  void page.route(/\/api\/trash\/purge$/, (route) => {
-    if (route.request().method() !== "POST") {
-      return route.fallback();
-    }
-    const purged = trashDocuments.length;
-    trashDocuments = [];
-    return route.fulfill(json(200, { purged }));
-  });
-
-  void page.route(/\/api\/threads\/[^/]+\/move$/, (route) => {
-    if (route.request().method() === "POST") {
-      const threadId = decodeURIComponent(
-        new URL(route.request().url()).pathname.split("/").at(-2) ?? "",
-      );
-      const body = route.request().postDataJSON() as {
-        project_id?: string | null;
-      };
-      const updated = patchThreadMetadata(threadId, {
-        [THREAD_PROJECT_METADATA_KEY]: body.project_id ?? null,
-      });
-      if (!updated) {
-        return route.fulfill({
-          status: 404,
-          contentType: "application/json",
-          body: JSON.stringify({ detail: `Thread ${threadId} not found` }),
-        });
-      }
-      return route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(threadSearchResult(updated)),
       });
     }
     return route.fallback();
@@ -1830,18 +1259,15 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
     return route.fallback();
   });
 
-  // Feature flags — frontend gates UI (e.g. agents/browser) on these. Default to
-  // enabled so existing tests exercise the normal path; tests that need the
-  // disabled state override this route after calling mockLangGraphAPI.
+  // 与当前 Gateway 的 feature 响应字段保持一致。
   void page.route("**/api/features", (route) => {
     if (route.request().method() === "GET") {
       return route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          agents_api: { enabled: featureFlags.agentsApiEnabled },
-          browser_control: { enabled: featureFlags.browserControlEnabled },
           mcp_tasks: { enabled: featureFlags.mcpTasksEnabled },
+          conversation_references: { enabled: false, max_references: 3 },
         }),
       });
     }
@@ -1864,184 +1290,6 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
     return route.fallback();
   });
 
-  void page.route("**/api/integrations/lark/status", (route) => {
-    if (route.request().method() === "GET") {
-      return route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(larkIntegrationStatus),
-      });
-    }
-    return route.fallback();
-  });
-
-  void page.route("**/api/integrations/lark/install", (route) => {
-    if (route.request().method() === "POST") {
-      larkIntegrationStatus = {
-        installed: true,
-        version: "v1.0.65",
-        manifest_version: "v1.0.65",
-        latest_available_version: "v1.0.65",
-        runtime_version_mismatch: false,
-        app_configured: false,
-        app_id: null,
-        app_brand: null,
-        skills_expected: 27,
-        skills_installed: 3,
-        installed_skills: ["lark-doc", "lark-im", "lark-shared"],
-        enabled_skills: ["lark-doc", "lark-im", "lark-shared"],
-        install_path: "/tmp/deer-flow/integrations/skills/lark-cli",
-        cli: {
-          available: true,
-          path: "/usr/bin/lark-cli",
-          version: "lark-cli version v1.0.65",
-          error: null,
-        },
-        auth: {
-          status: "not_configured",
-          message: "lark-cli auth is not configured",
-          user: null,
-          verified: false,
-        },
-        sandbox_runtime_mode: "init-container",
-        sandbox_runtime_ready: true,
-        sandbox_runtime_detail: null,
-      };
-      return route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          success: true,
-          installed_skills: ["lark-doc", "lark-im", "lark-shared"],
-          message: "Installed 3 Lark/Feishu skills.",
-          status: larkIntegrationStatus,
-        }),
-      });
-    }
-    return route.fallback();
-  });
-
-  void page.route("**/api/integrations/lark/config/start", (route) => {
-    if (route.request().method() === "POST") {
-      return route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          verification_url: "https://open.feishu.cn/page/cli?user_code=config",
-          device_code: "mock-config-device-code",
-          generation: "config-generation",
-          expires_in: 600,
-          interval: 5,
-          user_code: "config",
-          brand: "feishu",
-        }),
-      });
-    }
-    return route.fallback();
-  });
-
-  void page.route("**/api/integrations/lark/config/complete", (route) => {
-    if (route.request().method() === "POST") {
-      larkIntegrationStatus = {
-        ...larkIntegrationStatus,
-        app_configured: true,
-        app_id: "cli_mock",
-        app_brand: "feishu",
-        auth: {
-          status: "not_authorized",
-          message: "Lark user authorization is not configured",
-          user: null,
-          verified: false,
-        },
-      };
-      return route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          success: true,
-          message: "Lark/Feishu connection setup completed.",
-          generation: "config-generation",
-          status: larkIntegrationStatus,
-        }),
-      });
-    }
-    return route.fallback();
-  });
-
-  void page.route("**/api/integrations/lark/config/credentials", (route) => {
-    if (route.request().method() === "POST") {
-      larkIntegrationStatus = {
-        ...larkIntegrationStatus,
-        app_configured: true,
-        app_id: "cli_switched_mock",
-        app_brand: "feishu",
-        auth: {
-          status: "not_authorized",
-          message: "Lark user authorization is not configured",
-          user: null,
-          verified: false,
-        },
-      };
-      return route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          success: true,
-          message:
-            "Lark/Feishu app switched. Reconnect to authorize the new app.",
-          generation: "switch-generation",
-          status: larkIntegrationStatus,
-        }),
-      });
-    }
-    return route.fallback();
-  });
-
-  void page.route("**/api/integrations/lark/auth/start", (route) => {
-    if (route.request().method() === "POST") {
-      const request = route.request().postDataJSON() as {
-        generation?: string;
-      };
-      return route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          verification_url: "https://open.feishu.cn/auth/mock-device",
-          device_code: "mock-device-code",
-          generation: request.generation ?? "auth-generation",
-          expires_in: 600,
-          user_code: null,
-          hint: null,
-        }),
-      });
-    }
-    return route.fallback();
-  });
-
-  void page.route("**/api/integrations/lark/auth/complete", (route) => {
-    if (route.request().method() === "POST") {
-      larkIntegrationStatus = {
-        ...larkIntegrationStatus,
-        auth: {
-          status: "authenticated",
-          message: "Lark/Feishu authorization is live-verified.",
-          user: "Alice",
-          verified: true,
-        },
-      };
-      return route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          success: true,
-          message: "Lark/Feishu authorization completed.",
-          status: larkIntegrationStatus,
-        }),
-      });
-    }
-    return route.fallback();
-  });
-
   // Follow-up suggestions — input box auto-suggest after AI response
   void page.route("**/api/threads/*/suggestions", (route) => {
     if (route.request().method() === "POST") {
@@ -2054,37 +1302,6 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
     return route.fallback();
   });
 
-  // Agents list — sidebar & gallery page
-  void page.route("**/api/agents", (route) => {
-    if (route.request().method() === "GET") {
-      return route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ agents }),
-      });
-    }
-    return route.fallback();
-  });
-
-  // Individual agent — agent chat page
-  void page.route("**/api/agents/*", (route) => {
-    if (route.request().method() === "GET") {
-      const url = route.request().url();
-      const agent = agents.find((a) => url.endsWith(`/api/agents/${a.name}`));
-      if (agent) {
-        return route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          body: JSON.stringify(agent),
-        });
-      }
-    }
-    return route.fulfill({
-      status: 404,
-      contentType: "application/json",
-      body: JSON.stringify({ detail: "Agent not found" }),
-    });
-  });
 }
 
 // ---------------------------------------------------------------------------

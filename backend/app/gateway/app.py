@@ -338,9 +338,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 if startup_config.scheduler.enabled:
                     raise
 
-            # Start IM channel service only after scheduler recovery succeeds, so a
-            # fail-closed scheduler startup cannot strand channel-owned tasks before
-            # the lifespan reaches its normal shutdown boundary.
+            # Start task notification services only after scheduler recovery
+            # succeeds, so a fail-closed scheduler startup cannot strand pending
+            # notifications before the lifespan reaches its normal shutdown boundary.
             from app.gateway.services import launch_mcp_task_notification_run
             from app.mcp_tasks import McpTaskService
             from deerflow.config.extensions_config import ExtensionsConfig

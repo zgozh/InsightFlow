@@ -1836,10 +1836,8 @@ def test_merge_run_context_overrides_forwards_context_only_keys():
     can read them. They must NOT be written to ``config['configurable']`` — that dict is
     persisted in checkpoints, and ``github_token`` is a (short-lived) secret.
 
-    Regression for the GitHub channel: without this, the installation token minted by
-    ``ChannelManager._apply_channel_policy`` was silently dropped here, so ``gh``
-    fell back to the host's stored keyring creds and authored issues/PRs as the host
-    user instead of the App bot.
+    Internal-only credentials such as ``github_token`` must stay in runtime
+    context and never be copied into persisted configurable state.
     """
     from app.gateway.services import build_run_config, merge_run_context_overrides
 

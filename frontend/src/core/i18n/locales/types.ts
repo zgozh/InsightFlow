@@ -12,45 +12,6 @@ export interface Translations {
     localName: string;
   };
 
-  capabilities: {
-    integrationSkills: string;
-    sharedSkills: string;
-    title: string;
-    description: string;
-    plugins: string;
-    skills: string;
-    searchPlugins: string;
-    searchSkills: string;
-    allPlugins: string;
-    installed: string;
-    enabled: string;
-    disabled: string;
-    configure: string;
-    details: string;
-    addPlugin: string;
-    builtin: string;
-    community: string;
-    custom: string;
-    allSkills: string;
-    availablePlugins: string;
-    availableSkills: string;
-    pluginHint: string;
-    skillHint: string;
-    noResults: string;
-    larkName: string;
-    larkDescription: string;
-    larkTag: string;
-    connect: string;
-    notInstalled: string;
-    mcpDescription: string;
-    mcpLabel: string;
-    pluginSettings: string;
-    communityTitle: string;
-    communityDescription: string;
-    skillEnabled: string;
-    manage: string;
-  };
-
   // Common
   common: {
     home: string;
@@ -314,112 +275,7 @@ export interface Translations {
     newChat: string;
     chats: string;
     demoChats: string;
-    agents: string;
     scheduledTasks: string;
-    agentsDisabledTooltip: string;
-    channels: string;
-  };
-  // Sidebar projects section
-  projects: {
-    title: string;
-    newProject: string;
-    namePlaceholder: string;
-    moveToProject: string;
-    moveToProjectHint: string;
-    removeFromProject: string;
-    archive: string;
-    restore: string;
-    deleteProject: string;
-    deleteProjectConfirm: string;
-    archived: string;
-    empty: string;
-    newChat: string;
-    // Runtime states and actions
-    create: string;
-    createFailed: string;
-    moveFailed: string;
-    archiveFailed: string;
-    restoreFailed: string;
-    deleteFailed: string;
-    switchToGrouped: string;
-    switchToFlat: string;
-    // Project page
-    threads: string;
-    threadsLoadFailed: string;
-    untitled: string;
-    settings: string;
-    notFound: string;
-    projectUnavailable: string;
-    // Project page — Documents / Instructions tabs (Phase 2)
-    documents: string;
-    documentsEmptyTitle: string;
-    documentsEmptyHint: string;
-    instructions: string;
-    instructionsPlaceholder: string;
-    instructionsByteCount: (used: number, max: number) => string;
-    instructionsTooLong: (max: number) => string;
-    instructionsSaved: string;
-    instructionsSaveFailed: string;
-    // Project page — Documents tab shelf (Phase 2 Slice E)
-    documentsShelf: string;
-    documentsShelfHint: string;
-    uploadDocuments: string;
-    uploadingDocuments: string;
-    uploadDocumentFailed: string;
-    documentFromThread: (threadName: string, kind: string) => string;
-    documentKindUpload: string;
-    documentKindOutput: string;
-    attachToThread: string;
-    attachDialogTitle: string;
-    attachDialogHint: string;
-    attachNoThreads: string;
-    attachFailed: string;
-    attachedToThread: (name: string) => string;
-    moveDocumentToTrash: string;
-    moveDocumentToTrashTitle: string;
-    moveDocumentToTrashConfirm: (name: string, days: number) => string;
-    deleteDocumentFailed: string;
-    contentMissing: string;
-    previewUnsupported: string;
-    archivedDocumentsBanner: string;
-    conversationFiles: string;
-    conversationFilesEmpty: string;
-    threadFilesTruncated: (count: number) => string;
-    threadFilesBrowseInThread: string;
-    saveToProject: string;
-    saveToProjectFailed: string;
-    savedToProject: (name: string) => string;
-    shelfNameLabel: string;
-    viewTrash: string;
-    documentsLoadFailed: string;
-    threadFilesLoadFailed: string;
-    interimMemoryNotice: string;
-  };
-
-  // Trash view (Projects Phase 2)
-  trash: {
-    title: string;
-    empty: string;
-    loadFailed: string;
-    retry: string;
-    originProject: (projectName: string) => string;
-    unknownProject: string;
-    retentionLeft: (days: number) => string;
-    restore: string;
-    restoreFailed: string;
-    restoredToast: (name: string) => string;
-    restoreMergedToast: (name: string) => string;
-    restoreConflict: string;
-    restorePickProjectTitle: string;
-    restorePickProjectHint: string;
-    deletePermanently: string;
-    deletePermanentlyTitle: string;
-    deletePermanentlyConfirm: (name: string) => string;
-    purgeFailed: string;
-    emptyTrash: string;
-    emptyTrashTitle: string;
-    emptyTrashConfirm: (count: number) => string;
-    emptyTrashFailed: string;
   };
 
   // Thread-scoped MCP background tasks
@@ -454,36 +310,6 @@ export interface Translations {
       submitted: string;
       working: string;
       inputRequired: string;
-      completed: string;
-      failed: string;
-      cancelled: string;
-    };
-  };
-
-  subagentBatches: {
-    label: string;
-    title: string;
-    description: string;
-    workerUnavailable: string;
-    empty: string;
-    emptyHint: string;
-    loadFailed: string;
-    active: string;
-    recent: string;
-    pause: string;
-    resume: string;
-    cancel: string;
-    retryItem: string;
-    exportResults: string;
-    viewItems: string;
-    hideItems: string;
-    itemsFailed: string;
-    progress: (completed: number, total: number) => string;
-    limits: (live: number, running: number) => string;
-    status: {
-      queued: string;
-      running: string;
-      paused: string;
       completed: string;
       failed: string;
       cancelled: string;
@@ -531,7 +357,6 @@ export interface Translations {
       title: string;
       taskTitle: string;
       prompt: string;
-      agent: string;
       leadAgent: string;
       submit: string;
       fillRequired: string;
@@ -633,65 +458,6 @@ export interface Translations {
     };
   };
 
-  // Agents
-  agents: {
-    title: string;
-    description: string;
-    newAgent: string;
-    emptyTitle: string;
-    emptyDescription: string;
-    featureDisabledTitle: string;
-    featureDisabledDescription: string;
-    chat: string;
-    delete: string;
-    deleteConfirm: string;
-    deleteSuccess: string;
-    newChat: string;
-    createPageTitle: string;
-    createPageSubtitle: string;
-    nameStepTitle: string;
-    nameStepHint: string;
-    nameStepPlaceholder: string;
-    nameStepContinue: string;
-    nameStepInvalidError: string;
-    nameStepAlreadyExistsError: string;
-    nameStepNetworkError: string;
-    nameStepCheckError: string;
-    nameStepCheckErrorWithDetail: string;
-    nameStepApiDisabledError: string;
-    nameStepBootstrapMessage: string;
-    save: string;
-    saving: string;
-    saveRequested: string;
-    saveHint: string;
-    saveCommandMessage: string;
-    agentCreatedPendingRefresh: string;
-    more: string;
-    agentCreated: string;
-    startChatting: string;
-    backToGallery: string;
-    settings: string;
-    settingsTitle: string;
-    settingsDisplayName: string;
-    settingsDisplayNameTooLong: string;
-    settingsDisplayNameHint: string;
-    settingsDescription: string;
-    settingsModel: string;
-    settingsModelDefault: string;
-    settingsTemperature: string;
-    settingsTemperatureHint: string;
-    settingsMaxTokens: string;
-    settingsMaxTokensPlaceholder: string;
-    settingsThinking: string;
-    settingsThinkingOn: string;
-    settingsThinkingOff: string;
-    settingsReasoningEffort: string;
-    settingsInherit: string;
-    settingsSaved: string;
-    settingsInvalidTemperature: string;
-    settingsInvalidMaxTokens: string;
-  };
-
   // Breadcrumb
   breadcrumb: {
     workspace: string;
@@ -778,30 +544,6 @@ export interface Translations {
     noContext: string;
     continuing: string;
     selectionCrossesMessages: string;
-  };
-
-  // Channels
-  channels: {
-    title: string;
-    connect: string;
-    modify: string;
-    reconnect: string;
-    disconnect: string;
-    connected: string;
-    notConnected: string;
-    pending: string;
-    revoked: string;
-    disabled: string;
-    unconfigured: string;
-    unavailable: string;
-    unavailableShort: string;
-    setupTitle: (name: string) => string;
-    setupEditTitle: (name: string) => string;
-    setupDescription: string;
-    saveAndConnect: string;
-    saveChanges: string;
-    descriptions: Record<string, string>;
-    connectedAs: (name: string) => string;
   };
 
   // Page titles (document title)
@@ -947,9 +689,7 @@ export interface Translations {
     sections: {
       account: string;
       appearance: string;
-      channels: string;
       memory: string;
-      subagents: string;
       notification: string;
       about: string;
     };
@@ -1037,183 +777,6 @@ export interface Translations {
       darkDescription: string;
       languageTitle: string;
       languageDescription: string;
-    };
-    tools: {
-      adminRequired: string;
-      empty: string;
-      addServer: string;
-      addServerDescription: string;
-      addServerPlaceholder: string;
-      serverDefinitionLabel: string;
-      definitionEmpty: string;
-      definitionInvalidJson: string;
-      definitionRootNotObject: string;
-      definitionNoServers: string;
-      definitionServerNotObject: string;
-      editServer: string;
-      editServerDescription: string;
-      editSingleServer: string;
-      editServerNameMismatch: string;
-      serverAlreadyExists: string;
-      removeServer: string;
-      removeServerDescription: string;
-      unnamedServer: string;
-    };
-    subagents: {
-      title: string;
-      description: string;
-      executionNote: string;
-      adminNote: string;
-      create: string;
-      empty: string;
-      sourceBuiltin: string;
-      sourceConfig: string;
-      sourceManaged: string;
-      conflict: string;
-      overridden: string;
-      createTitle: string;
-      editTitle: string;
-      name: string;
-      nameHint: string;
-      displayName: string;
-      descriptionLabel: string;
-      systemPrompt: string;
-      model: string;
-      inheritModel: string;
-      tools: string;
-      skills: string;
-      listModeAll: string;
-      listModeNone: string;
-      listModeSelected: string;
-      listNamesPlaceholder: string;
-      maxTurns: string;
-      timeout: string;
-      created: string;
-      saved: string;
-      deleted: string;
-      deleteConfirm: string;
-      bindingTitle: string;
-      bindingDescription: string;
-      allAllowed: string;
-      noneAllowed: string;
-      selectedAllowed: string;
-      missing: string;
-    };
-    channels: {
-      title: string;
-      description: string;
-      disabled: string;
-    };
-    integrations: {
-      title: string;
-      description: string;
-      refresh: string;
-      install: string;
-      reinstall: string;
-      installing: string;
-      ready: string;
-      pending: string;
-      available: string;
-      unavailable: string;
-      connected: string;
-      loadFailed: string;
-      adminRequired: string;
-      lark: {
-        title: string;
-        description: string;
-        skillPack: string;
-        gatewayCli: string;
-        auth: string;
-        sandboxRuntime: string;
-        sandboxRuntimeInitContainer: string;
-        sandboxRuntimeBroker: string;
-        sandboxRuntimeGatewayDownload: string;
-        sandboxRuntimeNotReady: string;
-        notInstalled: string;
-        skillsInstalled: (installed: number, expected: number) => string;
-        installedVersion: (version: string) => string;
-        updateAvailable: (version: string) => string;
-        runtimeVersionMismatch: string;
-        authNotConfigured: string;
-        authConfigured: string;
-        authConfiguredFor: (user: string) => string;
-        connect: string;
-        authStarting: string;
-        checkingConnection: string;
-        connectedAction: string;
-        requestPermissions: string;
-        alreadyConnected: string;
-        changeAppButton: string;
-        changeAppTitle: string;
-        changeAppDescription: string;
-        changeAppIdLabel: string;
-        changeAppSecretLabel: string;
-        changeAppAuthResetNote: string;
-        changeAppSubmit: string;
-        changeAppReRegister: string;
-        changeAppSwitched: string;
-        brandFeishu: string;
-        brandLark: string;
-        connectionStarted: string;
-        connectionReady: string;
-        authStarted: string;
-        authorizationStillPending: string;
-        permissionTitle: string;
-        permissionDescription: string;
-        authDomains: Record<
-          | "approval"
-          | "apps"
-          | "attendance"
-          | "base"
-          | "calendar"
-          | "contact"
-          | "docs"
-          | "drive"
-          | "event"
-          | "im"
-          | "mail"
-          | "markdown"
-          | "mindnotes"
-          | "minutes"
-          | "note"
-          | "okr"
-          | "sheets"
-          | "slides"
-          | "task"
-          | "vc"
-          | "wiki"
-          | "all",
-          { label: string; description: string }
-        >;
-        customScopeLabel: string;
-        customScopePlaceholder: string;
-        customScopeDescription: string;
-        openConnectionLinkTitle: string;
-        openConnectionLinkDescription: string;
-        openAuthLinkTitle: string;
-        openAuthLinkDescription: string;
-        waitingAuthTitle: string;
-        waitingAuthDescription: string;
-        openAuthLink: string;
-        copyAuthLink: string;
-        completeAuth: string;
-        continueAuth: string;
-        preparingAuthorization: string;
-        completingAuth: string;
-        authExpiresIn: (seconds: number) => string;
-        installingTitle: string;
-        installingDescription: string;
-        installNextTitle: string;
-        installNextDescription: string;
-        cliNextTitle: string;
-        cliNextDescription: string;
-        configuredTitle: string;
-        configuredDescription: string;
-        connectedTitle: string;
-        connectedDescription: string;
-        authNextTitle: string;
-        authNextDescription: string;
-      };
     };
     skills: {
       exportPrevious: string;

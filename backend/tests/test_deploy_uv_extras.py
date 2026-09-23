@@ -46,7 +46,7 @@ def test_backend_dockerfile_expands_multiple_uv_extras(tmp_path):
     env = os.environ.copy()
     env["CAPTURE_UV_ARGS"] = str(capture)
     env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
-    env["UV_EXTRAS"] = "discord,postgres"
+    env["UV_EXTRAS"] = "postgres,ollama"
 
     subprocess.run(
         [BASH, "-c", _backend_dockerfile_uv_sync_script()],
@@ -61,9 +61,9 @@ def test_backend_dockerfile_expands_multiple_uv_extras(tmp_path):
         "--extra",
         "redis",
         "--extra",
-        "discord",
-        "--extra",
         "postgres",
+        "--extra",
+        "ollama",
     ]
 
 
@@ -101,8 +101,8 @@ def test_backend_dockerfile_rejects_glob_uv_extra(tmp_path):
     assert not capture.exists()
 
 
-def test_deploy_build_auto_detects_postgres_extra_when_other_extras_are_enabled(tmp_path):
-    """Production image builds preserve every detected extra as Docker build tokens."""
+def test_deploy_build_ignores_removed_channel_extra_when_detecting_postgres(tmp_path):
+    """A stale channel setting cannot restore its removed extra in image builds."""
     worktree = tmp_path / "repo"
     shutil.copytree(REPO_ROOT / "scripts", worktree / "scripts")
     shutil.copytree(REPO_ROOT / "docker", worktree / "docker")
@@ -137,7 +137,7 @@ def test_deploy_build_auto_detects_postgres_extra_when_other_extras_are_enabled(
         capture_output=True,
     )
 
-    assert capture.read_text(encoding="utf-8") == "discord,postgres"
+    assert capture.read_text(encoding="utf-8") == "postgres"
 
 
 def test_deploy_uses_dotenv_without_sourcing_shell_syntax(tmp_path):
@@ -153,7 +153,7 @@ def test_deploy_uses_dotenv_without_sourcing_shell_syntax(tmp_path):
     (worktree / "extensions_config.json").write_text('{"mcpServers":{},"skills":{}}\n', encoding="utf-8")
     marker = tmp_path / "sourced-marker"
     (worktree / ".env").write_text(
-        f"DATABASE_URL=postgresql://user:pass@localhost/db?sslmode=require&application_name=deer\nUNSAFE=$(touch {shlex.quote(str(marker))})\nUV_EXTRAS=discord\n",
+        f"DATABASE_URL=postgresql://user:pass@localhost/db?sslmode=require&application_name=deer\nUNSAFE=$(touch {shlex.quote(str(marker))})\nUV_EXTRAS=redis\n",
         encoding="utf-8",
     )
 
@@ -184,7 +184,7 @@ def test_deploy_uses_dotenv_without_sourcing_shell_syntax(tmp_path):
     )
 
     assert not marker.exists()
-    assert capture_extras.read_text(encoding="utf-8") == "discord"
+    assert capture_extras.read_text(encoding="utf-8") == "redis"
     args = capture_args.read_text(encoding="utf-8").splitlines()
     assert "--env-file" in args
     env_file_arg = args[args.index("--env-file") + 1]

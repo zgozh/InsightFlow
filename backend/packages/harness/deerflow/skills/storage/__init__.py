@@ -109,7 +109,7 @@ def get_or_new_user_skill_storage(user_id: str, **kwargs) -> SkillStorage:
     skill reads from the global root.
 
     ``user_id`` is normalised via :func:`make_safe_user_id` so that external
-    identities (e.g. IM channel ids containing non-``[A-Za-z0-9_-]`` chars)
+    identities containing non-``[A-Za-z0-9_-]`` chars
     are safely bucketed before reaching :class:`UserScopedSkillStorage`, which
     calls :func:`_validate_user_id` internally.
 

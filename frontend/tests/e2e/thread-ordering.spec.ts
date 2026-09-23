@@ -393,30 +393,37 @@ test.describe("Thread message ordering", () => {
     await expect(page.getByText("final-turn answer")).toBeVisible({
       timeout: 15_000,
     });
-    // DOM relative order, not viewport coordinates: stick-to-bottom smooth
-    // scrolling makes two separate boundingBox reads race each other.
-    const questionBeforeAnswer = await page.evaluate(() => {
-      const list = document.querySelector('[data-testid="main-message-list"]');
-      if (!list) {
-        return null;
-      }
-      const leaf = (text: string) =>
-        [...list.querySelectorAll("div, p")].find(
-          (element) =>
-            element.children.length === 0 && element.textContent === text,
-        );
-      const question = leaf("final-turn question");
-      const answer = leaf("final-turn answer");
-      if (!question || !answer) {
-        return null;
-      }
-      return (
-        (question.compareDocumentPosition(answer) &
-          Node.DOCUMENT_POSITION_FOLLOWING) !==
-        0
-      );
-    });
-    expect(questionBeforeAnswer).toBe(true);
+    // 流结束时界面会从 values 快照切换到历史页；重复读取主消息列表，避免只采到切换帧。
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() => {
+            const list = document.querySelector(
+              '[data-testid="main-message-list"]',
+            );
+            if (!list) {
+              return null;
+            }
+            const leaf = (text: string) =>
+              [...list.querySelectorAll("div, p")].find(
+                (element) =>
+                  element.children.length === 0 &&
+                  element.textContent === text,
+              );
+            const question = leaf("final-turn question");
+            const answer = leaf("final-turn answer");
+            if (!question || !answer) {
+              return null;
+            }
+            return (
+              (question.compareDocumentPosition(answer) &
+                Node.DOCUMENT_POSITION_FOLLOWING) !==
+              0
+            );
+          }),
+        { timeout: 15_000 },
+      )
+      .toBe(true);
 
     // The finishing refetch observed the extended feed; the established
     // order — including the compacted head — is unchanged.
@@ -437,47 +444,4 @@ test.describe("Thread message ordering", () => {
     await expectGroupIndicesAscending(page);
   });
 
-  test("custom agent chat shares the same ordering across pagination and refresh", async ({
-    page,
-  }) => {
-    // The Custom Agent route renders the same ChatPage/message pipeline; this
-    // pins the shared link so the ordering contract cannot regress on one
-    // path only.
-    const rows = toFeedRows(buildFixtureMessages());
-    mockLangGraphAPI(page, {
-      agents: [
-        {
-          name: "ordering-agent",
-          description: "Agent for the ordering regression",
-        },
-      ],
-      threads: [
-        {
-          ...THREAD,
-          agent_name: "ordering-agent",
-          messages: rows.map((row) => row.content),
-        },
-      ],
-    });
-    await mockPaginatedFeed(page, rows);
-
-    await page.goto(`/workspace/agents/ordering-agent/chats/${MOCK_THREAD_ID}`);
-
-    await expect(page.getByText("turn-31 answer")).toBeVisible({
-      timeout: 15_000,
-    });
-    await expectGroupIndicesAscending(page);
-
-    await loadAllHistoryPages(page);
-    await expect(
-      page.getByTestId("main-message-list").getByText("turn-0 question"),
-    ).toBeVisible();
-    await expectGroupIndicesAscending(page);
-
-    await page.reload();
-    await expect(page.getByText("turn-31 answer")).toBeVisible({
-      timeout: 15_000,
-    });
-    await expectGroupIndicesAscending(page);
-  });
 });

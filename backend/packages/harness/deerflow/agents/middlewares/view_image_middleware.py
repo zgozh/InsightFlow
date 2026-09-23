@@ -392,9 +392,8 @@ class ViewImageMiddleware(AgentMiddleware[ViewImageMiddlewareState]):
         if not self._should_inject_image_message(messages):
             return request.override(messages=messages) if dropped_stranded else request
 
-        # Mixed content (text + images) for the model only, so hide it from the
-        # chat UI and IM channels (matches the other middleware-injected context
-        # messages) even though it never leaves this request.
+        # Mixed content (text + images) is only for the model; it must not be
+        # rendered as a user-visible message, like other middleware context.
         image_content = self._create_image_details_message(request.state or {})
         logger.debug("Injecting image details message with images into the model request")
 

@@ -1,22 +1,9 @@
 ### Configuration System
 
-Custom Agent `AgentConfig.display_name` is an optional, whitespace-trimmed Unicode
-label of at most 100 Unicode code points. C0/C1 controls and bidirectional
-formatting controls (U+202A–U+202E, U+2066–U+2069) are rejected before trimming.
-Also reject soft hyphen, Arabic letter mark, U+200B, U+200E–U+200F,
-U+2028–U+2029, U+2060–U+2065 and U+FEFF. Labels consisting only of
-marks, separators or other invisible characters are invalid; ZWNJ/ZWJ remain
-supported inside ordinary text and emoji.
-It is stored in the existing config document by
-both agent stores; it never participates in paths, routing, or authorization.
-Gateway create/update/response models share its validation. It remains outside
-`MANAGED_AGENT_CONFIG_FIELDS` so `update_agent` preserves it. `setup_agent`
-explicitly carries forward the existing owner's display name when re-bootstrapping;
-the Gateway explicitly overrides it when supplied, including null to clear.
-Both stores use `parse_agent_config` to ignore only an invalid stored
-`display_name` on read, logging the agent identifier without the invalid value
-and without rewriting storage. Other config errors still
-raise, and API create/update validation remains strict.
+The root `config.yaml` configures the Gateway and Lead Agent. The separate
+`extensions_config.json` stores MCP server settings and skill enabled states.
+There is no independent Custom/Managed Agent definition store or management API.
+The Harness `task` tool may still use configured ordinary subagent types.
 
 **Main Configuration** (`config.yaml`):
 
@@ -30,7 +17,7 @@ Top-level `recursion_limit` and `max_recursion_limit` are hot-reloaded per Gatew
 
 **Config Hot-Reload Boundary**: Gateway dependencies route through `get_app_config()` on every request, so per-run fields like `models[*].max_tokens`, `summarization.*`, `title.*`, `memory.*`, `subagents.*`, `verification.*`, `tools[*]`, and the agent system prompt pick up `config.yaml` edits on the next message. `AppConfig` is intentionally **not** cached on `app.state` — `lifespan()` keeps a local `startup_config` variable for one-shot bootstrap work and passes it to `langgraph_runtime(app, startup_config)`.
 
-Infrastructure fields are **restart-required**. The authoritative list lives in `packages/harness/deerflow/config/reload_boundary.py::STARTUP_ONLY_FIELDS` and is mirrored by the standardised `"startup-only:"` prefix on the corresponding `Field(description=...)` in `AppConfig` or an explicitly registered nested config model, so IDE hover on those fields surfaces the reason inline (no need to context-switch into this table). Currently registered: `plugins`, `database`, `checkpointer`, `run_events`, `agent_storage`, `stream_bridge`, `sandbox`, `skills.container_path`, `log_level`, `logging`, `channels`, `channel_connections`, `scheduler`, `mcp_tasks`, `subagent_runtime`, `subagent_batches`, `run_ownership`, `dedupe_storage`. Adding a new restart-required field requires updating the registry; drift is pinned by `tests/test_reload_boundary.py`. `scheduler.recursion_limit` is the exception inside that section: it is read from `get_app_config()` at each scheduled dispatch, so a YAML edit applies to the next run without restarting the poller.
+Infrastructure fields require a Gateway restart. The authoritative paths come from `reload_boundary.py::STARTUP_ONLY_FIELDS`, which is pinned in `tests/test_reload_boundary.py`. The current set is `plugins`, `database`, `checkpointer`, `run_events`, `stream_bridge`, `sandbox`, `skills.container_path`, `log_level`, `logging`, `scheduler`, `mcp_tasks`, `subagent_runtime`, and `run_ownership`. `scheduler.recursion_limit` remains per-dispatch and does not require a restart.
 
 **Persistence backend resolution**: the unified `database` section selects the
 Gateway's LangGraph checkpointer, LangGraph Store, and DeerFlow SQL repositories.
@@ -77,17 +64,15 @@ Extensions are optional only in the fallback *search* mode (priority 3-4 above):
 **`config.yaml`** key sections:
 - `models[]` - LLM configs with `use` class path, `supports_thinking`, `supports_vision`, provider-specific fields
 - `logging.enhance` - Log output only (`enabled`, `format`): whether log records carry a `trace_id` field, and in which format. Trace ids are issued unconditionally — the Gateway `X-Trace-Id` header and Langfuse `deerflow_trace_id` metadata are always present whatever this says (see the Request Trace Context section in `packages/harness/deerflow/AGENTS.md`); restart-required
-- vLLM reasoning models should use `deerflow.models.vllm_provider:VllmChatModel`; for Qwen-style parsers prefer `when_thinking_enabled.extra_body.chat_template_kwargs.enable_thinking`, and DeerFlow will also normalize the older `thinking` alias
 - `tools[]` - Tool configs with `use` variable path and `group`
 - `tool_groups[]` - Logical groupings for tools
 - `sandbox.use` - Sandbox provider class path
-- `skills.path` / `skills.container_path` - Host and container paths to skills directory. AIO and E2B snapshot the container path at provider startup. Their local/remote backends and the Kubernetes provisioner require one canonical absolute non-root path outside reserved platform mounts; custom roots participate in deterministic sandbox identity, and E2B records the root in remote metadata.
+- `skills.path` / `skills.container_path` ??????????????????????????????????????? AIO ??????????????????????????? container path?????????????????????????????????????????????
 - `skills.deferred_discovery` - When `true`, replaces the full-metadata `<available_skills>` prompt block with a compact `<skill_index>` (names only) and registers the `describe_skill` tool so the agent fetches metadata on demand. Defaults to `false` (legacy full-metadata injection)
 - `title` - Auto-title generation (enabled, max_words, max_chars, model_name; null model_name uses fast local fallback, explicit model_name uses the prompt_template LLM path)
 - `summarization` - Context summarization (enabled, trigger conditions, keep policy)
 - `subagents.enabled` - Master switch for subagent delegation
-- `subagent_runtime` - Startup-only shared process admission (`max_running`, bounded async wait queue, queue/reject policy, and queue timeout) for ordinary and durable-batch native subagents
-- `subagent_batches` - Startup-only explicit durable batch scheduler limits (disabled by default), including separate total, live, and running dimensions plus leases/retries/result bounds
+- `subagent_runtime` ???????????? `task` ????????????????????????????????????????????????????????????
 - `memory` - Memory system (enabled, storage_path, debounce_seconds, shutdown_flush_timeout_seconds, model_name, max_facts, fact_confidence_threshold, injection_enabled, max_injection_tokens, staleness_review_enabled, staleness_age_days, staleness_min_candidates, staleness_max_removals_per_cycle, staleness_protected_categories, staleness_max_lifetime_multiplier, staleness_max_extension_days)
 
 **`extensions_config.json`**:

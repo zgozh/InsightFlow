@@ -90,11 +90,10 @@ backend/
 │   ├── community/              # Community tools (tavily/, jina_ai/, firecrawl/, …)
 │   ├── reflection/             # Dynamic module loading
 │   └── utils/                  # Utilities
-└── app/                        # FastAPI Gateway + IM channels (import: app.*)
+└── app/                        # FastAPI Gateway + Analytics API (import: app.*)
     ├── gateway/                # Gateway API
     │   ├── app.py              # FastAPI application
     │   └── routers/            # Route handlers (threads, models, mcp, skills, uploads, …)
-    └── channels/               # IM channel integrations (Feishu, Slack, Telegram, …)
 ```
 
 See [AGENTS.md](AGENTS.md) for the full module-by-module breakdown.

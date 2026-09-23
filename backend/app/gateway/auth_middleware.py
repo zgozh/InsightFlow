@@ -38,8 +38,8 @@ _PUBLIC_PATH_PREFIXES: tuple[str, ...] = (
     "/openapi.json",
     "/api/v1/auth/oauth/",
     "/api/v1/auth/callback/",
-    # Inbound webhooks authenticate themselves via provider-specific signatures
-    # (e.g. GitHub's X-Hub-Signature-256), not session cookies.
+    # Inbound webhooks authenticate themselves via provider-specific signatures,
+    # not session cookies.
     "/api/webhooks/",
 )
 
@@ -93,11 +93,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         internal_user = None
         if is_valid_internal_auth_token(request.headers.get(INTERNAL_AUTH_HEADER_NAME)):
-            # Extract the channel owner user ID from the trusted header.
+            # Extract the owner user ID from the trusted internal header.
             # When present, the synthetic internal user carries the actual
             # owner identity so that get_effective_user_id() and per-user
             # filesystem paths (custom skills, memory, thread data) resolve
-            # to the IM channel user instead of falling back to "default".
+            # caller instead of falling back to "default".
             from app.gateway.internal_auth import INTERNAL_OWNER_USER_ID_HEADER_NAME
 
             owner_user_id = request.headers.get(INTERNAL_OWNER_USER_ID_HEADER_NAME)

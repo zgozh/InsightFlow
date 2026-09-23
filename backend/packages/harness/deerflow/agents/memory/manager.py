@@ -401,8 +401,8 @@ class MemoryManager(BaseModel):
     def shutdown_flush(self, timeout: float) -> bool:
         """Best-effort bounded drain of pending updates on graceful shutdown.
 
-        Runs on the Gateway shutdown path (after IM channels and the scheduler
-        stop, so no new IM/scheduler updates arrive during the drain) to flush
+        Runs on the Gateway shutdown path after the scheduler stops, so no new
+        scheduled updates arrive during the drain, to flush
         updates still sitting in the backend's debounce buffer. Without it, any
         update enqueued since the last timer fire is lost on restart / rolling
         deploy / SIGTERM, because the buffer is pure in-memory and the debounce

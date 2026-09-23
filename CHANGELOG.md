@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### InsightFlow Phase 5B
+
+- Removed the retired IM integration packages and extras, setup-wizard channel configuration, and their stale dependency detection.
+- Removed orphaned workspace Agent and durable batch clients, settings UI, static fallback entries, and dead locale dictionaries. Scheduled tasks now use the Lead Agent; the ordinary Harness `task` runtime remains.
+- Rewrote the root README and current configuration and architecture guides for InsightFlow's retained workbench and the external AIO provisioner boundary.
+
 This section accumulates work toward the **2.1.0** milestone
 ([milestone 2](https://github.com/bytedance/deer-flow/milestone/2)).
 This release closes that milestone with **765 merged pull requests**.

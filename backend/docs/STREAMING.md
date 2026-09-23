@@ -1,12 +1,12 @@
-# DeerFlow 流式输出设计
+# InsightFlow 流式输出设计
 
-本文档解释 DeerFlow 是如何把 LangGraph agent 的事件流端到端送到两类消费者（HTTP 客户端、嵌入式 Python 调用方）的：两条路径为什么**必须**并存、它们各自的契约是什么、以及设计里那些 non-obvious 的不变式。
+本文档解释 InsightFlow 如何把 LangGraph Agent 事件流送到 HTTP 客户端和嵌入式 Python 调用方：两条路径为什么并存、各自的契约是什么，以及需要保持的关键不变式。
 
 ---
 
 ## TL;DR
 
-- DeerFlow 有**两条并行**的流式路径：**Gateway 路径**（async / HTTP SSE / JSON 序列化）服务浏览器和 IM 渠道；**DeerFlowClient 路径**（sync / in-process / 原生 LangChain 对象）服务 Jupyter、脚本、测试。它们**无法合并**——消费者模型不同。
+- InsightFlow 有**两条并行**的流式路径：**Gateway 路径**（async / HTTP SSE / JSON 序列化）服务浏览器和 LangGraph SDK 客户端；**DeerFlowClient 路径**（sync / in-process / 原生 LangChain 对象）服务 Jupyter、脚本和测试。它们不能合并，消费者模型不同。
 - 两条路径都从 `create_agent()` 工厂出发，核心都是订阅 LangGraph 的 `stream_mode=["values", "messages", "custom"]`。`values` 是节点级 state 快照，`messages` 是 LLM token 级 delta，`custom` 是显式 `StreamWriter` 事件。DeerFlow 内置 custom 事件同时通过 callback dispatch 暴露为 `astream_events(version="v2")` 的 `on_custom_event`，供 AG-UI 等 callback 型消费者使用。**这些接口不是详细程度的梯度，而是独立事件源**，消费者必须订阅自己需要的接口。
 - 嵌入式 client 为每个 `stream()` 调用维护三个 `set[str]`：`seen_ids` / `streamed_ids` / `counted_usage_ids`。三者看起来相似但管理**三个独立的不变式**，不能合并。
 
@@ -23,7 +23,7 @@
 | 执行模型 | `async def` + `agent.astream()` | sync generator + `agent.stream()` |
 | 事件传输 | `StreamBridge`（asyncio Queue）+ `sse_consumer` | 直接 `yield` |
 | 序列化 | `serialize(chunk)` → 纯 JSON dict，匹配 LangGraph Platform wire 格式 | `StreamEvent.data`，携带原生 LangChain 对象 |
-| 消费者 | 前端 `useStream` React hook、飞书/Slack/Telegram channel、LangGraph SDK 客户端 | Jupyter notebook、集成测试、内部 Python 脚本 |
+| 消费者 | 前端线程 hooks、LangGraph SDK 客户端 | Jupyter notebook、集成测试、内部 Python 脚本 |
 | 生命周期管理 | `RunManager`：run_id 跟踪、disconnect 语义、multitask 策略、heartbeat | 每次 `stream()` 生成一个轻量 run_id 供 runtime context / tracing / per-run middleware 使用；函数返回即结束 |
 | 断连恢复 | `Last-Event-ID` SSE 重连 | 无需要 |
 
@@ -93,7 +93,7 @@ Application                    HTTP / SSE                    LangGraph Graph
 ┌──────────────┐               ┌──────────────┐              ┌──────────────┐
 │ frontend     │               │ LangGraph    │              │ agent.astream│
 │ useStream    │──"messages-   │ Platform SDK │──"messages"──│ graph.astream│
-│ Feishu IM    │   tuple"──────│ HTTP wire    │              │              │
+│ Web frontend │   tuple"──────│ HTTP wire    │              │              │
 └──────────────┘               └──────────────┘              └──────────────┘
 ```
 
@@ -101,7 +101,7 @@ Application                    HTTP / SSE                    LangGraph Graph
 - **Platform SDK 层**（`langgraph-sdk` HTTP client）：跨进程 HTTP 契约，mode 叫 **`"messages-tuple"`**。
 - **Gateway worker** 显式做翻译：`if m == "messages-tuple": lg_modes.append("messages")`（`runtime/runs/worker.py:117-121`）。
 
-**后果**：`DeerFlowClient.stream()` 直接调 `agent.stream()`（Graph 层），所以必须传 `"messages"`。`app/channels/manager.py` 通过 `langgraph-sdk` 走 HTTP SDK，所以传 `"messages-tuple"`。**这两个字符串不能互相替代**，也不能抽成"一个共享常量"——它们是不同协议层的 type alias，共享只会让某一层说不是它母语的话。
+**后果**：`DeerFlowClient.stream()` 直接调 `agent.stream()`（Graph 层），所以必须传 `"messages"`。Gateway 前端通过 `langgraph-sdk` 走 HTTP SDK，所以传 `"messages-tuple"`。这两个字符串对应不同协议层，不能互相替代。
 
 ---
 
@@ -370,7 +370,5 @@ assert "messages" in agent.stream.call_args.kwargs["stream_mode"]
 | HTTP SSE 帧输出 | `app/gateway/services.py::sse_consumer` / `format_sse` |
 | 序列化到 wire 格式 | `packages/harness/deerflow/runtime/serialization.py` |
 | LangGraph mode 命名翻译 | `packages/harness/deerflow/runtime/runs/worker.py:117-121` |
-| 飞书渠道的增量卡片更新 | `app/channels/manager.py::_handle_streaming_chat` |
-| Channels 自带的 delta/cumulative 防御性累加 | `app/channels/manager.py::_merge_stream_text` |
 | Frontend useStream 支持的 mode 集合 | `frontend/src/core/api/stream-mode.ts` |
 | 核心回归测试 | `backend/tests/test_client.py::TestStream::test_messages_mode_emits_token_deltas` |

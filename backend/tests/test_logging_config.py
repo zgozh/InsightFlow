@@ -77,17 +77,16 @@ def test_url_redaction_filter_rewrites_request_records() -> None:
     assert "token=" not in formatted
     assert "GET" in formatted and "200" in formatted  # observability preserved
 
-    # Same class of leak, different secret location: the Telegram Bot API
-    # carries the bot token in the PATH (api.telegram.org/bot<token>/method),
-    # and python-telegram-bot's HTTPXRequest rides the same httpx logger —
-    # redacting down to scheme + host is what keeps telegram.py's promise
-    # that the token-bearing URL never reaches the logs.
-    telegram = _httpx_record("https://api.telegram.org/bot123456:AAE-token-secret/sendMessage", method="POST")
-    assert filt.filter(telegram) is True
-    telegram_formatted = telegram.getMessage()
-    assert "api.telegram.org/<redacted>" in telegram_formatted
-    assert "AAE-token-secret" not in telegram_formatted
-    assert "bot123456" not in telegram_formatted
+    # URL 路径也可能带 token；脱敏后仍保留主机名供排障定位。
+    path_secret = _httpx_record(
+        "https://api.example.com/bot123456:AAE-token-secret/sendMessage",
+        method="POST",
+    )
+    assert filt.filter(path_secret) is True
+    path_secret_formatted = path_secret.getMessage()
+    assert "api.example.com/<redacted>" in path_secret_formatted
+    assert "AAE-token-secret" not in path_secret_formatted
+    assert "bot123456" not in path_secret_formatted
 
     # Userinfo credentials in the authority (basic-auth style endpoints that
     # httpx accepts, e.g. MCP/extension proxies) must be blanked too — the

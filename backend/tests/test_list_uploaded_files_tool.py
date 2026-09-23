@@ -433,35 +433,33 @@ def test_real_graph_state_propagation_to_list_uploaded_files(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Regression: IM channel _human_input_message() files propagation
-# Fancyboi999 reported that _human_input_message() did not pass
-# additional_kwargs.files, so UploadsMiddleware wrote uploaded_files=[]
-# and list_uploaded_files reported same-run IM attachments as historical.
-# This test locks the fix: files in additional_kwargs must reach the middleware.
+# Regression: uploaded-file metadata reaches UploadsMiddleware.
+# A message's additional_kwargs.files must reach the middleware so the
+# same-run upload is not misreported as historical.
 # ---------------------------------------------------------------------------
 
 
 def test_files_in_additional_kwargs_reaches_middleware(tmp_path):
     """UploadsMiddleware must read files from additional_kwargs.files.
 
-    This is the contract that IM channels rely on when passing files via
+    This locks the uploaded-file metadata contract used by runtime callers via
     ``_human_input_message(..., files=uploaded)``.
     """
     from deerflow.agents.middlewares.uploads_middleware import UploadsMiddleware
     from deerflow.utils.messages import ORIGINAL_USER_CONTENT_KEY
 
-    thread_id = "test-im-files"
+    thread_id = "test-run-files"
     uploads_dir = _uploads_dir(tmp_path, thread_id=thread_id)
-    (uploads_dir / "im_file.pdf").write_bytes(b"%PDF")
+    (uploads_dir / "uploaded_file.pdf").write_bytes(b"%PDF")
 
     msg = HumanMessage(
         content="check this file",
         additional_kwargs={
             "files": [
                 {
-                    "filename": "im_file.pdf",
+                    "filename": "uploaded_file.pdf",
                     "size": 5,
-                    "path": "/mnt/user-data/uploads/im_file.pdf",
+                    "path": "/mnt/user-data/uploads/uploaded_file.pdf",
                 }
             ],
             ORIGINAL_USER_CONTENT_KEY: "check this file",
@@ -477,66 +475,31 @@ def test_files_in_additional_kwargs_reaches_middleware(tmp_path):
     assert mw_result is not None, "Middleware must return a state update"
     assert "uploaded_files" in mw_result
     assert len(mw_result["uploaded_files"]) == 1
-    assert mw_result["uploaded_files"][0]["filename"] == "im_file.pdf", "Middleware must read file metadata from additional_kwargs.files"
+    assert mw_result["uploaded_files"][0]["filename"] == "uploaded_file.pdf", "Middleware must read file metadata from additional_kwargs.files"
 
 
-def test_channel_message_single_upload_block_via_middleware(tmp_path):
-    """IM channel attachments must produce exactly one upload block.
-
-    Regression guard (fancyboi999 review): after passing files= through
-    ``_human_input_message()``, the channel path must NOT also prepend a
-    legacy ``<uploaded_files>`` block.  ``UploadsMiddleware`` is the sole
-    upload-context producer, so one attachment → one ``<current_uploads>``
-    block → the filename appears exactly once in the model-facing content.
-    """
+def test_uploads_middleware_injects_one_current_upload_block(tmp_path):
     from deerflow.agents.middlewares.uploads_middleware import UploadsMiddleware
+    from deerflow.utils.messages import ORIGINAL_USER_CONTENT_KEY
 
-    thread_id = "test-channel-single-block"
+    thread_id = "test-single-current-upload-block"
     uploads_dir = _uploads_dir(tmp_path, thread_id=thread_id)
     (uploads_dir / "report.pdf").write_bytes(b"%PDF-fake")
-
-    # Simulate what _human_input_message() now produces:
-    # content == original_text (no manual prepend), files= in additional_kwargs,
-    # and no ORIGINAL_USER_CONTENT_KEY (because content was not modified).
-    msg = HumanMessage(
-        content="帮我分析这个PDF",
-        additional_kwargs={
-            "files": [
-                {
-                    "filename": "report.pdf",
-                    "size": 10,
-                    "path": "/mnt/user-data/uploads/report.pdf",
-                }
-            ],
-            # Deliberately omit ORIGINAL_USER_CONTENT_KEY —
-            # UploadsMiddleware must backfill it when missing.
-        },
+    message = HumanMessage(
+        content="帮我分析这个 PDF",
+        additional_kwargs={"files": [{"filename": "report.pdf", "size": 10, "path": "/mnt/user-data/uploads/report.pdf"}]},
     )
-    state = {"messages": [msg]}
-    rt = MagicMock()
-    rt.context = {"thread_id": thread_id}
+    runtime = MagicMock()
+    runtime.context = {"thread_id": thread_id}
 
-    mw = UploadsMiddleware(base_dir=str(tmp_path))
-    mw_result = mw.before_agent(state, rt)
+    update = UploadsMiddleware(base_dir=str(tmp_path)).before_agent({"messages": [message]}, runtime)
 
-    assert mw_result is not None, "Middleware must return a state update"
-    assert "uploaded_files" in mw_result
-    assert len(mw_result["uploaded_files"]) == 1
-    assert mw_result["uploaded_files"][0]["filename"] == "report.pdf"
-
-    # The content must contain exactly one upload block and one filename occurrence.
-    updated = mw_result["messages"][-1]
+    assert update is not None
+    updated = update["messages"][-1]
     content = updated.content if isinstance(updated.content, str) else str(updated.content)
-
-    assert "<current_uploads>" in content, "Middleware must inject <current_uploads>"
-    assert "<uploaded_files>" not in content, "Legacy <uploaded_files> block must NOT appear — UploadsMiddleware is the sole upload-context producer"
-    # The filename naturally appears in the list item AND the path line
-    # within <current_uploads> — that's one block, not double injection.
-    assert content.count("<current_uploads>") == 1, f"Exactly one <current_uploads> block expected, found {content.count('<current_uploads>')}"
-
-    # Verify ORIGINAL_USER_CONTENT_KEY was backfilled by the middleware.
-    updated_additional = updated.additional_kwargs or {}
-    assert updated_additional.get("original_user_content") == "帮我分析这个PDF", "UploadsMiddleware must backfill ORIGINAL_USER_CONTENT_KEY when absent"
+    assert content.count("<current_uploads>") == 1
+    assert "<uploaded_files>" not in content
+    assert (updated.additional_kwargs or {}).get(ORIGINAL_USER_CONTENT_KEY) == "帮我分析这个 PDF"
 
 
 # ---------------------------------------------------------------------------

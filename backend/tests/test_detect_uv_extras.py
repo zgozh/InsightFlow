@@ -256,31 +256,13 @@ def test_detect_browser_stops_at_following_section(tmp_path, indent):
     assert detect.detect_from_config(cfg) == []
 
 
-def test_detect_from_config_buzz_via_channels_enabled(tmp_path):
+@pytest.mark.parametrize("provider", ["discord", "buzz"])
+def test_detect_from_config_ignores_removed_channel_extra(tmp_path, provider):
+    """Old channel config must not select extras after the channel surface was removed."""
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
-        "channels:\n  buzz:\n    enabled: true\n    relay_url: wss://buzz.example.com\n",
-    )
-    assert detect.detect_from_config(cfg) == ["buzz"]
-
-
-def test_detect_from_config_buzz_disabled_returns_no_extras(tmp_path):
-    cfg = tmp_path / "config.yaml"
-    cfg.write_text("channels:\n  buzz:\n    enabled: false\n")
-    assert detect.detect_from_config(cfg) == []
-
-
-def test_detect_from_config_no_channels_section_returns_no_buzz_extra(tmp_path):
-    cfg = tmp_path / "config.yaml"
-    cfg.write_text("database:\n  backend: sqlite\n")
-    assert detect.detect_from_config(cfg) == []
-
-
-def test_detect_from_config_ignores_commented_buzz_block(tmp_path):
-    """Mirrors the fully-commented example block shipped in config.example.yaml."""
-    cfg = tmp_path / "config.yaml"
-    cfg.write_text(
-        "# channels:\n#   buzz:\n#     enabled: true\n#     relay_url: wss://buzz.example.com\ndatabase:\n  backend: sqlite\n",
+        f"channels:\n  {provider}:\n    enabled: true\ndatabase:\n  backend: sqlite\n",
+        encoding="utf-8",
     )
     assert detect.detect_from_config(cfg) == []
 
@@ -401,11 +383,14 @@ def test_detect_from_config_dedupes_when_both_present(tmp_path):
     assert detect.detect_from_config(cfg) == ["postgres"]
 
 
-def test_detect_from_config_combines_buzz_with_postgres(tmp_path):
+@pytest.mark.parametrize("provider", ["discord", "buzz"])
+def test_detect_from_config_ignores_removed_channel_extra_with_postgres(tmp_path, provider):
     cfg = tmp_path / "config.yaml"
-    cfg.write_text("database:\n  backend: postgres\nchannels:\n  buzz:\n    enabled: true\n")
-    # Existing postgres/redis/browser detection is unaffected by the new rule.
-    assert detect.detect_from_config(cfg) == ["buzz", "postgres"]
+    cfg.write_text(
+        f"database:\n  backend: postgres\nchannels:\n  {provider}:\n    enabled: true\n",
+        encoding="utf-8",
+    )
+    assert detect.detect_from_config(cfg) == ["postgres"]
 
 
 def test_detect_from_config_missing_file_returns_empty(tmp_path):

@@ -9,7 +9,7 @@ This directory owns memory capture, storage, retrieval, prompt injection, and mo
 - `summarization_hook.py` connects memory work to the summarization lifecycle.
 - `tools.py` provides `memory_search`, `memory_add`, `memory_update`, and `memory_delete`.
 - `backends/deermem/` contains the default local backend.
-- `backends/mem0/`, `backends/openviking/`, and `backends/honcho/` contain optional adapters.
+- `backends/deermem/` is the local memory backend; `backends/noop/` disables persistent memory.
 
 `cancel_by_agent` cancels only pending debounce contexts in one user scope.
 `user_id=None` selects only the legacy no-user root.
@@ -27,11 +27,11 @@ This keeps Gateway and standalone LangGraph runs in the same user scope.
 
 Server-owned `langgraph_auth_user_id` takes precedence over ordinary client identity.
 Lead-agent construction normalizes it with `make_safe_user_id`.
-Memory, custom agents, user skills, skill policy, and prompt assembly reuse that identity.
+Memory, user skills, skill policy, and prompt assembly reuse that identity.
 Gateway removes client-supplied `langgraph_auth_user` and `langgraph_auth_user_id` before graph construction.
 
 Gateway memory routes use `_resolve_memory_user_id(request)`.
-Trusted IM requests can act for the connection owner.
+Trusted internal-auth requests can act for the authenticated owner.
 Other requests use `get_effective_user_id()`.
 Only `AuthMiddleware` can authorize the internal owner header.
 
@@ -49,12 +49,12 @@ DeerMem uses this layout:
 It never stores facts or a fact index.
 Each Markdown file stores one fact with YAML front matter.
 
-Custom agent files share the per-user agent directory.
-The legacy shared agent layout is read-only fallback data.
+Per-agent memory files share the per-user agent directory.
+The legacy shared layout is read-only fallback data.
 
 DeerMem maps a missing agent name to `__default__`.
-That name is reserved and cannot identify a custom agent.
-Public agent names use lowercase canonical form.
+That name is reserved for the default memory bucket.
+Other runtime agent names use lowercase canonical form.
 
 #### Operating modes
 
@@ -65,15 +65,14 @@ This identity survives the background timer boundary.
 
 `memory.mode: tool` registers the four memory tools.
 The model chooses when to search or change facts.
-Tool mode still uses `MemoryMiddleware` for passive writes on supported remote backends.
+Tool mode still uses `MemoryMiddleware` for passive writes when a backend requires them.
 
 Middleware injection includes shared summaries and the selected agent's facts.
 Tool-mode injection includes only shared summaries.
 Tool mode leaves agent facts behind `memory_search`.
 `memory.injection_enabled: false` disables the complete injected block.
 
-Per-user lead-agent Custom Agents may set `memory_enabled: false` in their own
-`config.yaml`. This is a complete per-agent opt-out: dynamic context remains
+A trusted per-agent runtime configuration may set `memory_enabled: false`. This is a complete opt-out: dynamic context remains
 date-only, passive capture is not installed, automatic and manual compaction do
 not flush summarized messages, tool mode exposes no memory tools or tool
 guidance, and the global memory configuration remains unchanged for other
@@ -223,31 +222,6 @@ The prompt loader retains `MemoryManagerError` + `fail_closed` compatibility
 for third-party backends that have not adopted the typed error.
 The base policy resolver also honors legacy `fail_closed` at the timeout boundary;
 other settings remain permissive unless the backend overrides the resolver.
-
-OpenViking uses the maintained `langchain-openviking` package.
-Keep it in middleware mode.
-One API key is bound to one configured DeerFlow owner.
-Reject another owner before remote access.
-
-DeerFlow owns capture timing, the recall query, and the transcript cursor.
-The package owns transport, message conversion, batching, and Session commits.
-One DeerFlow thread maps to one stable OpenViking Session.
-Store bounded hash-only cursors below `{storage_path}/openviking/sessions/`.
-
-Async OpenViking entry points must offload synchronous SDK and file operations.
-Shutdown must drain active work before closing the recorder client.
-Pass an empty `extra_headers` mapping to prevent configuration-added transport headers.
-Do not add embedded OpenViking imports, root-key access, or trusted identity headers.
-
-Honcho is a remote HTTP adapter for user-model memory.
-It creates one workspace per resolved `user_id`.
-A missing user fails closed to no memory.
-Its async methods offload synchronous HTTP work with `asyncio.to_thread`.
-The default read failure policy logs and returns no results.
-`failure_policy.read: fail_closed` rethrows recall failures.
-
-Honcho configuration rejects non-finite or non-positive timeouts.
-It also rejects non-positive character budgets during construction.
 
 #### Run identity and token counting
 

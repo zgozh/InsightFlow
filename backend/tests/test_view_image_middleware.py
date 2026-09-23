@@ -420,8 +420,7 @@ class TestInject:
         # Mixed-content payload: list of text + image_url blocks
         assert isinstance(injected.content, list)
         assert any(isinstance(b, dict) and b.get("type") == "image_url" for b in injected.content)
-        # Internal injection: must be hidden from the chat UI (and IM channels),
-        # like the other middleware-injected context messages.
+        # Internal injection: middleware context must not render in the chat UI.
         assert injected.additional_kwargs.get("hide_from_ui") is True
         assert injected.additional_kwargs.get(_IMAGE_CONTEXT_MESSAGE_MARKER_KEY) is True
         assert injected.id is not None

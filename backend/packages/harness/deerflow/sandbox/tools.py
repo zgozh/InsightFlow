@@ -2043,8 +2043,8 @@ def _channel_identity_prefix(runtime: Runtime) -> str | None:
 def _github_env_from_runtime(runtime: Runtime) -> dict[str, str] | None:
     """Build a per-call env overlay carrying a GitHub App installation token.
 
-    The GitHub channel mints a short-lived installation token in the
-    ``ChannelManager`` (app layer) and threads it through ``run_context``
+    A trusted internal caller can pass a short-lived installation token
+    through ``run_context``
     so it lands in ``runtime.context["github_token"]``. We expose it to
     the agent's bash as both ``GH_TOKEN`` (what the ``gh`` CLI reads) and
     ``GITHUB_TOKEN`` (the conventional name). Returning ``None`` when no

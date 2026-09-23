@@ -1,10 +1,6 @@
-"""ORM model for the shared inbound webhook dedupe table (issue #4120).
+"""保留的 webhook schema ORM 映射。
 
-A single row records that a particular inbound webhook (identified by the
-``_inbound_dedupe_key`` 4-tuple) has already been dispatched, so a redelivery
-routed to a different gateway pod is still dropped as a duplicate. Rows expire
-via lazy cleanup (see ``PostgresInboundDedupeStore``), which deletes rows older
-than ``INBOUND_DEDUPE_TTL_SECONDS`` using the ``first_seen`` column.
+历史迁移仍要求该表与 ORM 保持一致；当前仓库没有对应的 webhook 写入服务。
 """
 
 from __future__ import annotations
@@ -20,8 +16,8 @@ from deerflow.persistence.base import Base
 class WebhookDeliveryRow(Base):
     __tablename__ = "webhook_deliveries"
 
-    # Composite primary key mirrors ChannelManager._inbound_dedupe_key exactly:
-    # (channel, workspace_id, chat_id, message_id). Using the four columns
+    # Keep the historical composite key (channel, workspace_id, chat_id, message_id).
+    # Using the four columns
     # directly avoids any string-joined surrogate key — important because the
     # components can contain characters (e.g. NUL) that are illegal in a single
     # Postgres TEXT column, and keeps the ON CONFLICT target natural.

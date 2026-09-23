@@ -40,8 +40,6 @@ models:
     base_url: $OPENAI_API_BASE
 sandbox:
   use: deerflow.sandbox.local:LocalSandboxProvider
-agents_api:
-  enabled: true
 title:
   enabled: false
 memory:

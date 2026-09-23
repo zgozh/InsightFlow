@@ -1,13 +1,13 @@
-# API Reference
+# InsightFlow API Reference
 
-This document provides a complete reference for the DeerFlow backend APIs.
+This document describes the HTTP APIs exposed by the InsightFlow Gateway.
 
 ## Overview
 
-DeerFlow backend exposes two sets of APIs:
+The Gateway exposes two API surfaces:
 
 1. **LangGraph-compatible API** - Agent interactions, threads, and streaming (`/api/langgraph/*`)
-2. **Gateway API** - Models, MCP, skills, uploads, and artifacts (`/api/*`)
+2. **Gateway API** - Models, MCP, skills, uploads, artifacts, memory, scheduled tasks, and Analytics (`/api/*`)
 
 All APIs are accessed through the Nginx reverse proxy at port 2026.
 
@@ -302,8 +302,8 @@ default `1000`) so a single run cannot execute unbounded graph steps (runaway
 LLM cost / DoS); invalid or non-positive request values fall back to the
 configured default. Both top-level fields are read per run, so edits apply to
 the next request without restarting the Gateway. This top-level setting applies
-to Gateway API runs only; IM channel and embedded `DeerFlowClient` runs retain
-their own defaults and override paths.
+to Gateway API runs only; internal runtime callers may supply their own defaults
+and overrides.
 
 **Configurable Options:**
 - `model_name` (string): Override the default model
@@ -336,7 +336,6 @@ Gateway API callers can attach up to three explicit references to create/stream/
 ```
 
 A reference is a valid thread ID or an absolute `/workspace/chats/{thread_id}` URL
-(also `/workspace/agents/{agent_name}/chats/{thread_id}` for custom agents)
 with the same scheme and authority as the run request, without query or fragment.
 URLs are parsed as local selectors and are never fetched. For split-origin clients
 or internal proxies, pass the thread ID. The field is separate from message text:
@@ -1148,7 +1147,7 @@ export DEER_FLOW_INTERNAL_AUTH_TOKEN="<long-random-secret>"
 | Header | Required | Description |
 |---|---|---|
 | `X-DeerFlow-Internal-Token` | Yes | Must match `DEER_FLOW_INTERNAL_AUTH_TOKEN`; missing/invalid → `401` |
-| `X-DeerFlow-Owner-User-Id` | Yes for per-user isolation | Platform user id (e.g. `feishu_ou_alice`, `wecom_user_bob`); omit → `default` bucket |
+| `X-DeerFlow-Owner-User-Id` | Yes for per-user isolation | Trusted caller's owner identifier; omit → `default` bucket |
 
 Does **not** use browser cookies or CSRF tokens. Does **not** insert into `users`; sets `threads_meta.user_id` / `runs.user_id` from the owner header. DeerFlow validates only the platform token—not whether the owner id represents a real end user; user validity is entirely the platform's responsibility. See [AUTH_DESIGN.md — Internal Auth](AUTH_DESIGN.md#internal-auth-direct-http) for trust boundaries, persistence, and security notes.
 

@@ -6,7 +6,7 @@ separate from Langfuse's own trace id and from DeerFlow run ids.
 **This ContextVar is the only source of a trace id.** Every path that reaches a
 run binds one first: the Gateway ``TraceMiddleware`` for HTTP, and
 :func:`ensure_trace_context` for the entry points that never touch ASGI --
-scheduled occurrences, MCP task notification runs, IM channel messages, and the
+scheduled occurrences, MCP task notification runs, internal service calls, and the
 embedded :class:`~deerflow.client.DeerFlowClient`. Downstream code can therefore
 treat the trace id as a plain ``str`` and use :func:`ensure_trace_id` or
 :func:`resolve_trace_id` instead of the ``if trace_id:`` guards a nullable id

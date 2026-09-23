@@ -609,7 +609,7 @@ def merge_run_context_overrides(config: dict[str, Any], context: Mapping[str, An
     see issue #2677).
 
     ``user_id`` is intentionally propagated into ``config['context']`` in addition to
-    the whitelisted keys, so non-web callers (e.g. IM channels) that supply identity in
+    the whitelisted keys, so trusted internal callers that supply identity in
     ``body.context`` keep it on ``ToolRuntime.context``. It is merged with
     ``setdefault`` so a server-authenticated id stamped by
     :func:`inject_authenticated_user_context` always wins over the client-supplied one.
@@ -697,8 +697,8 @@ def inject_authenticated_user_context(
     # ``user_id`` is server-owned for EXTERNAL callers: it now selects which
     # user's credential user-scoped MCP auth injects, so a client-forged value
     # must never survive any early return below — scrub it here and restamp it
-    # only from ``request.state.user``. Internal callers (IM channels, the
-    # scheduler) are the deliberate exception: they authenticate their own end
+    # only from ``request.state.user``. Internal callers (such as the scheduler)
+    # are the deliberate exception: they authenticate their own end
     # users and supply that identity in run context (PR #3294), which the
     # internal-role branch below preserves.
     user = getattr(getattr(request, "state", None), "user", None)
@@ -1805,7 +1805,7 @@ async def launch_scheduled_thread_run(
         command=None,
         metadata=metadata or {},
         config={"recursion_limit": _resolve_scheduler_recursion_limit()},
-        # ``user_id`` mirrors what IM channels put in ``body.context`` so
+        # ``user_id`` carries the owner in ``body.context`` so
         # runtime-context consumers without a ContextVar fallback (e.g.
         # user-scoped GuardrailMiddleware providers) see the owning user;
         # ``inject_authenticated_user_context`` skips the internal user.

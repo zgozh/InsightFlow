@@ -13,7 +13,6 @@ Order of resolution:
    - stream_bridge.type == redis         -> redis
    - tools[].name == browser_navigate    -> browser
    - sandbox.ownership.type == redis     -> redis
-   - channels.buzz.enabled == true       -> buzz
    - models[].use == langchain_ollama:*  -> ollama
 3. Runtime environment toggles that enable optional backends:
    - DEER_FLOW_STREAM_BRIDGE_REDIS_URL   -> redis
@@ -164,12 +163,12 @@ def section_value(lines: list[str], section: str, key: str) -> str | None:
 
 
 def nested_section_value(lines: list[str], section_path: str, key: str) -> str | None:
-    """Return the value of a nested YAML key like ``channels.discord.enabled``.
+    """Return the value of a nested YAML key like ``sandbox.ownership.type``.
 
     Handles two levels of nesting:
-        channels:
-          discord:
-            enabled: true
+        sandbox:
+          ownership:
+            type: redis
     """
     parts = section_path.split(".")
     if len(parts) != 2:
@@ -358,10 +357,6 @@ def detect_from_config(path: Path) -> list[str]:
         extras.add("redis")
     if (nested_section_value(lines, "sandbox.ownership", "type") or "").lower() == "redis":
         extras.add("redis")
-    if (nested_section_value(lines, "channels.discord", "enabled") or "").lower() == "true":
-        extras.add("discord")
-    if (nested_section_value(lines, "channels.buzz", "enabled") or "").lower() == "true":
-        extras.add("buzz")
     if tools_include_name(lines, "browser_navigate"):
         extras.add("browser")
     for provider in models_use_providers(lines):

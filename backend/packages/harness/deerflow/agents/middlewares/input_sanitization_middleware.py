@@ -395,7 +395,7 @@ class InputSanitizationMiddleware(AgentMiddleware[AgentState]):
         # Preserve the pre-sanitization user text so downstream consumers that
         # must see the genuine input (slash skill activation, regenerate) can
         # recover it after the BEGIN/END wrapping. Keep a valid value set by
-        # UploadsMiddleware or an IM channel, but repair malformed metadata so
+        # UploadsMiddleware or another trusted runtime caller, but repair malformed metadata so
         # persistence never falls back to the wrapped model-facing content.
         if not isinstance(original_user_content, str):
             if ORIGINAL_USER_CONTENT_KEY in preserved_kwargs:

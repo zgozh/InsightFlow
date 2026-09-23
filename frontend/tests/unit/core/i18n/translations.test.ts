@@ -14,11 +14,15 @@ describe("core copy loading", () => {
     expect(chinese.inputBox.disclaimer).toBe(
       "内容由 InsightFlow 生成，重要信息请务必核查",
     );
-    expect(english.channels.descriptions.buzz).toBe(
-      "Buzz channels and direct messages through your DeerFlow agent.",
-    );
-    expect(chinese.channels.descriptions.buzz).toBe(
-      "通过 DeerFlow 智能体接收 Buzz 频道消息和私聊。",
-    );
+    for (const key of [
+      "agents",
+      "capabilities",
+      "channels",
+      "projects",
+      "trash",
+    ]) {
+      expect(key in english).toBe(false);
+      expect(key in chinese).toBe(false);
+    }
   });
 });

@@ -1,4 +1,4 @@
-# Configuration for the DeerFlow application
+# InsightFlow configuration
 #
 # Guidelines:
 # - Copy this file to `config.yaml` and customize it for your environment
@@ -880,7 +880,7 @@ sandbox:
 #   # open keeps the current behavior. isolated denies all outbound traffic.
 #   # allowlist permits the listed HTTP/HTTPS domains; denied public domains can
 #   # optionally be approved from the Human Input card. Restricted modes require
-#   # Docker Engine 28+ and are not supported by Apple Container or provisioner mode.
+#   # Docker Engine 28+; remote AIO services provide their own network policy.
 #   # Private, loopback, link-local, multicast, and cloud metadata addresses are always denied.
 #   network:
 #     mode: allowlist                    # open | isolated | allowlist (default: open)
@@ -894,7 +894,7 @@ sandbox:
 #     proxy_image: ghcr.io/bytedance/deer-flow-sandbox-network-proxy:latest
 #
 #   # 可选：声明沙箱是否已通过共享挂载看到 Gateway 的线程数据目录。
-#   # 省略时由后端自动检测；远程 provisioner 默认显式同步文件。
+#   # 省略时由后端自动检测；远程 AIO 默认使用显式文件同步。
 #   # 只有双方确实共享同一份按用户和线程隔离的数据目录时才能设为 true，
 #   # 例如已正确对齐的共享 PVC、NFS、hostPath 或 bind mount。
 #   # true 会跳过逐次上传同步；false 会强制显式同步。
@@ -915,7 +915,7 @@ sandbox:
 #   # Values starting with $ will be resolved from host environment variables
 #   # AIO semver images default MAX_SHELL_SESSIONS to 10. DeerFlow leaves that
 #   # image default unchanged while subagent_runtime.max_running + 1 fits, and
-#   # otherwise injects the required value for local and provisioner sandboxes.
+#   # otherwise injects the required value for local and AIO sandboxes.
 #   # An explicit value is allowed but must be at least max_running + 1.
 #   # environment:
 #   #   MAX_SHELL_SESSIONS: "13"  # Example for subagent_runtime.max_running: 12
@@ -924,11 +924,6 @@ sandbox:
 #   #   API_KEY: $MY_API_KEY        # Reads from host's MY_API_KEY env var
 #   #   DATABASE_URL: $DATABASE_URL  # Reads from host's DATABASE_URL env var
 #   #   # Required when using the OpenAI-compatible image-generation provider:
-#   #   IMAGE_GENERATION_PROVIDER: $IMAGE_GENERATION_PROVIDER
-#   #   IMAGE_GENERATION_API_KEY: $IMAGE_GENERATION_API_KEY
-#   #   IMAGE_GENERATION_BASE_URL: $IMAGE_GENERATION_BASE_URL
-#   #   IMAGE_GENERATION_MODEL: $IMAGE_GENERATION_MODEL
-#   #   IMAGE_GENERATION_SIZE: $IMAGE_GENERATION_SIZE  # Optional fixed-size override
 #
 #   # Optional: Cross-instance container ownership (issue #4206).
 #   #
@@ -1008,7 +1003,7 @@ subagent_runtime:
 
 # subagents:
 #   # Default timeout (seconds) for built-in subagents (default: 1800 = 30 min).
-#   # Custom agents use their own timeout_seconds (default 900) unless overridden.
+#   # Configured task subagent types use their own timeout_seconds unless overridden.
 #   timeout_seconds: 1800
 #   # Optional global max-turn override for all subagents. One turn is one
 #   # model call plus the tools it runs; the turn count is converted into
@@ -1037,7 +1032,7 @@ subagent_runtime:
 #   #   max_tokens: 2000000
 #   #   warn_threshold: 0.7     # log a warning once this fraction of the budget is spent
 #
-#   # Optional per-agent overrides (applies to both built-in and custom agents)
+#   # Optional per-subagent overrides for the task runtime
 #   agents:
 #     general-purpose:
 #       timeout_seconds: 2700  # 45 minutes for very long deep-research tasks
@@ -1053,9 +1048,9 @@ subagent_runtime:
 #       max_turns: 80
 #       # skills: []            # No discoverable/activatable skills for bash agent
 #
-#   # Custom subagent types: define specialized agents with their own prompts,
-#   # tools, skills, and model configuration. Custom agents are available via
-#   # the `task` tool alongside built-in types (general-purpose, bash).
+#   # Custom task subagent types can define their own prompts,
+#   # tools, skills, and model configuration. They run only through
+#   # the `task` tool beside built-in types (general-purpose, bash).
 #   # custom_agents:
 #   #   analysis:
 #   #     description: "Data analysis specialist for processing datasets and generating insights"
@@ -1125,8 +1120,8 @@ skills:
   # path: /absolute/path/to/custom/skills
 
   # Path where skills are mounted in the sandbox container
-  # This is used by the agent to access skills in both local and Docker sandbox
-  # AIO/provisioner and E2B modes require a canonical absolute non-root path
+  # This path is mounted into the configured sandbox.
+  # AIO requires a canonical absolute non-root path
   # that does not overlap reserved platform mounts. Providers snapshot this
   # path for identity, mounts, metadata, and synchronization, so restart the
   # Gateway after changing it.
@@ -1152,8 +1147,8 @@ skill_scan:
   # limits) and the LLM skill scanner still run unconditionally.
   enabled: true
 
-# Note: To restrict which skills are loaded for a specific custom agent,
-# define a `skills` list in that agent's `config.yaml` (e.g. `agents/my-agent/config.yaml`):
+# Note: To restrict which skills an ordinary task subagent can load,
+# define a `skills` list for that subagent type below:
 # - Omitted or null: load all globally enabled skills (default)
 # - []: disable all skills for this agent
 # - ["skill-name"]: load only specific skills
@@ -1258,7 +1253,7 @@ summarization:
 #   enabled             - Master switch for the memory mechanism (call-site gate)
 #   injection_enabled   - Whether to inject memory into the system prompt (call-site gate)
 #   shutdown_flush_timeout_seconds - Hard budget (s) to drain pending updates on Gateway graceful shutdown (default: 30)
-#   manager_class       - Backend selector: registered name (deermem/mem0/noop/openviking) or dotted path
+#   manager_class       - Backend selector: registered name (deermem/noop) or dotted path
 #   backend_config      - Backend-private config dict (passthrough; each backend self-interprets)
 #
 # DeerMem-private fields live under ``backend_config`` (NOT at the memory: top level):
@@ -1291,9 +1286,8 @@ memory:
   enabled: true
   injection_enabled: true # Whether to inject memory into system prompt
   # Hard budget (seconds) to drain pending memory updates on Gateway graceful
-  # shutdown. Each pending item does one LLM call, so large IM batches may need
-  # more. Must fit inside the orchestrator's termination grace period (channel
-  # stop + this drain + buffer) or it gets SIGKILLed mid-drain. Default 30s.
+  # shutdown. Each pending item does one LLM call, so large workloads may need
+  # more. Leave time for this drain and the rest of graceful shutdown. Default 30s.
   shutdown_flush_timeout_seconds: 30.0
   # Memory backend selector. Either a registered backend name (matching a
   # backends/<name>/ folder that exposes MANAGER_CLASS, e.g. deermem / noop)
@@ -1312,46 +1306,8 @@ memory:
   # Backend-private config (a dict), passed verbatim to the backend __init__.
   # Each backend self-interprets it (DeerMem parses it into DeerMemConfig).
   #
-  # OpenViking example (replace this DeerMem backend_config block when
-  # manager_class is openviking). This first official-adapter integration uses
-  # one credential-bound OpenViking USER key for one DeerFlow user and supports
-  # middleware mode only. Use owner_user_id: default when DeerFlow auth is off.
-  #
-  # backend_config:
-  #   base_url: http://openviking:1933
-  #   owner_user_id: default
-  #   api_key_env: OPENVIKING_API_KEY
-  #   timeout_seconds: 30
-  #   default_peer_id: deerflow
-  #   max_seen_message_ids: 512 # bounded hash-only capture cursor
-  #   startup_policy: fail_fast
-  #   failure_policy:
-  #     read: fail_open
-  #     write: log_and_drop
-  #   retrieval:
-  #     top_k: 8
-  #     score_threshold: 0.25
-  #     max_injection_chars: 12000
-  #     content_mode: overview
-  #     injection_query: >-
-  #       user profile preferences important entities events ongoing goals
-  #       constraints and prior decisions
-  #
-  # For a host-installed OpenViking used by Docker DeerFlow, set base_url to
-  # http://host.docker.internal:1933 and allow_insecure_http: true. The bundled
-  # optional Compose overlay uses the internal http://openviking:1933 address.
-  #
-  # Honcho example (replace this DeerMem backend_config block when
-  # manager_class is honcho). This remote HTTP adapter uses Honcho's server-side
-  # deriver to build user-model memory representations; no local LLM calls.
-  #
-  # backend_config:
-  #   base_url: http://localhost:8000
-  #   # api_key: $HONCHO_API_KEY   # hosted Honcho; plain-http + api_key needs allow_insecure_http: true
-  #   workspace_prefix: deerflow-u-   # one isolated workspace per user id
-  #   # workspace_overrides: {}    # map specific user ids to custom workspaces
-  #   # user_peer_overrides: {}    # map specific user ids to custom peer names
-  #   assistant_peer: deerflow
+  # Backend-specific config. The built-in deermem backend stores per-user data
+  # under this root; noop disables persistent memory.
   backend_config:
     storage_path: ""            # empty = deer-flow base_dir (factory injects absolute runtime_home); a non-empty path is the root DIRECTORY (per-user memory under {storage_path}/users/{uid}/memory.json)
     storage_class: file         # file (default) or a dotted MemoryStorage class path; invalid persistent backends fail fast
@@ -1447,10 +1403,10 @@ memory:
     # prompts_dir: ""             # empty = bundled defaults
 
 # ============================================================================
-# Custom Agent Management API
+# Skill Security Configuration
 # ============================================================================
 # LLM moderation for user and administrator skill installation/update routes.
-# Agent runtime self-editing is not configurable; unavailable moderation fails closed by default.
+# Unavailable moderation fails closed by default for skill writes.
 skill_security:
   moderation_model_name: null # Optional moderation model (null = use the default chat model)
   security_fail_closed: true # Block non-executable skill writes when moderation is unavailable
@@ -1508,7 +1464,7 @@ skill_security:
 #                  UV_EXTRAS=postgres
 #              Multiple extras (`postgres,ollama`) supported here too — see
 #              docker/dev-entrypoint.sh.
-#   Docker img build-arg `UV_EXTRAS=postgres,discord docker compose build`
+#   Docker img build-arg `UV_EXTRAS=postgres,redis docker compose build`
 #              supports comma- or whitespace-separated extras at build time
 #              (backend/Dockerfile expands them to repeated `--extra` flags).
 #
@@ -1551,12 +1507,6 @@ skill_security:
 #        ALTER TABLE public.threads_meta          SET SCHEMA deerflow;
 #        ALTER TABLE public.feedback              SET SCHEMA deerflow;
 #        ALTER TABLE public.users                 SET SCHEMA deerflow;
-#        ALTER TABLE public.agents                SET SCHEMA deerflow;
-#        -- IM channel tables:
-#        ALTER TABLE public.channel_connections   SET SCHEMA deerflow;
-#        ALTER TABLE public.channel_credentials   SET SCHEMA deerflow;
-#        ALTER TABLE public.channel_oauth_states  SET SCHEMA deerflow;
-#        ALTER TABLE public.channel_conversations SET SCHEMA deerflow;
 #        -- Scheduled-task tables:
 #        ALTER TABLE public.scheduled_tasks       SET SCHEMA deerflow;
 #        ALTER TABLE public.scheduled_task_runs   SET SCHEMA deerflow;
@@ -1575,29 +1525,6 @@ skill_security:
 database:
   backend: sqlite
   sqlite_dir: .deer-flow/data
-
-# ============================================================================
-# Inbound webhook dedupe storage (cross-pod redelivery dedup — issue #4120)
-# ============================================================================
-# Where the ChannelManager records inbound webhook dedupe state.
-#
-# backend: auto     -- (default) Postgres whenever database.backend=postgres,
-#                       including multi-replica K8s where each pod runs a single
-#                       worker but shares one DB. Otherwise an in-process memory
-#                       store (single-DB, single-pod).
-#                       NOTE: multi-replica deployments must use a Postgres DB;
-#                       if database.backend is sqlite/memory, 'auto' falls back to
-#                       the per-pod memory store and cross-pod dedupe is disabled.
-# backend: memory   -- In-process store only. Per-pod: a webhook redelivered to
-#                       a DIFFERENT replica is NOT deduped. Not recommended for
-#                       multi-worker deployments (logs a startup WARNING).
-# backend: postgres -- Share dedupe state across pods via the application DB.
-#                       REQUIRED for any multi-replica deployment. If
-#                       database.backend is not 'postgres', a WARNING is logged and
-#                       the store falls back to the in-process memory store.
-#
-# dedupe_storage:
-#   backend: auto
 
   # Recycle app ORM PostgreSQL connections before the environment's idle cutoff.
   pool_recycle: 300
@@ -1760,199 +1687,6 @@ run_ownership:
 # Redis does not block gateway startup, but the first publish/xread raises. A
 # mid-run Redis outage fails the active run — there is no automatic retry/backoff
 # or fallback to the in-memory bridge. Run Redis with HA / a restart policy.
-
-# ============================================================================
-# User-Owned IM Channel Connections
-# ============================================================================
-# Lets logged-in users connect their own IM accounts from the DeerFlow frontend
-# while reusing the existing `channels` runtime configuration below.
-#
-# Security notes:
-# - No public IP, OAuth callback URL, or provider webhook is required.
-# - Provider bot/app credentials stay under `channels.*`.
-# - `channel_connections` stores per-user bindings and one-time connect codes.
-# - Telegram uses a deep link when `bot_username` is configured.
-# - Slack, Discord, Feishu, DingTalk, WeChat, and WeCom use `/connect <code>`
-#   through the already-running bot/app.
-#
-# channel_connections:
-#   enabled: false
-#   # Security: keep this enabled unless you intentionally want legacy open-bot behavior.
-#   # Disabling it lets unbound external IM users create DeerFlow threads/runs.
-#   require_bound_identity: true
-#
-#   telegram:
-#     enabled: false
-#     bot_username: $TELEGRAM_BOT_USERNAME
-#
-#   slack:
-#     enabled: false
-#
-#   discord:
-#     enabled: false
-#
-#   feishu:
-#     enabled: false
-#
-#   dingtalk:
-#     enabled: false
-#
-#   wechat:
-#     enabled: false
-#
-#   wecom:
-#     enabled: false
-#
-#   buzz:
-#     enabled: false
-
-# ============================================================================
-# IM Channels Configuration
-# ============================================================================
-# Connect DeerFlow to external messaging platforms.
-# All channels use outbound connections (WebSocket or polling) — no public IP required.
-
-# channels:
-#   # LangGraph-compatible Gateway API base URL for thread/message management (default: http://localhost:8001/api)
-#   # For Docker deployments, use the Docker service name instead of localhost:
-#   #   langgraph_url: http://gateway:8001/api
-#   #   gateway_url: http://gateway:8001
-#   langgraph_url: http://localhost:8001/api
-#   # Gateway API URL for auxiliary queries like /models, /memory (default: http://localhost:8001)
-#   gateway_url: http://localhost:8001
-#   # Maximum queued or provider-reserved inbound messages. Must be a positive integer.
-#   inbound_queue_maxsize: 1000
-#   # Fixed number of long-lived inbound handler workers. Must be a positive integer.
-#   max_concurrency: 5
-#   # Seconds to drain accepted inbound work before cancelling active handlers.
-#   # Must be a non-negative finite number. Cancelled handlers are awaited; the Gateway's
-#   # outer shutdown timeout remains the process-level bound for incomplete cleanup.
-#   shutdown_grace_period_seconds: 3
-#   #
-#   # Docker Compose note:
-#   # If channels run inside the gateway container, use container DNS names instead
-#   # of localhost, for example:
-#   # langgraph_url: http://gateway:8001/api
-#   # gateway_url: http://gateway:8001
-#   # You can also set DEER_FLOW_CHANNELS_LANGGRAPH_URL / DEER_FLOW_CHANNELS_GATEWAY_URL.
-#
-#   # Optional: default mobile/session settings for all IM channels
-#   session:
-#     assistant_id: lead_agent  # or a custom agent name; custom agents route via lead_agent + agent_name
-#     config:
-#       recursion_limit: 100
-#     context:
-#       thinking_enabled: true
-#       is_plan_mode: false
-#       subagent_enabled: false
-#
-#   feishu:
-#     enabled: false
-#     app_id: $FEISHU_APP_ID
-#     app_secret: $FEISHU_APP_SECRET
-#     # domain: https://open.feishu.cn       # China (default)
-#     # domain: https://open.larksuite.com   # International
-#
-#   slack:
-#     enabled: false
-#     bot_token: $SLACK_BOT_TOKEN     # xoxb-...
-#     app_token: $SLACK_APP_TOKEN     # xapp-... (Socket Mode)
-#     allowed_users: []               # empty = allow all; can also be a single Slack user ID string, e.g. U123456, but list form is recommended
-#
-#   telegram:
-#     enabled: false
-#     bot_token: $TELEGRAM_BOT_TOKEN
-#     allowed_users: []               # empty = allow all
-#     rich_messages: false             # Bot API 10.1 Rich Messages for final Markdown responses
-#
-#   wechat:
-#     enabled: false
-#     bot_token: $WECHAT_BOT_TOKEN
-#     ilink_bot_id: $WECHAT_ILINK_BOT_ID
-#     # Optional: allow first-time QR bootstrap when bot_token is absent
-#     qrcode_login_enabled: true
-#     # Optional: sent as iLink-App-Id header when provided
-#     ilink_app_id: ""
-#     # Optional: sent as SKRouteTag header when provided
-#     route_tag: ""
-#     allowed_users: []               # empty = allow all
-#     # Optional: extra host suffixes inbound media downloads may come from,
-#     # in addition to the platform CDN defaults (*.qq.com and the cdn_base_url host).
-#     # Entries are suffixes: "example.com" and "*.example.com" are equivalent.
-#     allowed_media_hosts: []
-#     # Optional: timing values must be positive finite seconds
-#     polling_timeout: 35
-#     polling_retry_delay: 5
-#     # QR poll interval when qrcode_login_enabled is true
-#     qrcode_poll_interval: 2
-#     # QR bootstrap timeout
-#     qrcode_poll_timeout: 180
-#     # Optional: persist getupdates cursor under the gateway container volume
-#     state_dir: ./.deer-flow/wechat/state
-#     # Optional: max inbound image size in bytes before skipping download
-#     max_inbound_image_bytes: 20971520
-#     # Optional: max outbound image size in bytes before skipping upload
-#     max_outbound_image_bytes: 20971520
-#     # Optional: max inbound file size in bytes before skipping download
-#     max_inbound_file_bytes: 52428800
-#     # Optional: max outbound file size in bytes before skipping upload
-#     max_outbound_file_bytes: 52428800
-#     # Optional: allowed file extensions for regular file receive/send
-#     allowed_file_extensions: [".txt", ".md", ".pdf", ".csv", ".json", ".yaml", ".yml", ".xml", ".html", ".log", ".zip", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".rtf"]
-#
-#     # Optional: channel-level session overrides
-#     session:
-#       assistant_id: mobile-agent  # custom agent names are supported here too
-#       context:
-#         thinking_enabled: false
-#
-#       # Optional: per-user overrides by user_id
-#       users:
-#         "123456789":
-#           assistant_id: vip-agent
-#           config:
-#             recursion_limit: 150
-#           context:
-#             thinking_enabled: true
-#             subagent_enabled: true
-#   wecom:
-#     enabled: false
-#     bot_id: $WECOM_BOT_ID
-#     bot_secret: $WECOM_BOT_SECRET
-#     # Optional: extra host suffixes inbound media downloads may come from, in
-#     # addition to the built-in qq.com family and WeCom's official COS media
-#     # host (ww-aibot-img-1258476243.<region>.myqcloud.com). Add a suffix here
-#     # if WeCom rotates to a new COS account or media is routed through a proxy.
-#     allowed_media_hosts: []
-#
-#   dingtalk:
-#     enabled: false
-#     client_id: $DINGTALK_CLIENT_ID
-#     client_secret: $DINGTALK_CLIENT_SECRET
-#     allowed_users: []               # empty = allow all
-#     card_template_id: ""            # Optional: AI Card template ID for streaming updates
-#
-#   discord:
-#     enabled: false
-#     bot_token: $DISCORD_BOT_TOKEN
-#     allowed_guilds: []              # empty = allow all guilds; can also be a single guild ID
-#     mention_only: false             # If true, only respond when the bot is mentioned
-#     allowed_channels: []              # Optional: channel IDs exempt from mention_only (bot responds without mention)
-#     thread_mode: false               # If true, group a channel conversation into a thread
-#
-#   # Buzz (https://github.com/block/buzz) — Nostr-relay team workspace.
-#   # DeerFlow joins as a member identity; generate a keypair and register it as
-#   # a relay member, then @mention or DM DeerFlow in Buzz. Requires the `buzz`
-#   # dependency extra (uv sync --extra buzz).
-#   buzz:
-#     enabled: false
-#     relay_url: wss://buzz.example.com
-#     private_key: $BUZZ_PRIVATE_KEY        # hex or nsec1…
-#     allowed_users: []                     # pubkeys (hex or npub) allowed to trigger runs.
-#                                           # DENY-BY-DEFAULT (unlike other channels): empty
-#                                           # means nobody, and DeerFlow logs a startup warning.
-#     require_mention: true                 # @mention needed in channels
-#     mention_free_channels: []             # channel UUIDs that respond to every message
 
 # ============================================================================
 # Guardrails Configuration

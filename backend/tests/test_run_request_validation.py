@@ -168,8 +168,8 @@ def test_gateway_accepts_langgraph_sdk_default_payload(client: TestClient, metho
     """The SDK's own defaults must never be rejected as unsupported options (#4466).
 
     ``stream_resumable`` defaults to ``False`` rather than ``None``, so the SDK's
-    drop-``None`` payload filter always forwards it; every IM channel run goes
-    through this path.
+    drop-``None`` payload filter always forwards it. SDK callers must be accepted
+    consistently by the Gateway.
     """
     payload = _sdk_default_payload(method)
 

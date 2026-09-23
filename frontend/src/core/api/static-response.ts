@@ -47,22 +47,9 @@ export async function staticApiResponse(
   switch (path) {
     case "features":
       data = {
-        agents_api: { enabled: false },
         mcp_tasks: { enabled: false },
-        subagent_batches: {
-          enabled: false,
-          repository_available: false,
-          worker_running: false,
-          max_running: 0,
-        },
         conversation_references: { enabled: false, max_references: 0 },
       } satisfies FeaturesResponse;
-      break;
-    case "agents":
-      data = { agents: [] };
-      break;
-    case "subagents":
-      data = { subagents: [] };
       break;
     case "suggestions/config":
       data = { enabled: false, max_suggestions: 0 };

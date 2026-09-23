@@ -58,7 +58,7 @@ def _validate_project_id(project_id: str) -> str:
 def make_safe_user_id(raw: str) -> str:
     """Normalize an external identity into the user-id charset (``[A-Za-z0-9_-]``).
 
-    IM channel ids (Feishu/Slack/Telegram) may contain characters that
+    External service identities may contain characters that
     :func:`_validate_user_id` rejects. Already-safe ids pass through unchanged;
     lossy ones get a short digest suffix so two distinct inputs never share a
     storage bucket.

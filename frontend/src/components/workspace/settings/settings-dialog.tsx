@@ -5,7 +5,6 @@ import {
   InfoIcon,
   BrainIcon,
   PaletteIcon,
-  UsersRoundIcon,
   UserIcon,
 } from "lucide-react";
 import dynamic from "next/dynamic";
@@ -57,13 +56,6 @@ const NotificationSettingsPage = dynamic(
     ),
   { loading: SettingsPageLoading },
 );
-const SubagentSettingsPage = dynamic(
-  () =>
-    import("./subagent-settings-page").then(
-      (module) => module.SubagentSettingsPage,
-    ),
-  { loading: SettingsPageLoading },
-);
 const AboutSettingsPage = dynamic(
   () =>
     import("./about-settings-page").then((module) => module.AboutSettingsPage),
@@ -74,7 +66,6 @@ export type SettingsSection =
   | "account"
   | "appearance"
   | "memory"
-  | "subagents"
   | "notification"
   | "about";
 
@@ -118,18 +109,12 @@ export function SettingsDialog(props: SettingsDialogProps) {
         label: t.settings.sections.memory,
         icon: BrainIcon,
       },
-      {
-        id: "subagents",
-        label: t.settings.sections.subagents,
-        icon: UsersRoundIcon,
-      },
       { id: "about", label: t.settings.sections.about, icon: InfoIcon },
     ],
     [
       t.settings.sections.account,
       t.settings.sections.appearance,
       t.settings.sections.memory,
-      t.settings.sections.subagents,
       t.settings.sections.notification,
       t.settings.sections.about,
     ],
@@ -179,7 +164,6 @@ export function SettingsDialog(props: SettingsDialogProps) {
               {activeSection === "account" && <AccountSettingsPage />}
               {activeSection === "appearance" && <AppearanceSettingsPage />}
               {activeSection === "memory" && <MemorySettingsPage />}
-              {activeSection === "subagents" && <SubagentSettingsPage />}
               {activeSection === "notification" && <NotificationSettingsPage />}
               {activeSection === "about" && <AboutSettingsPage />}
             </div>

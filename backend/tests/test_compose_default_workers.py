@@ -3,9 +3,9 @@
 The Gateway holds run state (RunManager and the stream bridge) in process, so
 the default deployment must run a single Uvicorn worker. Running more than one
 worker without a shared cross-worker stream bridge breaks run cancellation, SSE
-reconnects, request de-duplication, and IM channels (nginx has no sticky
-sessions, so requests scatter across workers that each keep their own run
-state). This test pins the safe default so it cannot silently regress to a
+reconnects, and request de-duplication (nginx has no sticky sessions, so
+requests scatter across workers that each keep their own run state). This test
+pins the safe default so it cannot silently regress to a
 multi-worker default, while still allowing operators to override it once a
 shared stream bridge exists.
 """
@@ -43,3 +43,16 @@ def test_gateway_worker_count_remains_overridable():
     """The worker count must stay configurable, not hard-coded to 1."""
     command = _gateway_command()
     assert "${GATEWAY_WORKERS:-1}" in command, f"worker count must use ${{GATEWAY_WORKERS:-1}} so operators can override it; got: {command}"
+
+
+def test_gateway_compose_does_not_export_deleted_channel_urls():
+    """Both maintained Compose variants must omit the deleted IM URL contract."""
+    for compose_path in (
+        REPO_ROOT / "docker" / "docker-compose.yaml",
+        REPO_ROOT / "docker" / "docker-compose-dev.yaml",
+    ):
+        compose = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
+        environment = compose["services"]["gateway"].get("environment", [])
+        keys = {str(entry).partition("=")[0] for entry in environment}
+
+        assert not (keys & {"DEER_FLOW_CHANNELS_LANGGRAPH_URL", "DEER_FLOW_CHANNELS_GATEWAY_URL"})

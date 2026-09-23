@@ -1,241 +1,93 @@
 # AGENTS.md
 
-This file provides guidance to AI coding agents (Claude Code, Codex, and others) when working with the DeerFlow frontend. It is the source of truth; the sibling `CLAUDE.md` imports it via `@AGENTS.md`.
+本文件是 InsightFlow 前端开发指南；同目录的 `CLAUDE.md` 通过
+`@AGENTS.md` 引入本文件。开始修改前还需阅读目标目录最近的 `AGENTS.md`。
 
-## Project Overview
+## 产品与技术栈
 
-DeerFlow Frontend is a Next.js 16 web interface for an AI agent system. It communicates with a LangGraph-based backend to provide thread-based AI conversations with streaming responses, artifacts, and a skills/tools system.
+前端是 Next.js 16、React 19、TypeScript 5.8、Tailwind CSS 4 和 pnpm 10.26.2
+构建的受控经营分析工作台，需要 Node.js 22 或更新版本。LangGraph SDK 负责线程运行
+与流式响应，TanStack Query 管理服务端状态。
 
-**Stack**: Next.js 16, React 19, TypeScript 5.8, Tailwind CSS 4, pnpm 10.26.2. Requires Node.js 22+ and pnpm 10.26.2+.
+工作台页面包括分析、聊天、数据源、指标、报告、历史和定时任务。独立的
+Custom/Managed Agent、IM 连接、项目/文档/回收站、浏览器控制、博客、showcase 和文档页
+均已从产品面移除。普通 `task` 子代理进度仍属于聊天运行时。
 
-### Core dependencies
+## 常用命令
 
-- **LangGraph SDK** (`@langchain/langgraph-sdk` ^1.5.3) — Agent orchestration and streaming
-- **LangChain Core** (`@langchain/core` ^1.1.15) — Fundamental AI building blocks
-- **TanStack Query** (`@tanstack/react-query` ^5.90.17) — Server state management
-- **UI**: Shadcn UI, MagicUI, React Bits, and Vercel AI SDK elements (generated from registries — see Code Style)
+| 命令 | 用途 |
+| --- | --- |
+| `pnpm dev` | 启动开发服务器 |
+| `pnpm build` | 构建生产版本 |
+| `pnpm check` | 运行 lint 和 TypeScript 检查 |
+| `pnpm format` / `pnpm format:write` | 检查 / 应用格式 |
+| `pnpm test` | 运行 Rstest 单元及 DOM 项目 |
+| `pnpm test:e2e` | 运行 Playwright E2E |
+| `pnpm start` | 启动生产构建 |
 
-`pnpm-workspace.yaml` overrides vulnerable `@xmldom/xmldom` 0.9.x releases to
-0.9.12 for GHSA-965w-775f-mr7g. Nextra pulls it in through MathJax and
-`speech-rule-engine@4.1.2`, which pins 0.9.8. Keep the override until the
-upstream dependency chain resolves a patched version without it; regenerate
-`pnpm-lock.yaml` and verify the docs build when changing this constraint.
+单元测试位于 `tests/unit/`。纯逻辑使用 node 项目；只有真实 DOM、React effect 或组件
+交互需要 `*.dom.test.tsx`。Playwright 测试位于 `tests/e2e/`，通常通过
+`page.route()` 拦截 Gateway 请求；fixtures 必须与当前 API schema 一致。
 
-## Commands
+开发服务器默认使用 Webpack。只有诊断本地 bundler 问题时才设置
+`DEER_FLOW_DEV_BUNDLER=turbo`。宿主机 pnpm 命令经 `scripts/pnpm.py` 运行，以遵循仓库
+锁定的 pnpm 版本。
 
-| Command          | Purpose                                       |
-| ---------------- | --------------------------------------------- |
-| `pnpm dev`       | Start the development server with Webpack     |
-| `pnpm build`     | Production build                              |
-| `pnpm check`     | Lint + type check (run before committing)     |
-| `pnpm lint`      | ESLint only                                   |
-| `pnpm lint:fix`  | ESLint with auto-fix                          |
-| `pnpm format`    | Prettier check (`pnpm format:write` to apply) |
-| `pnpm test`      | Run unit tests with Rstest                    |
-| `pnpm test:e2e`  | Run E2E tests with Playwright (Chromium)      |
-| `pnpm typecheck` | TypeScript type check (`tsc --noEmit`)        |
-| `pnpm start`     | Start production server                       |
+## 源码布局
 
-Unit tests live under `tests/unit/` and mirror the `src/` layout (e.g., `tests/unit/core/api/stream-mode.test.ts` tests `src/core/api/stream-mode.ts`). Powered by Rstest; import source modules via the `@/` path alias.
+- `src/app/`：首页、登录/初始化/认证回调、工作台路由、产物查看器和同源 API handlers。
+- `src/app/workspace/`：`analysis/**`、`chats/**`、`datasources`、`metrics`、
+  `reports`、`history`、`scheduled-tasks`。
+- `src/core/threads/`：线程创建、历史、stream、元数据与运行生命周期 hooks。
+- `src/core/analytics/`：严格响应 schema、API、query hooks 和安全 trace 投影。
+- `src/core/api/`：Gateway fetcher、LangGraph client、stream mode 检查和静态模式 fallback。
+- `src/core/tasks/`：普通 `task` 工具子代理的实时进度和历史步骤。
+- `src/core/i18n/`：中文与英文词典；InsightFlow 新增的用户文案必须同时提供两种语言。
+- `src/components/workspace/`：聊天、Analytics、设置、定时任务和产物界面。
+  `ui/`、`ai-elements/` 是生成组件，不要手工修改。
 
-Webpack is the default development bundler. Use `DEER_FLOW_DEV_BUNDLER=turbo` with `pnpm dev` to opt in to Turbopack when diagnosing a local Next.js bundler issue.
+## 运行时边界
 
-Rstest runs them as two projects (`rstest.config.ts`). `*.test.ts` / `*.test.tsx` run in a plain **node** environment — that is nearly the whole suite, and it is the default for anything that is pure logic. `*.dom.test.ts` / `*.dom.test.tsx` run in **happy-dom**, for tests that need a document: hooks driven through `renderHook` from `@testing-library/react`, and components. Keep the split — a DOM environment costs roughly 3x the runtime of the node suite, so tests that do not render should not opt into it. A hook whose behavior only exists under real React (effect ordering, cleanup on unmount, re-render on store change) belongs in a `.dom.test.*` file rather than a node test that mocks `react` itself.
+标准开发和 Docker 环境经 Nginx 访问 Gateway。默认保留空的
+`NEXT_PUBLIC_BACKEND_BASE_URL` 和 `NEXT_PUBLIC_LANGGRAPH_BASE_URL=/api/langgraph`。
+仅当显式分离前后端本地开发时才直接配置 Gateway URL。
 
-E2E tests live under `tests/e2e/` and use Playwright with Chromium. They mock all backend APIs via `page.route()` network interception and test real page interactions (navigation, chat input, streaming responses). Config: `playwright.config.ts`. The real-backend auth contract in `tests/e2e-real-backend/auth-disabled-contract.spec.ts` and `backend/tests/test_auth_me_permissions.py` pin the complete route-permission list; update both when adding registered permissions (including `projects:read/write/delete`).
+线程 hooks 负责提交和 stream 状态。支持的 stream mode 以
+`src/core/api/stream-mode.ts` 为准；不支持的模式必须在发 HTTP 请求前拒绝。SSE replay
+gap 后应重新载入持久状态并继续订阅；gap 不是运行结束，也不能取消仍在执行的 run。
 
-The dedicated `run-history.ts` hook replaces the unpaged runs hook. Show counts
-only after a successful history read, never during initial loading or errors.
-Scheduled run history uses task/page query keys and the existing live offset API.
-Fetch 51 rows to display 50 plus a next-page sentinel; never append pages. Only
-page zero polls or refreshes on focus/reconnect. Task switches reset to page zero,
-and consumed AbortSignals cancel obsolete reads. Live offsets are not snapshots;
-explicit mutations or navigation may observe newly inserted runs.
+定时任务固定运行 Lead Agent。页面不得查询已删除的 Agent catalog 或发送任意
+`assistant_id`。用户没有主动修改时间间隔时，保存和复制操作都应保留原频率。
 
-## Architecture
+静态模式只可为仍被保留的只读 Gateway 路由提供 fixtures。写请求和未知路由应在本地失败；
+不能为已删除的 Agent、子代理或 IM API 添加伪造成功响应。
 
-```
-Frontend (Next.js) ──▶ LangGraph SDK ──▶ LangGraph Backend (lead_agent)
-                                              ├── Sub-Agents
-                                              └── Tools & Skills
-```
+## Analytics 数据边界
 
-The frontend is a stateful chat application. Users create **threads** (conversations), send messages, set thread-scoped `/goal` completion conditions, and receive streamed AI responses. The backend orchestrates agents that can produce **artifacts** (files/code), **todos**, and goal state updates.
+`src/core/analytics/` 是前端访问受控 Analytics API 的唯一入口。请求统一使用
+`@/core/api/fetcher`，响应必须通过严格 Zod schema。SQL、凭证、DSN、计划令牌、结果行和
+异常原文不能进入 query key、trace 或面向用户的错误消息。前端管理员判断只控制界面，
+Gateway 授权仍是最终边界。
 
-### Source Layout (`src/`)
+分析页复用常规聊天 providers 和线程 stream。Analytics trace 只安全投影审核通过的工具名
+与字段，不创建第二份运行状态，也不渲染原始工具 payload。
 
-- **`app/`** — Next.js App Router. Routes include `/` (landing), `/showcase/[thread_id]` (allowlisted public read-only demos), `/workspace/chats/[thread_id]` (authenticated chat), `/workspace/agents/[agent_name]` and `/workspace/agents/new` (custom agents), `/artifacts/view` (chrome-free window that renders Markdown or CSV/TSV artifacts with the panel's own renderer), `/blog/…`, the `(auth)/{login,setup,auth/callback}` flow, `/[lang]/docs/…`, and `/api/…` route handlers (e.g. `/api/memory`).
-- **`components/`** — React components:
-  - `ui/` — Shadcn UI primitives (auto-generated, ESLint-ignored)
-  - `ai-elements/` — Vercel AI SDK elements (auto-generated, ESLint-ignored)
-  - `workspace/` — Chat page components (messages, artifacts, settings)
-  - `landing/` — Landing page sections
-  - `docs/` — Docs / MDX rendering components
-- **`core/`** — Business logic, the heart of the app. Domains include `threads/` (creation, streaming, state), `api/` (LangGraph client singleton), `agents/` (custom agents), `subagents/` (runtime worker catalog and administrator mutations), `auth/` (authentication), `artifacts/`, `channels/` (IM connections), `integrations/` (managed third-party integration status/install clients such as Lark CLI), `i18n/` (en-US, zh-CN), `settings/`, `memory/`, `skills/`, `messages/`, `mcp/`, `models/`, `input-polish/` (pre-send draft rewrite API), `voice-input/` (browser speech-recognition helpers), `suggestions/`, `tasks/`, `todos/`, `tools/`, `workspace-changes/` (run-scoped changed-file summaries and diff fetching), `config/`, `notification/`, `blog/`, plus rendering helpers (`rehype/`, `streamdown/`) and `utils/`.
-- **`hooks/`** — Shared React hooks
-- **`lib/`** — Utilities (`cn()` from clsx + tailwind-merge)
-- **`content/`** — MDX content (blog posts, docs) rendered by the app
-- **`styles/`** — Global CSS with Tailwind v4 `@import` syntax and CSS variables for theming
-- **`typings/`** — Ambient TypeScript declarations
-- Root files: `env.js` (env validation), `mdx-components.ts` (MDX component map)
+## 国际化与样式
 
-More specific `AGENTS.md` files under `src/` contain the frontend sections split from this file.
+InsightFlow 新增的前端文案以中文为主，并进入现有 i18n 体系，同时提供 `zh-CN` 与
+`en-US`。不要在 JSX 中内联语言分支；稳定错误码和机器日志字段保持英文。
 
-## Code Style
+根布局保持静态：`src/app/layout.tsx` 不读取 cookies，也不导入聊天专用 KaTeX /
+Streamdown 样式。认证 locale provider 由登录和工作台布局负责。富文本 CSS 只加载在实际
+渲染对应内容的页面。
 
-Custom Agent `display_name` is an optional Unicode UI label, edited in
-`AgentSettingsDialog`. Use it with a fallback to `name` for gallery/chat text;
-keep `name` for React identity, URLs, requests, and runtime `agent_name`.
-The 100-code-point budget uses `[...value.trim()].length`, matching Pydantic;
-do not use HTML `maxLength`, which counts UTF-16 code units instead.
+当前 pnpm workspace override 用于约束保留的 Nextra/MathJax 依赖链中的
+`@xmldom/xmldom`。只有依赖链不再解析易受影响版本后才能移除 override；调整该项时先
+运行生产构建。
 
-- **Imports**: Enforced ordering (builtin → external → internal → parent → sibling), alphabetized, newlines between groups. Use inline type imports: `import { type Foo }`.
-- **Unused variables**: Prefix with `_`.
-- **Class names**: Use `cn()` from `@/lib/utils` for conditional Tailwind classes.
-- **Path alias**: `@/*` maps to `src/*`.
-- **Components**: `ui/` and `ai-elements/` are generated from registries (Shadcn, MagicUI, React Bits, Vercel AI SDK) — don't manually edit these.
+## 提交前检查
 
-## 语言与 i18n
-
-InsightFlow 自有内容以中文为主要写作语言（见仓库级 `AGENTS.md`）。前端新增的用户可见文案必须进入现有
-i18n 体系（`src/core/i18n/`），至少同时提供 `zh-CN` 与 `en-US` 两套词条；中文文案是 InsightFlow 新页面
-的主要写作基准，同时保留中英切换能力。禁止在 JSX/TSX 中直接硬编码两套语言，或用条件表达式内联两份文案。
-稳定错误码与机器日志字段保持英文，只在展示层翻译。本阶段只建立规范：不修改默认语言，也不改动现有页面。
-
-## Environment
-
-Scheduled-task interval forms preserve the initial `every_seconds` on mount,
-timezone changes, and untouched blur. The backend's configurable interval minimum
-can be lower than the UI's default 60-second floor. Apply that UI floor only after
-an explicit amount/unit edit so editing metadata or duplicating a task cannot
-silently change its cadence. Component regressions live in
-`tests/unit/components/workspace/scheduled-task-schedule-input.dom.test.tsx`.
-
-Backend API URLs are optional; an nginx proxy is used by default:
-
-```
-NEXT_PUBLIC_BACKEND_BASE_URL=http://localhost:8001
-NEXT_PUBLIC_LANGGRAPH_BASE_URL=http://localhost:8001/api
-```
-
-Leave these unset for the standard `make dev` / Docker flow, where nginx serves the public `/api/langgraph/*` prefix and rewrites it to Gateway's native `/api/*` routes.
-
-`make build-static` creates a standalone read-only demo and copies `.next/static`
-and `public` into the output. In static mode, `core/api/static-response.ts`
-resolves Gateway REST reads with empty capability/catalog responses or existing
-same-origin `/mock/api` fixtures; writes and unknown API routes fail locally.
-The homepage client counter calls `/github-stars`, outside the Gateway proxy.
-That dynamic route reads the server-only `GITHUB_OAUTH_TOKEN` at runtime, caches
-GitHub data for one hour, and returns 204 when the count is unavailable. Start
-the standalone server from `frontend/` with `node --env-file=.env
-.next/standalone/server.js` to load the current credentials.
-
-To reach a dev server on anything other than localhost — a LAN address, or a proxied hostname — list the host in `DEER_FLOW_DEV_ALLOWED_ORIGINS` (comma-separated; a full URL is reduced to its host). It feeds Next's `allowedDevOrigins`, which gates `/_next/*`, fonts, and HMR. Without it those requests get a 403 and the page renders server-side but never hydrates, so nothing on it — including the login form — responds. Development only; production builds ignore it.
-
-## Resources
-
-- [LangGraph Documentation](https://langchain-ai.github.io/langgraph/)
-- [LangChain Core Concepts](https://js.langchain.com/docs/concepts)
-- [TanStack Query Documentation](https://tanstack.com/query/latest)
-- [Next.js App Router](https://nextjs.org/docs/app)
-
-## Contributing
-
-When adding features:
-
-1. Follow the established `src/` structure
-2. Add TypeScript types and proper error handling
-3. Write unit tests under `tests/unit/` (`pnpm test`) and E2E tests under `tests/e2e/` (`pnpm test:e2e`)
-4. Run `pnpm check` before committing
-5. Update this `AGENTS.md` when architecture, commands, or conventions change
-
-Route asset budgets are enforced with `pnpm perf:check`. The command measures
-`/login` from a normal production build, then builds in static-demo mode for the
-fixture-backed workspace routes. It starts the production server on temporary local
-ports, measures the unique JavaScript and CSS files referenced by representative
-routes, writes the detailed result to `.next/performance-results.json`, and compares
-totals with `performance-budgets.json`. Fix route ownership or split points when a
-budget fails; do not raise a ceiling without documenting and reviewing the measured
-regression.
-
-Chat archive is a thread metadata flag (`deerflow_archived === true`), independent
-of run status. Sidebar and Chats explicitly request the Gateway's optional
-`archived` filter through `searchThreadsByArchive`; the SDK drops this extension,
-so use the authenticated REST fetcher. Static demos retain SDK fixture queries.
-`core/threads/archive.ts` waits for the write, cancels stale reads, merges only the
-owned flag into metadata snapshots, then restarts metadata reads and resets list
-pagination. Keep both default and Custom Agent header restore controls in sync.
-Pin/archive responses must not merge unrelated metadata flags: out-of-order
-organization requests can otherwise roll back each other's confirmed state.
-Run-created optimistic snapshots have no archive flag: refresh archive-filtered
-lists from the server instead of inserting those snapshots into either view.
-
-### Delimited artifact preview
-
-CSV/TSV previews share `artifact-table-preview.tsx` between the panel and standalone viewer. Papa Parse runs only inside `delimited-preview.worker.ts`; `use-delimited-preview.ts` bounds input before transfer, cancels stale work, and enforces a five-second timeout. The parser detects the first record separator outside quoted fields and passes it explicitly to Papa Parse, so embedded newlines in an incomplete quoted field cannot corrupt newline detection. It retains at most 202 logical records and 50 columns, discarding an incomplete final record from truncated input. UI pagination displays at most 200 data rows in pages of 50. Keep the table mounted but inactive when switching to source so header/pagination state survives; changing file identity resets it. Pending `write_file` content stays in source mode until success.
-
-Custom skill export is admin-only and disabled in static demos. The lazy
-`skill-export-dialog.tsx` must abort requests and ignore stale callbacks on close
-or user/skill changes. `core/skills/export.ts` owns the revision-bound Blob download;
-HTTP 409 requires explicit preview refresh. Keep file lists paginated and diagnostics
-localized. Browser handoff does not prove the file was saved to disk.
-
-Sidebar rows request deletion through `ThreadDeleteDialogProvider`, hosted in
-`WorkspaceSidebar` outside the virtualized flat/project lists. Keep the selected
-thread snapshot and retry UI alive when a partial deletion removes its row.
-Focus Cancel on open and after a failed deletion has re-enabled the actions;
-block dismissal while deletion is pending. Show the error message when available,
-with a localized fallback, and log the rejection for debugging. The shared
-delete helper accepts remote 404 (not 403) before retrying local cleanup, and
-`onDeleted` runs only after both deletion steps succeed.
-
-## Capability Center
-
-`/workspace/capabilities` owns Plugins and Skills navigation. Plugins composes the
-MCP manager and a lazily loaded Lark configuration dialog; installation, OAuth,
-mutation permissions, and cache ownership remain in the existing hooks. Skill display names/summaries are presentation
-metadata; runtime names and full descriptions remain unchanged. Public, custom,
-integration, and legacy sources must stay distinct. Community currently offers
-archive import, not a remote marketplace. Screenshot E2E fixtures are demo data.
-
-## InsightFlow Analytics data layer (Phase 4)
-
-`src/core/analytics/` is the only path to the governed analytics API. It is split into
-`types.ts` (const-tuple enums + request/view types), `schemas.ts` (Zod + `parseExternal`),
-`api.ts`, `hooks.ts` and `trace.ts`. There is deliberately **no** barrel file: pages import the
-concrete module they need.
-
-- Every HTTP call goes through `@/core/api/fetcher` (credentials + CSRF inheritance). Never call
-  `globalThis.fetch` from this domain.
-- Every response is parsed by a **`.strict()`** Zod schema. `z.passthrough()` and undeclared
-  fields are forbidden: a schema that forwards an unknown payload is how a sensitive field reaches
-  the DOM. Parse failures raise `AnalyticsParseError`, which carries only the stable reason
-  `invalid_analytics_response` — never the offending value.
-- Request failures raise `AnalyticsRequestError` with `.status` and `.code` read from the server's
-  `{"detail": {"code": …}}` body. An unrecognised body yields `code: null`; server `detail` text is
-  never surfaced, and neither are URLs, query strings or headers.
-- Query keys are rooted at `analytics` (`analyticsKeys`). Keys carry only identifiers, page sizes
-  and non-sensitive values — never SQL, plan tokens, credentials, DSNs or result rows. Mutations
-  invalidate only the exact affected keys; never the whole root.
-- Keyset paging uses `useInfiniteQuery` with the server cursor as `pageParam`
-  (`nextAuditCursor` / `nextReportCursor` return `null` for "no more", which callers convert to
-  `undefined` because `null` would loop back to page one). `refetchOnWindowFocus` is off: audited
-  history is sensitive, so pages replay only on an explicit user action.
-- Admin controls are gated on `useAnalyticsIsAdmin()`, but that is a UX gate only. A server `403`
-  must still render the forbidden state.
-- `trace.ts` projects the existing LangGraph messages into a structured trace. It is a **pure
-  function over messages** — no second run-state source, no extra store, no extra SSE channel — and
-  it reads only approved tool names and approved JSON fields. `query_business_data` arguments (the
-  SQL), result rows, plan tokens, DSNs and exception text have no path into `AnalyticsTraceStep`;
-  unknown tools and malformed payloads become an "unparsed safe event" instead of a rendered object.
-  Never widen this whitelist to "just show the raw tool call".
-- The trace panel (`src/components/analytics/analytics-trace-panel.tsx`) is mounted from
-  `chat-page.tsx` only when the pathname is under `/workspace/analysis`; it is a right-hand
-  collapsible column on wide screens and a drawer below `lg`, and it never produces horizontal
-  overflow.
-- `/workspace/analysis/[thread_id]` (and `/workspace/analysis/new`, matched by the same dynamic
-  segment) reuses the existing `ChatPage` and chat providers verbatim. Do not fork the streaming
-  state machine, and do not change `/workspace/chats/**` behaviour.
-
-All new analytics copy lives in `src/core/i18n/locales/analytics.{ts,zh-CN.ts,en-US.ts}` and is
-merged into the existing dictionaries; the Chinese file is the design baseline.
+1. 遵循目标目录最近的 `AGENTS.md`。
+2. 行为变更补充或更新 `tests/unit/`、`tests/e2e/` 测试。
+3. 运行 `pnpm format:write`、`pnpm check`、相关测试和 `pnpm build`。
+4. 路由、命令或模块边界变化时同步更新本文件。

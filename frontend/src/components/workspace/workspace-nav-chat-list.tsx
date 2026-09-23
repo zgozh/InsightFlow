@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  BotIcon,
   CalendarClock,
   ChartColumnIcon,
   DatabaseIcon,
@@ -16,16 +15,10 @@ import { usePathname } from "next/navigation";
 
 import {
   SidebarGroup,
-  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { useSettingsDialog } from "@/components/workspace/settings";
 import { useI18n } from "@/core/i18n/hooks";
 

@@ -164,8 +164,8 @@ def test_csrf_is_enforced_for_routes_mounted_under_the_webhook_prefix():
 
 
 def test_csrf_exemptions_follow_the_projection():
-    # Genuine host webhook: no mount, exempt.
-    assert should_check_csrf(_request("/api/webhooks/github", method="POST")) is False
+    # Genuine host webhook: no mount, exempt from browser CSRF tokens.
+    assert should_check_csrf(_request("/api/webhooks/provider", method="POST")) is False
     # Same wire path, but the router is matching "/github" inside a mount --
     # not the host's webhook namespace, so CSRF still applies.
     assert should_check_csrf(_request("/api/webhooks/github", "/api/webhooks", method="POST")) is True

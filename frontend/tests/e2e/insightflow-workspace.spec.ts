@@ -269,6 +269,7 @@ test.describe("InsightFlow workspace", () => {
   test("the analysis trace shows governed evidence and never the SQL", async ({
     page,
   }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
     await openWorkspacePage(page, `/workspace/analysis/${MOCK_THREAD_ID}`);
 
     const panel = page.getByTestId("analytics-trace-panel");

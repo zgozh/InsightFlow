@@ -342,7 +342,7 @@ def get_config() -> AppConfig:
     snapshot.
 
     Hot-reload boundary: fields backed by startup-time singletons
-    (engines, sandbox provider, IM channels, logging handler) require a
+    (engines, sandbox provider, logging handler) require a
     process restart to change at runtime. The authoritative list lives in
     :mod:`deerflow.config.reload_boundary` and is mirrored by the
     standardised ``"startup-only:"`` prefix on the matching

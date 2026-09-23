@@ -23,8 +23,8 @@ describe("interaction-only bundle boundaries", () => {
     const dialog = read(
       "src/components/workspace/settings/settings-dialog.tsx",
     );
-    // account / appearance / memory / subagents / notification / about
-    expect(dialog.match(/dynamic\(/g)).toHaveLength(6);
+    // account / appearance / memory / notification / about
+    expect(dialog.match(/dynamic\(/g)).toHaveLength(5);
     expect(dialog).not.toMatch(
       /import \{ \w+SettingsPage \} from "@\/components\/workspace\/settings\//,
     );

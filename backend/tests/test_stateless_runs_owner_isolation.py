@@ -170,9 +170,7 @@ def test_stream_shared_thread_passes_owner_check():
 
 
 def test_stream_internal_role_scoped_by_owner_header():
-    """IM channels run with the internal system role on behalf of the
-    connection owner named in X-DeerFlow-Owner-User-Id — the owner check is
-    scoped to that owner rather than bypassed."""
+    """Trusted internal calls are scoped to their X-DeerFlow-Owner-User-Id."""
     from app.gateway.internal_auth import INTERNAL_OWNER_USER_ID_HEADER_NAME
 
     with _client(INTERNAL_USER) as (client, create_or_reject):

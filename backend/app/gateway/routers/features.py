@@ -14,42 +14,14 @@ from app.gateway.conversation_access import conversation_references_enabled
 from app.gateway.deps import get_config
 from app.gateway.run_models import MAX_CONVERSATION_REFERENCES
 from deerflow.config.app_config import AppConfig
-from deerflow.subagents.capacity import configured_subagent_max_running
 
 router = APIRouter(prefix="/api", tags=["features"])
-
-
-class AgentsApiFeature(BaseModel):
-    """Availability of the custom-agent management API.
-
-    The agents_api surface was removed in Phase 5; the key stays in the
-    response as a constant ``false`` so the frontend feature type still
-    resolves without a client-side migration.
-    """
-
-    enabled: bool = Field(default=False, description="Whether the agents_api routes are exposed over HTTP")
 
 
 class McpTasksFeature(BaseModel):
     """Availability of the durable MCP task runtime."""
 
     enabled: bool = Field(..., description="Whether durable MCP task APIs and UI are available")
-
-
-class SubagentBatchesFeature(BaseModel):
-    """Persistence, worker, and process capacity for native-subagent batches.
-
-    The durable batch runtime was removed in Phase 5B; ``enabled``,
-    ``repository_available`` and ``worker_running`` stay in the response as
-    constant ``false`` so the frontend feature type still resolves. Only
-    ``max_running`` remains live, because the ordinary native-subagent
-    admission controller it reports is still configured at startup.
-    """
-
-    enabled: bool = Field(default=False, description="Compatibility alias for worker_running; always false")
-    repository_available: bool = Field(default=False, description="Whether durable batch history APIs are available; always false")
-    worker_running: bool = Field(default=False, description="Whether this Gateway process is executing durable batch work; always false")
-    max_running: int = Field(..., description="Native subagent execution slots in this Gateway process")
 
 
 class ConversationReferencesFeature(BaseModel):
@@ -62,9 +34,7 @@ class ConversationReferencesFeature(BaseModel):
 class FeaturesResponse(BaseModel):
     """Frontend-facing feature availability flags."""
 
-    agents_api: AgentsApiFeature
     mcp_tasks: McpTasksFeature
-    subagent_batches: SubagentBatchesFeature
     conversation_references: ConversationReferencesFeature
 
 
@@ -77,22 +47,10 @@ class FeaturesResponse(BaseModel):
 async def list_features(request: Request, config: AppConfig = Depends(get_config)) -> FeaturesResponse:
     """Return availability of optional frontend features."""
     return FeaturesResponse(
-        # Constant false: the custom-agent management API was removed. The key
-        # is retained so the frontend feature type keeps resolving.
-        agents_api=AgentsApiFeature(enabled=False),
         # MCP task bindings and the submitter are startup-scoped. Report the
         # capability that actually started rather than a hot-reloaded config
         # value that would require a Gateway restart to take effect.
         mcp_tasks=McpTasksFeature(enabled=bool(getattr(request.app.state, "mcp_tasks_available", False))),
-        subagent_batches=SubagentBatchesFeature(
-            # The durable batch service and its repository were removed, so
-            # every availability field is a constant false. ``max_running``
-            # still reports the live ordinary-subagent admission capacity.
-            enabled=False,
-            repository_available=False,
-            worker_running=False,
-            max_running=configured_subagent_max_running(),
-        ),
         # Same predicate as run admission (``prepare_conversation_reader``), read
         # through ``get_config`` so enabling the tool in config.yaml shows up
         # without a restart. A UI with no entry point still needs no change here.

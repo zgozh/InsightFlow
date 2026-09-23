@@ -6,8 +6,13 @@ Run from repo root:
 
 from __future__ import annotations
 
+import importlib.util
+from pathlib import Path
+from types import SimpleNamespace
+
 import yaml
 from wizard import ui as wizard_ui
+from wizard import writer as wizard_writer
 from wizard.providers import (
     LLM_PROVIDERS,
     SEARCH_PROVIDERS,
@@ -17,6 +22,7 @@ from wizard.providers import (
     WebProvider,
     with_thinking_support,
 )
+from wizard.steps import execution as execution_step
 from wizard.steps import llm as llm_step
 from wizard.steps import search as search_step
 from wizard.writer import (
@@ -362,43 +368,18 @@ class TestBuildMinimalConfig:
         assert model["output_version"] == "responses/v1"
         assert model["supports_vision"] is True
 
-    def test_can_enable_selected_channel_connections(self):
+    def test_legacy_channel_connections_are_not_emitted(self):
         content = build_minimal_config(
             provider_use="langchain_openai:ChatOpenAI",
             model_name="gpt-4o",
             display_name="OpenAI",
             api_key_field="api_key",
             env_var="OPENAI_API_KEY",
-            channel_connection_providers=["feishu", "slack"],
+            base_config={"channel_connections": {"enabled": True}},
         )
 
         data = yaml.safe_load(content)
-        channel_connections = data["channel_connections"]
-
-        assert channel_connections["enabled"] is True
-        assert channel_connections["feishu"]["enabled"] is True
-        assert channel_connections["slack"]["enabled"] is True
-        assert channel_connections["telegram"]["enabled"] is False
-        assert channel_connections["discord"]["enabled"] is False
-        assert channel_connections["dingtalk"]["enabled"] is False
-        assert channel_connections["wechat"]["enabled"] is False
-        assert channel_connections["wecom"]["enabled"] is False
-
-    def test_channel_connections_disabled_when_no_channels_selected(self):
-        content = build_minimal_config(
-            provider_use="langchain_openai:ChatOpenAI",
-            model_name="gpt-4o",
-            display_name="OpenAI",
-            api_key_field="api_key",
-            env_var="OPENAI_API_KEY",
-            channel_connection_providers=[],
-        )
-
-        data = yaml.safe_load(content)
-        channel_connections = data["channel_connections"]
-
-        assert channel_connections["enabled"] is False
-        assert all(not config["enabled"] for provider, config in channel_connections.items() if provider != "enabled")
+        assert "channel_connections" not in data
 
 
 class TestThinkingSupport:
@@ -769,3 +750,63 @@ class TestSearchStep:
         assert result.search_api_key == "shared-api-key"
         assert result.fetch_api_key == "shared-api-key"
         assert prompts == ["STUB_API_KEY"]
+
+
+def test_interactive_setup_wizard_completes_without_removed_im_step(monkeypatch, tmp_path, capsys):
+    """make setup must not import or report the deleted IM setup step."""
+    script_path = Path(__file__).resolve().parents[2] / "scripts" / "setup_wizard.py"
+    spec = importlib.util.spec_from_file_location("insightflow_setup_wizard", script_path)
+    assert spec is not None and spec.loader is not None
+    setup_wizard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(setup_wizard)
+
+    # 将向导文件指向临时目录，避免集成覆盖触碰开发者的 config.yaml/.env。
+    temp_script = tmp_path / "scripts" / "setup_wizard.py"
+    temp_script.parent.mkdir()
+    monkeypatch.setattr(setup_wizard, "__file__", str(temp_script))
+    monkeypatch.setattr(setup_wizard, "_is_interactive", lambda: True)
+    monkeypatch.setattr(wizard_ui, "ask_yes_no", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(wizard_ui, "bold", lambda value: value)
+    monkeypatch.setattr(wizard_ui, "cyan", lambda value: value)
+    monkeypatch.setattr(wizard_ui, "green", lambda value: value)
+    for function_name in ("print_header", "print_info", "print_success", "yellow"):
+        monkeypatch.setattr(wizard_ui, function_name, lambda *_args, **_kwargs: "")
+
+    provider = SimpleNamespace(
+        use="langchain_openai:ChatOpenAI",
+        display_name="OpenAI",
+        api_key_field="api_key",
+        env_var=None,
+        extra_config_for=lambda _model: None,
+    )
+    monkeypatch.setattr(
+        llm_step,
+        "run_llm_step",
+        lambda *_args: SimpleNamespace(provider=provider, model_name="gpt-4o", api_key=None, base_url=None),
+    )
+    monkeypatch.setattr(
+        search_step,
+        "run_search_step",
+        lambda *_args: SimpleNamespace(
+            search_provider=None,
+            search_api_key=None,
+            fetch_provider=None,
+            fetch_api_key=None,
+        ),
+    )
+    monkeypatch.setattr(
+        execution_step,
+        "run_execution_step",
+        lambda *_args: SimpleNamespace(
+            sandbox_use="deerflow.sandbox.local:LocalSandboxProvider",
+            allow_host_bash=False,
+            include_bash_tool=False,
+            include_write_tools=True,
+        ),
+    )
+    written: dict[str, object] = {}
+    monkeypatch.setattr(wizard_writer, "write_config_yaml", lambda _path, **kwargs: written.update(kwargs))
+
+    assert setup_wizard.main() == 0
+    assert "channel_connection_providers" not in written
+    assert "IM channels" not in capsys.readouterr().out

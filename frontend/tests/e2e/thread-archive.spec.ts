@@ -138,28 +138,22 @@ test("active list includes legacy chats beyond a full page of archived chats", a
   ).toBeVisible();
 });
 
-for (const customAgent of [false, true]) {
-  test(`archived ${customAgent ? "custom agent" : "default"} chat can be restored from its mobile header`, async ({
+test("archived chat can be restored from its mobile header", async ({
     page,
   }, testInfo) => {
     await page.setViewportSize({ width: 390, height: 844 });
     mockLangGraphAPI(page, {
-      agents: [{ name: "researcher", description: "Research assistant" }],
       threads: [
         {
           thread_id: CHAT,
           title: "Archived report",
-          metadata: {
-            deerflow_archived: true,
-            ...(customAgent ? { agent_name: "researcher" } : {}),
-          },
+          metadata: { deerflow_archived: true },
         },
       ],
     });
-    const url = customAgent
-      ? `/workspace/agents/researcher/chats/${CHAT}`
-      : `/workspace/chats/${CHAT}`;
-    await page.goto(url, { waitUntil: "domcontentloaded" });
+    await page.goto(`/workspace/chats/${CHAT}`, {
+      waitUntil: "domcontentloaded",
+    });
     const restore = page.getByRole("button", {
       name: "Restore chat",
       exact: true,
@@ -180,4 +174,3 @@ for (const customAgent of [false, true]) {
     await expect(restore).toHaveCount(0);
     await expect(page).toHaveURL(new RegExp(CHAT));
   });
-}

@@ -262,9 +262,8 @@ deer-flow/
 ├── backend/                 # Backend application
 │   ├── packages/harness/   # deerflow-harness package (import: deerflow.*)
 │   │   └── deerflow/       # Agents, tools, sandbox, MCP, skills, config
-│   ├── app/                # FastAPI Gateway + IM channels (import: app.*)
+│   ├── app/                # FastAPI Gateway + Analytics API (import: app.*)
 │   │   ├── gateway/        # Gateway API and LangGraph-compatible runtime (port 8001)
-│   │   └── channels/       # IM channel integrations
 │   ├── docs/               # Backend documentation
 │   └── Makefile            # Backend commands
 ├── frontend/               # Frontend application

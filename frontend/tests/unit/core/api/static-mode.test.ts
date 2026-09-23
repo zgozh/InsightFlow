@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, rs } from "@rstest/core";
 
-import { listAgents } from "@/core/agents/api";
 import { fetch as apiFetch } from "@/core/api/fetcher";
 import { fetchFeatures } from "@/core/features/api";
 import { loadMemory } from "@/core/memory/api";
@@ -11,7 +10,6 @@ import {
   fetchThreadScheduledTasks,
 } from "@/core/scheduled-tasks/api";
 import { loadSkills } from "@/core/skills/api";
-import { listSubagents } from "@/core/subagents/api";
 import { loadSuggestionsConfig } from "@/core/suggestions/api";
 import { fetchSubtaskSteps } from "@/core/tasks/api";
 import { fetchThreadTokenUsage } from "@/core/threads/api";
@@ -46,12 +44,8 @@ afterEach(() => {
 describe("static website API requests", () => {
   it("loads optional capabilities and empty catalogs without the Gateway", async () => {
     await expect(fetchFeatures()).resolves.toMatchObject({
-      agents_api: { enabled: false },
       mcp_tasks: { enabled: false },
-      subagent_batches: { repository_available: false, worker_running: false },
     });
-    await expect(listAgents()).resolves.toEqual([]);
-    await expect(listSubagents()).resolves.toEqual([]);
     await expect(loadSuggestionsConfig()).resolves.toMatchObject({
       enabled: false,
     });
@@ -86,7 +80,7 @@ describe("static website API requests", () => {
       "http://127.0.0.1:3000/mock/api/skills",
     ]);
     await expect(fetchFeatures()).resolves.toMatchObject({
-      agents_api: { enabled: false },
+      conversation_references: expect.anything(),
     });
     expect(network).toHaveBeenCalledTimes(1);
   });
@@ -103,15 +97,8 @@ describe("static website API requests", () => {
       }),
     ).rejects.toThrow("Unavailable in static demo mode");
     expect((await apiFetch("/api/new-feature")).status).toBe(404);
-    expect(
-      (
-        await apiFetch(
-          new Request("http://127.0.0.1:3000/api/subagents", {
-            method: "DELETE",
-          }),
-        )
-      ).status,
-    ).toBe(405);
+    expect((await apiFetch("/api/agents")).status).toBe(404);
+    expect((await apiFetch("/api/subagents")).status).toBe(404);
     expect(network).not.toHaveBeenCalled();
   });
 
@@ -130,10 +117,8 @@ describe("static website API requests", () => {
         expect.anything(),
       );
       network.mockClear();
-      const response = await apiFetch(
-        new Request(`${origin}/api/subagents`, { method: "DELETE" }),
-      );
-      expect(response.status).toBe(405);
+      const response = await apiFetch(origin + "/api/subagents/example");
+      expect(response.status).toBe(404);
       expect(network).not.toHaveBeenCalled();
     },
   );
@@ -167,9 +152,11 @@ describe("static website API requests", () => {
 
   it("preserves normal backend requests unless the flag is exactly true", async () => {
     env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY = "false";
-    network.mockResolvedValue(Response.json({ agents_api: { enabled: true } }));
+    network.mockResolvedValue(
+      Response.json({ mcp_tasks: { enabled: true } }),
+    );
     await expect(fetchFeatures()).resolves.toMatchObject({
-      agents_api: { enabled: true },
+      mcp_tasks: { enabled: true },
     });
     expect(network).toHaveBeenCalledWith(
       "/api/features",

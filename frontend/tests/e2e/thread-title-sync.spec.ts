@@ -136,7 +136,7 @@ test("a stale metadata response cannot restore the old title after rename", asyn
   });
 
   delayMetadataResponses = true;
-  await page.getByRole("link", { name: "Chats", exact: true }).click();
+  await page.getByRole("link", { name: "Analysis", exact: true }).click();
   await expect(page).toHaveURL(/\/workspace\/chats$/);
   await page
     .locator(

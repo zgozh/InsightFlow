@@ -18,7 +18,6 @@ const THREADS = [
     updated_at: "2025-06-02T12:00:00Z",
   },
 ];
-const DEMO_THREAD_ID = "7cfa5f8f-a2f8-47ad-acbd-da7137baf990";
 const SVG_PROMPT_THREAD_ID = "00000000-0000-0000-0000-000000000777";
 const SVG_PROMPT_MARKER = "LEAK-STRICT-SVG-PROMPT-SHOULD-DISAPPEAR";
 const OPTIMISTIC_PROMPT_MARKER = "LEAK-OPTIMISTIC-SVG-PROMPT-SHOULD-DISAPPEAR";
@@ -371,7 +370,9 @@ test.describe("Thread history", () => {
     await expect
       .poll(() => latestPageRequestCount, { timeout: 15_000 })
       .toBeGreaterThan(latestPageRequestsBeforeSubmit);
-    await expect(page.getByText(followUpPrompt)).toBeVisible();
+    await expect(page.getByText(followUpPrompt)).toBeVisible({
+      timeout: 15_000,
+    });
 
     let preservedDurationFound = false;
     for (let step = 0; step <= 12; step += 1) {
@@ -764,19 +765,24 @@ test.describe("Thread history", () => {
     mockLangGraphAPI(page, {
       threads: [
         {
-          thread_id: DEMO_THREAD_ID,
+          thread_id: MOCK_THREAD_ID,
           title: "Forecasting 2026 Trends and Opportunities",
           updated_at: "2025-06-01T12:00:00Z",
           messages: [
             {
               type: "human",
-              id: `run-human-${DEMO_THREAD_ID}`,
+              id: "run-human-static-mock",
               content: [
                 {
                   type: "text",
-                  text: "This run-message endpoint should not be called.",
+                  text: "What might be the trends and opportunities in 2026?",
                 },
               ],
+            },
+            {
+              type: "ai",
+              id: "run-ai-static-mock",
+              content: "I've created a modern, minimalist website",
             },
           ],
         },
@@ -791,14 +797,14 @@ test.describe("Thread history", () => {
           route
             .request()
             .url()
-            .includes(`/api/langgraph/threads/${DEMO_THREAD_ID}/runs`)
+            .includes(`/api/langgraph/threads/${MOCK_THREAD_ID}/runs`)
         ) {
           backendRunHistoryUrls.push(route.request().url());
           return route.fulfill({
             status: 500,
             contentType: "application/json",
             body: JSON.stringify({
-              error: "mock=true must not load real runs",
+              error: "Mock threads must not load real runs",
             }),
           });
         }
@@ -810,14 +816,14 @@ test.describe("Thread history", () => {
       (route) => {
         if (
           route.request().method() === "GET" &&
-          route.request().url().includes(`/api/threads/${DEMO_THREAD_ID}/runs/`)
+          route.request().url().includes(`/api/threads/${MOCK_THREAD_ID}/runs/`)
         ) {
           backendRunHistoryUrls.push(route.request().url());
           return route.fulfill({
             status: 500,
             contentType: "application/json",
             body: JSON.stringify({
-              error: "mock=true must not load real run messages",
+              error: "Mock threads must not load real run messages",
             }),
           });
         }
@@ -825,7 +831,7 @@ test.describe("Thread history", () => {
       },
     );
 
-    await page.goto(`/showcase/${DEMO_THREAD_ID}`);
+    await page.goto(`/workspace/chats/${MOCK_THREAD_ID}`);
 
     await expect(
       page.getByText("What might be the trends and opportunities in 2026?"),
@@ -834,12 +840,6 @@ test.describe("Thread history", () => {
       page.getByText("I've created a modern, minimalist website"),
     ).toBeVisible();
     expect(backendRunHistoryUrls).toEqual([]);
-  });
-
-  test("public showcase rejects unknown thread IDs", async ({ page }) => {
-    const response = await page.goto("/showcase/not-a-bundled-demo");
-
-    expect(response?.status()).toBe(404);
   });
 
   test("chats list page shows all threads", async ({ page }) => {

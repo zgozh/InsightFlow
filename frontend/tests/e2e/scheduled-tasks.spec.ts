@@ -338,7 +338,7 @@ test("detail pane falls back to a visible task after filters hide the selected t
   );
 });
 
-test("create posts the default lead_agent assistant_id", async ({ page }) => {
+test("scheduled tasks use only the default lead agent", async ({ page }) => {
   let createBody: Record<string, unknown> | null = null;
   page.on("request", (request) => {
     if (
@@ -354,7 +354,7 @@ test("create posts the default lead_agent assistant_id", async ({ page }) => {
   const createForm = page.getByTestId("scheduled-task-create-form");
   await expect(
     createForm.getByTestId("scheduled-task-create-agent"),
-  ).toContainText(/Default agent \(lead_agent\)/i);
+  ).toHaveCount(0);
   await createForm.getByRole("button", { name: "One-time" }).click();
   await createForm.getByLabel("Run at").fill("2026-07-02T09:00");
   await createForm.getByPlaceholder("Task title").fill("Agent pin");
@@ -367,7 +367,7 @@ test("create posts the default lead_agent assistant_id", async ({ page }) => {
   );
 });
 
-test("duplicate copies the source task assistant into the create form", async ({
+test("duplicate keeps the supported lead agent task contract", async ({
   page,
 }) => {
   mockLangGraphAPI(page, {
@@ -377,7 +377,7 @@ test("duplicate copies the source task assistant into the create form", async ({
         id: "task-copy-agent",
         thread_id: null,
         context_mode: "fresh_thread_per_run",
-        assistant_id: "research-bot",
+        assistant_id: "lead_agent",
         title: "Research digest",
         prompt: "Summarize papers",
         schedule_type: "cron",
@@ -397,18 +397,25 @@ test("duplicate copies the source task assistant into the create form", async ({
 
   await page.goto("/workspace/scheduled-tasks");
   await expect(page.getByTestId("scheduled-task-detail")).toContainText(
-    "research-bot",
+    /Default agent \(lead_agent\)/i,
   );
   await page
     .getByTestId("scheduled-task-detail")
     .getByRole("button", { name: "Duplicate" })
     .click();
-  await expect(page.getByTestId("scheduled-task-create-agent")).toContainText(
-    "research-bot",
+  const createForm = page.getByTestId("scheduled-task-create-form");
+  await expect(createForm.getByTestId("scheduled-task-create-agent")).toHaveCount(
+    0,
+  );
+  await expect(createForm.getByPlaceholder("Task title")).toHaveValue(
+    /Research digest/,
+  );
+  await expect(createForm.getByPlaceholder("Prompt")).toHaveValue(
+    "Summarize papers",
   );
 });
 
-test("edit omits assistant_id when the agent is unchanged", async ({
+test("edit keeps the supported lead agent fixed", async ({
   page,
 }) => {
   let patchBody: Record<string, unknown> | null = null;
@@ -427,7 +434,7 @@ test("edit omits assistant_id when the agent is unchanged", async ({
         id: "task-edit-agent",
         thread_id: null,
         context_mode: "fresh_thread_per_run",
-        assistant_id: "research-bot",
+        assistant_id: "lead_agent",
         title: "Research digest",
         prompt: "Summarize papers",
         schedule_type: "cron",
@@ -450,6 +457,9 @@ test("edit omits assistant_id when the agent is unchanged", async ({
     .getByTestId("scheduled-task-detail")
     .getByRole("button", { name: "Edit" })
     .click();
+  await expect(
+    page.getByTestId("scheduled-task-edit-agent"),
+  ).toHaveCount(0);
   await page.getByPlaceholder("Edit title").fill("Renamed digest");
   await page.getByRole("button", { name: "Save edit" }).click();
   await expect(page.getByTestId("scheduled-task-detail")).toContainText(

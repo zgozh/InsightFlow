@@ -9,6 +9,12 @@
 
 ## [未发布]
 
+### InsightFlow Phase 5B
+
+- 移除已退役的 IM 集成依赖与 extras、向导渠道配置和对应的过期依赖探测。
+- 清除孤儿 Agent 与 durable batch 前端 API、设置页、静态 fallback 和无消费者的词条。定时任务固定使用 Lead Agent；Harness 普通 `task` 运行时保留。
+- 更新根 README、当前配置与架构说明，明确 InsightFlow 保留的工作台范围以及外部 AIO provisioner 的客户端边界。
+
 本节累积面向 **2.1.0** 里程碑（[里程碑 2](https://github.com/bytedance/deer-flow/milestone/2)）的工作。
 该里程碑随本次发布收尾，共合并 **765 个 pull request**。
 

@@ -1,195 +1,62 @@
-# DeerFlow Architecture
+# InsightFlow 架构概览
 
-This document is the **top-level architecture overview** for DeerFlow. It explains the
-"big picture" — how the services, layers, and cross-cutting subsystems fit together — and
-points to the module-level guides that own the depth:
+InsightFlow 是基于 DeerFlow v2.1.0-rc0 Agent 运行时构建的受控经营分析工作台。上游归属、
+许可证和保留范围见仓库 [README](../README.md) 与 [LICENSE](../LICENSE)。
 
-- Backend depth → [`backend/AGENTS.md`](../backend/AGENTS.md) and [`backend/docs/ARCHITECTURE.md`](../backend/docs/ARCHITECTURE.md)
-- Frontend depth → [`frontend/AGENTS.md`](../frontend/AGENTS.md)
+## 服务拓扑
 
-DeerFlow 2.0 is a ground-up rewrite of the original Deep Research framework (see
-[`README.md`](../README.md)); it shares no code with v1.
+`make dev` 和 Docker Compose 启动三个服务。Nginx 是对外的统一入口。
 
----
+| 服务 | 容器端口 | 职责 |
+| --- | ---: | --- |
+| Nginx | 2026 | 反向代理；转发 API 并提供前端 |
+| Gateway | 8001 | FastAPI、LangGraph 兼容接口、Agent 运行时和 Analytics API |
+| Frontend | 3000 | Next.js 工作台 |
 
-## 1. What DeerFlow Is
+Nginx 将 `/api/langgraph/*` 映射到 Gateway 的运行时接口，将其他 `/api/*` 请求转发到
+Gateway，其余请求交给前端。Compose 默认只将 Nginx 端口绑定到 loopback；Gateway 端口
+不直接发布到宿主机。PostgreSQL、Redis 和 AIO sandbox 按部署配置提供，不是额外的
+应用入口。
 
-DeerFlow (**D**eep **E**xploration and **E**fficient **R**esearch **Flow**) is an
-open-source **super-agent harness** built on LangGraph. A single "lead agent" orchestrates
-**sub-agents**, **persistent memory**, **sandboxed code execution**, and **extensible
-skills/tools** — all isolated per conversation thread. The frontend is a Next.js chat UI;
-external IM platforms (Feishu, Slack, Telegram, Discord, DingTalk) bridge into the *same*
-agent through the Gateway.
+## 后端分层与运行
 
----
+- `backend/packages/harness/deerflow/` 提供 Agent、middleware、模型、工具、技能、MCP、
+  持久化和 sandbox 抽象，导入前缀为 `deerflow.*`。
+- `backend/app/` 提供 Gateway 与 InsightFlow Analytics 服务，导入前缀为 `app.*`。
+- App 可以依赖 Harness；Harness 不得依赖 App。Python 扩展通过独立的
+  `deerflow-extension-api` 合约贡献受信任组件。
 
-## 2. Service Topology
+Gateway 通过 RunManager、`run_agent()` 和 StreamBridge 驱动 Lead Agent。middleware 负责
+线程数据、上传、沙箱、摘要、标题、计划任务和澄清等生命周期。普通子代理由 `task`
+工具委派；定时任务调用相同的 Gateway run 生命周期。Analytics Agent 工具只能经由受控
+查询和报告服务工作。
 
-A single `make dev` (or Docker stack) runs four cooperating services; Nginx is the only
-public entry point.
+Sandbox 有 Local 和 AIO 两种配置。Local 在 Gateway 主机执行命令，仅面向可信开发环境；
+AIO 将命令放进独立容器。AIO 外部 provisioner 只保留 Gateway 客户端配置，其服务端由
+部署方另行提供，本仓库不包含或启动该服务。
 
-| Service         | Port   | Role                                                                 |
-| --------------- | ------ | ------------------------------------------------------------------- |
-| **Nginx**       | `2026` | Unified reverse proxy — open this in the browser                    |
-| **Gateway API** | `8001` | FastAPI REST API + embedded LangGraph-compatible agent runtime      |
-| **Frontend**    | `3000` | Next.js web interface                                               |
-| **Provisioner** | `8002` | Optional — only when sandbox is in provisioner/K8s mode             |
+## 前端产品面
 
-**Nginx routing** (the key entry-point contract):
-- `/api/langgraph/*` → Gateway's LangGraph-compatible runtime (rewritten to native `/api/*`)
-- `/api/*` (other) → Gateway REST routers
-- `/*` (non-API) → Frontend
+Next.js 工作台包含登录与设置、分析、聊天、数据源、指标、报告、历史和定时任务页面，
+并支持线程产物预览。聊天通过 LangGraph SDK 接收增量事件，状态由线程 hooks 维护。
+工作台没有独立的 Custom/Managed Agent 管理、IM 连接、项目/文档/回收站或浏览器控制页面。
 
-This lets standard LangGraph SDK clients talk to DeerFlow without a separate LangGraph
-server. Both compose files publish nginx as `"${BIND_HOST:-127.0.0.1}:${PORT:-2026}:2026"`
-— **loopback by default**; the Gateway's `8001` is never published. Any new published port
-must carry an explicit bind address (`backend/tests/test_compose_default_bind_host.py`
-pins this for every service in both compose files).
+## 配置和安全边界
 
----
+根目录 `config.yaml` 管理模型、工具、沙箱和后台服务；`extensions_config.json` 管理
+MCP server 与技能启用状态。二者由示例模板生成，实际文件被 Git 忽略。第三方 Python
+扩展和 MCP 服务以 Gateway 权限运行，必须来自受信任来源。
 
-## 3. Backend: Harness / App Split
+Analytics 查询使用管理员登记的数据源和 opaque secret reference；服务端先授权并生成
+一次性计划，再执行受限查询和记录审计。客户端不能覆盖身份或提升查询限额。Gateway
+与 sandbox 的权限、网络策略应按部署边界配置。
 
-The backend is two layers with a **strict one-way dependency**:
+## 版本
 
-- **Harness** (`backend/packages/harness/deerflow/`, import prefix `deerflow.*`) — the
-  publishable agent framework: orchestration, tools, sandbox, models, MCP, skills, memory,
-  config. Everything needed to *build and run* agents.
-- **App** (`backend/app/`, import prefix `app.*`) — unpublished application code: the
-  FastAPI Gateway and IM channel integrations.
+发布版本在 `backend/pyproject.toml` 与 `frontend/package.json` 中保持一致。
+`scripts/verify_versions.sh` 校验这两个版本源。项目已移除 Helm chart，不再维护第三个
+chart 版本源。
 
-**Rule**: App imports `deerflow`, but `deerflow` never imports `app`. This boundary is
-enforced in CI by `backend/tests/test_harness_boundary.py`. A thin third package,
-`deerflow-extension-api` (`backend/packages/extension-api/`), defines the host-independent
-extension contract that plugins implement.
-
-There is also an **embedded Python client** (`deerflow.client.DeerFlowClient`) used by
-scheduled tasks and tests to drive the same run lifecycle programmatically.
-
-### Agent runtime path
-
-All run modes (local `make dev`, Docker, prod) execute the agent through the Gateway via
-`RunManager` + `run_agent()` + `StreamBridge` (`packages/harness/deerflow/runtime/`). The
-agent is assembled by `make_lead_agent()` and wrapped in a **middleware chain** that runs
-before the model call:
-
-1. ThreadDataMiddleware — set up `workspace`/`uploads`/`outputs` paths
-2. UploadsMiddleware — inject uploaded file list
-3. SandboxMiddleware — acquire sandbox
-4. SummarizationMiddleware — context reduction (if enabled)
-5. TitleMiddleware — auto-generate conversation title
-6. TodoListMiddleware — task tracking (plan mode)
-7. ViewImageMiddleware — vision-model image handling
-8. ClarificationMiddleware — handle `ask_clarification`
-
-SSE streaming carries both per-chunk messages and bounded `values` snapshots; with
-`stream_subgraphs`, delegated subagents publish namespaced SSE events (`values|<ns>`,
-LangGraph Platform style) rather than impersonating root frames, so SDK clients don't lose
-the parent thread view.
-
-### State, tools, sandbox
-
-- **`ThreadState`** extends LangGraph's `AgentState` with `sandbox`, `artifacts`,
-  `thread_data`, `title`, `todos`, `viewed_images`. Each thread gets isolated data dirs
-  under `backend/.deer-flow/threads/{thread_id}/`.
-- **Tools** come from three sources, merged by `get_available_tools()`: built-ins
-  (`present_files`, `ask_clarification`, `view_image`, `review_skill_package`), configured
-  tools (`bash`, `read_file`, `write_file`, `str_replace`, `ls`, web search/fetch), and
-  MCP tools.
-- **Sandbox** is an abstract `SandboxProvider` with `LocalSandboxProvider` (dev, direct
-  execution) and `AioSandboxProvider` (Docker, production isolation). Agent code executes
-  inside sandbox boundaries with virtual path mapping (`/mnt/user-data/...`).
-
----
-
-## 4. Frontend: Stateful Chat over LangGraph SDK
-
-Next.js 16 / React 19 / TypeScript / Tailwind v4. Stack: LangGraph SDK (`@langchain/langgraph-sdk`)
-for orchestration + streaming, TanStack Query for server state. Requires Node 22+ and pnpm
-10.26.2+.
-
-The frontend is a **stateful chat app**: users create **threads** (conversations), send
-messages, set thread-scoped `/goal` completion conditions, and receive streamed responses.
-The backend may produce **artifacts** (files/code), **todos**, and goal-state updates.
-
-**Source layout** (`frontend/src/`):
-- `app/` — App Router routes: `/workspace/chats/[thread_id]` (authenticated chat),
-  `/workspace/agents/[agent_name]` (custom agents), `/showcase/[thread_id]` (allowlisted
-  public read-only demos), `/api/*` route handlers, `(auth)/{login,setup,auth/callback}`.
-- `core/` — the business-logic heart. Domains: `threads/` (creation, streaming, state),
-  `api/` (LangGraph client singleton), `agents/`, `auth/`, `artifacts/`, `channels/`,
-  `integrations/`, `memory/`, `skills/`, `mcp/`, `models/`, `tasks/`, `todos/`, `tools/`,
-  `workspace-changes/`, `config/`, `i18n/` (en-US, zh-CN), and more.
-- `components/` — `workspace/` (chat), `landing/`, `docs/`; `ui/` and `ai-elements/` are
-  registry-generated (Shadcn / Vercel AI SDK) and must not be hand-edited.
-- `hooks/`, `lib/` (`cn()`), `content/` (MDX), `styles/`.
-
-**Streaming data flow**: `core/threads/` subscribes to the LangGraph run stream via the
-`core/api/` client singleton, normalizes SSE events (messages, `values`, `task_*`,
-artifact deltas) into TanStack-Query-managed thread state that components render. Subtask
-progress rides root-namespace `task_*` custom events (the web frontend does not request
-subgraph streaming).
-
-By default the frontend connects through nginx: `NEXT_PUBLIC_LANGGRAPH_BASE_URL=/api/langgraph`
-and `NEXT_PUBLIC_BACKEND_BASE_URL=` (empty). Leave these unset for the standard `make dev`
-/ Docker flow.
-
----
-
-## 5. Cross-Cutting Subsystems
-
-These span both layers and require reading multiple files to understand:
-
-- **Config system** — lives at repo root: `config.yaml` (models, tools, sandbox,
-  summarization, scheduler) and `extensions_config.json` (MCP servers + skills). Both are
-  gitignored, generated from the `*.example.*` templates, and editable at runtime via the
-  Gateway API. Operator-controlled third-party `plugins:` live only in `config.yaml`
-  (never the API-writable `extensions_config.json`) because that list causes code import.
-- **Skills** — `skills/public/` (committed) and `skills/custom/` (gitignored); managed
-  integration packs are global at `.deer-flow/integrations/skills/{provider}/`. Skills are
-  discovered/loaded lazily by the harness; `skills/public/skill-reviewer/` is a read-only
-  quality reviewer using the harness `review_skill_package` tool.
-- **Sub-agents** — background delegation via `SubagentExecutor` (server-side `execution_id`)
-  correlated to provider `tool_call_id` for `ToolMessage`/SSE/lifecycle/persistence. Scheduled
-  tasks reuse the *same* Gateway run lifecycle (scheduler decides *when*, not *how*).
-- **Scheduled tasks** — workspace page `/workspace/scheduled-tasks` + a background scheduler
-  gated by `config.yaml → scheduler.enabled`; non-interactive runs drop `ask_clarification`
-  and client-supplied `non_interactive` (see the run-context trust boundary in §6).
-- **Long-running MCP** — a durable `McpTaskService` (leased rows, DB as source of truth)
-  keeps remote task IDs/polling out of the agent loop.
-- **Version sources** — a release version must match in `backend/pyproject.toml`,
-  `frontend/package.json`, and `deploy/helm/deer-flow/Chart.yaml` (`version` + `appVersion`);
-  pushing a `v*` tag triggers CI that runs `scripts/verify_versions.sh` and blocks all
-  publishing on drift. See [`RELEASING.md`](../RELEASING.md).
-
----
-
-## 6. Security & Isolation Model
-
-- **Thread isolation**: each conversation has separate data dirs; uploads are validated
-  against path traversal and staged as `.upload-*.part` before atomic replace.
-- **Sandbox isolation**: production should use the Docker `AioSandboxProvider`; local
-  sandbox is dev-only direct execution.
-- **MCP isolation**: each MCP server runs in its own process with runtime env-var
-  resolution; servers toggle independently.
-- **Run-context trust boundary**: run context reaches the agent from two client-writable
-  surfaces — `body.context` and the free-form `body.config` — so every server-produced key
-  is gated on both. `non_interactive`, `disable_clarification`, and `github_token` are
-  honored only for internally-authenticated callers (the scheduler and IM/webhook channel
-  policies) and scrubbed from a non-internal caller's config; identity and sandbox
-  lifecycle fields are cleared unconditionally and restamped from auth state.
-- **Loopback-by-default ingress**: nginx is the only published surface; the Gateway's `8001`
-  is container-internal and never published. A bare `"${PORT}:2026"` bind (0.0.0.0) is
-  rejected by convention and CI. See the Security Notice in [`README.md`](../README.md) before
-  any non-loopback deployment.
-
----
-
-## 7. Where to Go Next
-
-- System topology & component depth → [`backend/docs/ARCHITECTURE.md`](../backend/docs/ARCHITECTURE.md)
-- Backend commands, TDD, harness/app boundary, config reload → [`backend/AGENTS.md`](../backend/AGENTS.md)
-- Frontend commands, source layout, streaming data flow → [`frontend/AGENTS.md`](../frontend/AGENTS.md)
-- Setup & install → [`Install.md`](../Install.md), [`CONTRIBUTING.md`](../CONTRIBUTING.md)
-- Release process → [`RELEASING.md`](../RELEASING.md)
-- User-facing features & deployment sizing → [`README.md`](../README.md)
+模块级运行细节见 [backend/AGENTS.md](../backend/AGENTS.md)、
+[backend/docs/ARCHITECTURE.md](../backend/docs/ARCHITECTURE.md) 和
+[frontend/AGENTS.md](../frontend/AGENTS.md)。

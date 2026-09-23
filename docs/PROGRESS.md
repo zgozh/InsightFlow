@@ -11,30 +11,30 @@ Baseline: DeerFlow `v2.1.0-rc0` (`769589e8daee14c2587a634b6b43bd96471a41a1`), im
 | 2 Safe data access | Complete | 2A `8a11d0e`, `f2d35d3`; 2B1 `44f62c3` + Fix 01; 2B2 `3a65865` + Fix 01; 2C1 `eda8878` + Fix 01 `0fc32bd`; 2C2 `568a3d6` + Fix 01 `c450c8c`，各切片均已复验 | Phase 3 implementation |
 | 3 Agent workflow | Complete | `7bd21d7`：受控查询 Agent 工具、确定性 evidence、经营分析 skill、operator-owned 加法式 subagent denylist；schema 层排除多余参数的 V1 裁决已记录 | Phase 4 implementation |
 | 4 Product UI | Complete | `ae89805` + Fix 01 `65b499d7`：报告索引、Analytics 管理页、安全 trace 投影、InsightFlow 产品工作台与最终保留界面品牌闭环 | Phase 5 removal audit |
-| 5 Capability removal | In progress | Phase 5A `5af2a68` 完成首轮删除清单；B1–B3 已完成。P0 Fix 01 聚焦门禁 223 passed；全量离线有 14 个失败，node ID 均落在未变更的 B2 残差组内、无新增失败。Helm 专属测试的清单外删除记为 deviation #12；manifest forecast 仍为 2262。修复提示词新增 1 个 tracked 文件、删除 Helm 测试 1 个，tracked 净变化为 0 | GPT review of P0 Fix 01 |
+| 5 Capability removal | In progress | Phase 5A `5af2a68`；B1–B3 完成。B4 `51f2bee` 按相对基线无已证实新增回归验收。B5 已按清单完成并纳入本次独立提交：离线后端 13 failed / 14260 passed / 295 skipped / 3 deselected，13 个失败均是 B4 14 项残差的子集（其中 1 项基线失败现已通过），不得称 PASS 或全量门禁全绿；Rstest 1444 passed，Playwright 172 passed，e2e-auth 8 passed；消息排序用例定向重复 10/10 通过，`pnpm check` 0 errors / 3 warnings，build 通过。B4 焦点环仅首次失败的风险仍未归因、不豁免；B5 完整 E2E 中该用例通过不回溯消除历史风险。当前实测 2249 / 1041 / 861 / 529501，对比清单顺序预测 2237 / 1040 / 862 / 537936；早期 2262 及影响文档、Decision 0002 的 2290 均非本轮数量依据。 | GPT 复验 B5；不启动 5C/6 |
 | 6 Deployment and acceptance | Not started | — | Full acceptance evidence |
 
 Phase 2 is delivered in four independently reviewed slices: **2A** deterministic SQL policy core, **2B1** semantic authorization core, **2B2** governed datasource execution, and **2C** persistence and delivery. A slice is not complete until its own gates and review pass.
 
-Only one primary commit per phase; fixes use later small commits. A phase is never marked complete without its test commands, exit codes and key output recorded in the phase review artifact.
+A phase has one primary commit unless its approved plan defines independently gated batches; every batch must have its own commit and recorded test evidence.
 
 ## Repository size budget
 
-Size is governed by budget, not by a single file-count target. The upstream baseline is 2917 tracked files.
+Size is governed by budget, not by a single file-count target. The upstream baseline is 3073 tracked files.
 
 | Metric | Upstream baseline | Target | Hard limit / note |
 | --- | ---: | ---: | --- |
-| Git tracked files | 2917 | 850–1050 | 1200; never delete required security tests to hit the target |
-| Production source files | ~1300 | 450–650 | excludes tests, migrations, generated files and lockfiles |
-| Test files | ~1020 | 250–350 | prioritise runtime, SQL safety and key E2E |
-| Effective text lines of code | ~820k | 140k–220k | excludes lockfiles, generated files and large fixtures |
-| Default containers | 4+ optional components | 4 | nginx, frontend, gateway, postgres |
-| Optional containers | many provider/provisioner variants | 2 | redis, AIO sandbox |
+| Git tracked files | 3073 | 850–1050 | 1200; never delete required security tests to hit the target |
+| Production source files | 1399 | 450–650 | excludes tests, migrations, generated files and lockfiles |
+| Test files | 1078 | 250–350 | prioritise runtime, SQL safety and key E2E |
+| Effective text lines of code | 717429 | 140k–220k | excludes lockfiles, generated files and large fixtures |
+| Default application services | 3 | 3 | Nginx, Frontend, Gateway; databases are configured separately |
+| Optional/external services | configuration-dependent | not budgeted | PostgreSQL, MySQL, Redis, and external AIO sandbox/provisioner |
 
 **Security coverage overrides file-count reduction.** The coverage matrix takes priority over the file-count budget: a reduction that removes runtime, SQL-safety or key E2E regression coverage is not an acceptable way to reach the target. A "minimal" repository below roughly 650 tracked files would require removing Scheduler, MCP, Memory or a large part of the runtime test suite, and is out of scope for the current enterprise-grade goal.
 
 ## Delivery and rollback
 
-- Every phase ships one commit with a single clear responsibility, plus later small fix commits; never one unreviewable commit mixing deletions and new features.
-- Rollback is per phase: revert the phase commit, or fall back to `upstream-v2.1.0-rc0` for the baseline.
+- Phase 5B uses one independent commit per approved batch (B1–B5), with B5 depending on the retained state from earlier batches.
+- Phase 5B rollback follows reverse dependency order B5→B1; do not assume each deletion batch can be reverted independently.
 - Acceptance is release-level: see [docs/acceptance/acceptance-scenarios.md](acceptance/acceptance-scenarios.md).

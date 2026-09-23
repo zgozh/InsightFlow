@@ -239,7 +239,7 @@ async def resolve_route_permissions(user: User, *, is_internal: bool) -> list[st
         logger.warning("Failed to resolve authorization provider for Gateway routes", exc_info=True)
         return [] if config.fail_closed else list(_ALL_PERMISSIONS)
 
-    # Align with Phase 1B's tool path: internal callers (IM channel workers,
+    # Align with Phase 1B's tool path: internal callers (for example, the
     # scheduler) have system_role="internal", which is not a real RBAC role.
     # Omit it so default_role applies, mirroring inject_authenticated_user_context
     # which pops user_role for internal callers without a resolved owner.

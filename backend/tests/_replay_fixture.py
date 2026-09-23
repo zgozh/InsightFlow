@@ -89,8 +89,6 @@ memory:
   injection_enabled: false
 summarization:
   enabled: false
-agents_api:
-  enabled: true
 database:
   backend: sqlite
   sqlite_dir: {home / "db"}

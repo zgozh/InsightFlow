@@ -40,21 +40,18 @@ def is_valid_internal_auth_token(token: str | None) -> bool:
 
 
 def get_internal_user(owner_user_id: str | None = None):
-    """Return the synthetic user used for trusted internal channel calls.
+    """Return the synthetic user used for trusted internal calls.
 
     When *owner_user_id* is provided (extracted from the
     ``X-DeerFlow-Owner-User-Id`` header), the synthetic user's ``.id``
-    carries the actual channel owner instead of ``DEFAULT_USER_ID``.
+    carries the actual owner instead of ``DEFAULT_USER_ID``.
     This ensures that ``get_effective_user_id()`` and downstream
     filesystem-path resolution (per-user custom skills, memory, thread
-    data) use the correct identity for IM channel messages instead of
+    data) use the correct identity for internal requests instead of
     falling back to ``"default"``.
 
     The owner id is normalized through :func:`make_safe_user_id` so that
-    IM channel ids containing characters outside ``[A-Za-z0-9_-]`` (e.g.
-    Feishu ``open_id`` prefixed with ``ou_`` and containing underscores
-    that the rest of the system may treat as path separators, or
-    Telegram chat ids like ``-1001234567890``) cannot be used to escape
+    External owner ids containing characters outside ``[A-Za-z0-9_-]`` cannot be used to escape
     the per-user storage bucket or impersonate a different user via
     header value tricks (e.g. trailing slashes, ``..`` segments). The
     normalization is lossy but deterministic: two distinct raw inputs

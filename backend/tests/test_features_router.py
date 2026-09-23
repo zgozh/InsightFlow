@@ -26,22 +26,15 @@ def _app_with_config(
     return app
 
 
-def test_features_reports_agents_api_as_a_constant_false() -> None:
-    """The custom-agent API was removed in Phase 5; the key stays for the frontend type."""
+def test_features_omits_removed_agents_api() -> None:
     with TestClient(_app_with_config()) as client:
         response = client.get("/api/features")
     assert response.status_code == 200
     assert response.json() == {
-        "agents_api": {"enabled": False},
         "mcp_tasks": {"enabled": False},
-        "subagent_batches": {
-            "enabled": False,
-            "repository_available": False,
-            "worker_running": False,
-            "max_running": 3,
-        },
         "conversation_references": {"enabled": False, "max_references": 3},
     }
+    assert "agents_api" not in response.json()
     assert "browser_control" not in response.json()
 
 
@@ -59,15 +52,8 @@ def test_features_reports_mcp_tasks_startup_capability() -> None:
     assert response.json()["mcp_tasks"] == {"enabled": True}
 
 
-def test_features_reports_subagent_batches_as_constant_false_capability() -> None:
-    """The durable batch runtime was removed in Phase 5B; the key stays for the
-    frontend type, and only the ordinary-subagent ``max_running`` stays live."""
+def test_features_omits_removed_subagent_batches_capability() -> None:
     with TestClient(_app_with_config()) as client:
         response = client.get("/api/features")
     assert response.status_code == 200
-    assert response.json()["subagent_batches"] == {
-        "enabled": False,
-        "repository_available": False,
-        "worker_running": False,
-        "max_running": 3,
-    }
+    assert "subagent_batches" not in response.json()
