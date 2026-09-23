@@ -16,6 +16,7 @@ from deerflow_extension_api import (
 )
 from langgraph.checkpoint.memory import InMemorySaver
 
+import deerflow.extensions.notify as notify_module
 from deerflow.extensions.notify import (
     lead_task_id,
     lead_task_outcome,
@@ -117,6 +118,71 @@ async def test_notification_timeout_is_one_shared_budget():
 
     assert reached == ["hang"]
     assert loop.time() - started < 1
+
+
+@pytest.mark.asyncio
+async def test_expired_notification_budget_skips_hooks_before_deadline(monkeypatch):
+    reached: list[str] = []
+    timeout_scopes = []
+
+    class _Loop:
+        def time(self) -> float:
+            return 50.0
+
+    class _ExpiredTimeout:
+        def __init__(self) -> None:
+            self._expired = False
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            self._expired = True
+            raise TimeoutError
+
+        def expired(self) -> bool:
+            return self._expired
+
+    loop = _Loop()
+
+    def _timeout(delay: float) -> _ExpiredTimeout:
+        # 模拟 timeout scope 已报告耗尽，但共享时钟仍早于截止点（51.0）。
+        assert delay == 1.0
+        scope = _ExpiredTimeout()
+        timeout_scopes.append(scope)
+        return scope
+
+    monkeypatch.setattr(notify_module, "_notify_loop", None)
+    monkeypatch.setattr(
+        notify_module,
+        "asyncio",
+        SimpleNamespace(
+            get_running_loop=lambda: loop,
+            timeout=_timeout,
+            CancelledError=asyncio.CancelledError,
+        ),
+    )
+
+    class _First:
+        async def on_task_stop(self, app_store, task_store, info, outcome):
+            reached.append("first")
+
+    class _Second:
+        async def on_task_stop(self, app_store, task_store, info, outcome):
+            reached.append("second")
+
+    await notify_task_stop(
+        _extensions(_First(), _Second()),
+        ExtensionData("task-1"),
+        _info(),
+        TaskOutcome.COMPLETED,
+        timeout=1.0,
+    )
+
+    assert reached == ["first"]
+    assert loop.time() < 51.0
+    assert len(timeout_scopes) == 1
+    assert timeout_scopes[0].expired() is True
 
 
 @pytest.mark.asyncio

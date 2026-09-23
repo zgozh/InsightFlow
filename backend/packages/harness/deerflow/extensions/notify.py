@@ -115,7 +115,18 @@ async def _notify_each(
     """Invoke contributors in order, fail-open, within one shared budget."""
     loop = asyncio.get_running_loop()
     deadline = None if timeout is None else loop.time() + timeout
+    budget_exhausted = False
     for source, contributor in contributors:
+        if budget_exhausted:
+            logger.warning(
+                "Extension %s: %s skipped for task %s; the %.1fs notification budget was spent",
+                source,
+                hook,
+                task_id,
+                timeout,
+            )
+            continue
+
         budget_timeout = None
         try:
             call = invoke(contributor)
@@ -128,6 +139,7 @@ async def _notify_each(
                 close = getattr(call, "close", None)
                 if callable(close):
                     close()
+                budget_exhausted = True
                 logger.warning(
                     "Extension %s: %s skipped for task %s; the %.1fs notification budget was spent",
                     source,
@@ -139,10 +151,13 @@ async def _notify_each(
             budget_timeout = asyncio.timeout(remaining)
             async with budget_timeout:
                 await call
+            if budget_timeout.expired():
+                budget_exhausted = True
         except TimeoutError:
             if budget_timeout is not None and budget_timeout.expired():
                 # 执行预算耗尽与前面的提前跳过属于同一预期情况；保持警告级别，
                 # 避免将计时器生成的 TimeoutError 误记为 hook 故障。
+                budget_exhausted = True
                 logger.warning(
                     "Extension %s: %s timed out for task %s; the %.1fs notification budget was spent",
                     source,
