@@ -160,14 +160,12 @@ async def test_abefore_agent_returns_none_on_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A timed-out worker must not emit a late, phantom context event."""
-    monkeypatch.setenv("OPENVIKING_API_KEY", "test-key")
     await asyncio.to_thread(_scan_backends)
     mw = DynamicContextMiddleware(
         app_config=SimpleNamespace(
             memory=MemoryConfig(
-                manager_class="openviking",
+                manager_class="deermem",
                 backend_config={
-                    "owner_user_id": "alice",
                     "failure_policy": {"read": "fail_open"},
                 },
             )
@@ -225,15 +223,13 @@ async def test_abefore_agent_propagates_strict_memory_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A strict backend must not degrade after the middleware timeout."""
-    monkeypatch.setenv("OPENVIKING_API_KEY", "test-key")
     await asyncio.to_thread(_scan_backends)
     mw = DynamicContextMiddleware(
         app_config=SimpleNamespace(
             memory=MemoryConfig(
-                manager_class="openviking",
+                manager_class="deermem",
                 backend_config={
-                    "owner_user_id": "alice",
-                    "failure_policy": {"read": "raise"},
+                    "failure_policy": {"read": "fail_closed"},
                 },
             )
         )
@@ -269,24 +265,6 @@ async def test_abefore_agent_propagates_strict_memory_timeout(
     ("manager_class", "backend_config", "api_key"),
     [
         pytest.param(
-            "openviking",
-            {
-                "owner_user_id": "alice",
-                "failure_policy": {"read": "raise"},
-            },
-            None,
-            id="missing_openviking_api_key",
-        ),
-        pytest.param(
-            "openviking",
-            {
-                "owner_user_id": "alice",
-                "failure_policy": {"read": "invalid"},
-            },
-            "test-key",
-            id="invalid_backend_config",
-        ),
-        pytest.param(
             "missing.backend:Manager",
             {},
             None,
@@ -301,10 +279,6 @@ async def test_abefore_agent_policy_resolution_failure_does_not_replace_timeout(
     api_key: str | None,
 ) -> None:
     """An unresolved timeout policy must fail closed with the original cause."""
-    if api_key is None:
-        monkeypatch.delenv("OPENVIKING_API_KEY", raising=False)
-    else:
-        monkeypatch.setenv("OPENVIKING_API_KEY", api_key)
     mw = DynamicContextMiddleware(
         app_config=SimpleNamespace(
             memory=MemoryConfig(
@@ -406,17 +380,16 @@ async def test_abefore_agent_records_checkpointed_memory_on_timeout() -> None:
     journal.record_memory_context.assert_called_once()
 
 
-@pytest.mark.parametrize("read_policy", ["fail_open", "raise"])
+@pytest.mark.parametrize("read_policy", ["fail_open", "fail_closed"])
 @pytest.mark.parametrize("already_saturated", [False, True], ids=["read_occupies_worker", "pool_already_full"])
 async def test_timeout_does_not_wait_for_saturated_executor(monkeypatch, read_policy, already_saturated):
     """Neither a running read nor another request may delay timeout handling."""
-    monkeypatch.setenv("OPENVIKING_API_KEY", "test-key")
     await asyncio.to_thread(_scan_backends)  # normal Gateway startup discovery
     mw = DynamicContextMiddleware(
         app_config=SimpleNamespace(
             memory=MemoryConfig(
-                manager_class="openviking",
-                backend_config={"owner_user_id": "alice", "failure_policy": {"read": read_policy}},
+                manager_class="deermem",
+                backend_config={"failure_policy": {"read": read_policy}},
             )
         )
     )
@@ -442,7 +415,7 @@ async def test_timeout_does_not_wait_for_saturated_executor(monkeypatch, read_po
                 mock.patch("deerflow.agents.middlewares.dynamic_context_middleware._INJECT_TIMEOUT_SECONDS", 0.01),
             ):
                 call = mw.abefore_agent({"messages": [HumanMessage(content="hi", id="m1")]}, SimpleNamespace(context={}))
-                if read_policy == "raise":
+                if read_policy == "fail_closed":
                     with pytest.raises(MemoryReadError) as exc_info:
                         await asyncio.wait_for(call, 0.25)
                     assert isinstance(exc_info.value.__cause__, TimeoutError)
@@ -487,8 +460,7 @@ async def test_cold_policy_resolution_stays_off_event_loop(monkeypatch, tmp_path
     """Cold discovery and the config-reload fallback remain inside the deadline."""
     from deerflow.agents.memory import manager as manager_module
 
-    monkeypatch.setenv("OPENVIKING_API_KEY", "test-key")
-    cfg = MemoryConfig(manager_class="openviking", backend_config={"owner_user_id": "alice", "failure_policy": {"read": "fail_open"}})
+    cfg = MemoryConfig(manager_class="deermem", backend_config={"failure_policy": {"read": "fail_open"}})
     policy_file = tmp_path / "policy.txt"
     await asyncio.to_thread(policy_file.write_text, "policy", encoding="utf-8")
     event_loop_thread = threading.get_ident()
@@ -534,7 +506,7 @@ async def test_cold_policy_resolution_stays_off_event_loop(monkeypatch, tmp_path
 @pytest.mark.parametrize("disabled_field", [None, "enabled", "injection_enabled"], ids=["unknown_policy", "memory_disabled", "injection_disabled"])
 async def test_cold_saturated_timeout_never_starts_discovery(monkeypatch, disabled_field):
     """An unknown policy fails closed; disabled memory needs no policy lookup."""
-    cfg = MemoryConfig(manager_class="openviking")
+    cfg = MemoryConfig(manager_class="deermem")
     if disabled_field:
         setattr(cfg, disabled_field, False)
     mw = DynamicContextMiddleware(app_config=SimpleNamespace(memory=cfg))

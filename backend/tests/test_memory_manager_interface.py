@@ -251,26 +251,6 @@ def test_base_read_failure_policy_preserves_legacy_config(backend_config, expect
     assert memory_read_failures_are_fatal(f"{__name__}:_MinimalBackend", backend_config, resolved_only=True) is expected
 
 
-def test_read_failure_capability_uses_requested_backend_config(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    set_memory_config(MemoryConfig(manager_class=f"{__name__}:_MinimalBackend"))
-    manager = get_memory_manager()
-    monkeypatch.setenv("OPENVIKING_API_KEY", "test-key")
-
-    assert isinstance(manager, _MinimalBackend)
-    assert (
-        memory_read_failures_are_fatal(
-            "openviking",
-            {
-                "owner_user_id": "alice",
-                "failure_policy": {"read": "raise"},
-            },
-        )
-        is True
-    )
-
-
 @pytest.mark.parametrize("selector", [f"{__name__}:_MinimalBackend", f"{__name__}._MinimalBackend", "not_loaded.backend:Manager"])
 def test_resolved_policy_does_not_scan_or_import_backends(selector):
     """Loaded dotted backends work; unknown ones remain unknown without imports."""
@@ -284,39 +264,21 @@ def test_resolved_policy_does_not_scan_or_import_backends(selector):
     import_module.assert_not_called()
 
 
-def test_resolved_policy_tracks_current_config_without_caching_boolean(monkeypatch):
-    monkeypatch.setenv("OPENVIKING_API_KEY", "test-key")
-    config = {"owner_user_id": "alice", "failure_policy": {"read": "fail_open"}}
-    assert memory_read_failures_are_fatal("openviking", config, resolved_only=True) is None
-    assert memory_read_failures_are_fatal("openviking", config) is False
+def test_resolved_policy_tracks_current_config_without_caching_boolean():
+    """The resolved policy is derived per call, so a config change is observed immediately."""
+    selector = f"{__name__}:_MinimalBackend"
+    config = {"failure_policy": {"read": "fail_open"}}
+    assert memory_read_failures_are_fatal(selector, config) is False
     with mock.patch("deerflow.agents.memory.manager._scan_backends") as scan:
-        assert memory_read_failures_are_fatal("openviking", config, resolved_only=True) is False
-        config["failure_policy"]["read"] = "raise"
-        assert memory_read_failures_are_fatal("openviking", config, resolved_only=True) is True
+        assert memory_read_failures_are_fatal(selector, config, resolved_only=True) is False
+        config["failure_policy"]["read"] = "fail_closed"
+        assert memory_read_failures_are_fatal(selector, config, resolved_only=True) is True
     scan.assert_not_called()
 
 
 @pytest.mark.parametrize(
     ("manager_class", "backend_config", "api_key"),
     [
-        pytest.param(
-            "openviking",
-            {
-                "owner_user_id": "alice",
-                "failure_policy": {"read": "raise"},
-            },
-            None,
-            id="missing_openviking_api_key",
-        ),
-        pytest.param(
-            "openviking",
-            {
-                "owner_user_id": "alice",
-                "failure_policy": {"read": "invalid"},
-            },
-            "test-key",
-            id="invalid_backend_config",
-        ),
         pytest.param(
             "missing.backend:Manager",
             {},
@@ -331,11 +293,6 @@ def test_read_failure_capability_fails_closed_when_policy_cannot_be_resolved(
     backend_config: dict,
     api_key: str | None,
 ) -> None:
-    if api_key is None:
-        monkeypatch.delenv("OPENVIKING_API_KEY", raising=False)
-    else:
-        monkeypatch.setenv("OPENVIKING_API_KEY", api_key)
-
     assert (
         memory_read_failures_are_fatal(
             manager_class,

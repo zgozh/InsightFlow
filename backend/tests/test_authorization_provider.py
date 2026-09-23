@@ -663,7 +663,7 @@ class TestAuthorizationConfig:
             }
         )
         # Drive the singleton wiring the same way from_file does.
-        AppConfig._apply_singleton_configs(validated, acp_agents={})
+        AppConfig._apply_singleton_configs(validated)
 
         singleton = get_authorization_config()
         assert singleton.enabled is True

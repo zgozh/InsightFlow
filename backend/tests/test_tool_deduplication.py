@@ -60,7 +60,6 @@ def _make_minimal_config(tools):
     config.tool_search.enabled = False
     config.skill_evolution.enabled = False
     config.sandbox = MagicMock()
-    config.acp_agents = {}
     return config
 
 
@@ -122,36 +121,6 @@ def test_subagent_async_only_tool_gets_sync_wrapper(mock_bash, mock_cfg):
     assert async_tool in result
     assert async_tool.func is not None
     assert async_tool.invoke({"x": 7}) == "subagent: 7"
-
-
-@patch("deerflow.tools.tools.get_app_config")
-@patch("deerflow.tools.tools.is_host_bash_allowed", return_value=True)
-def test_acp_async_only_tool_gets_sync_wrapper(mock_bash, mock_cfg):
-    """Async-only ACP tools can be invoked by sync clients."""
-
-    async def async_tool_impl(x: int) -> str:
-        return f"acp: {x}"
-
-    async_tool = StructuredTool(
-        name="invoke_acp_agent",
-        description="Async-only ACP test tool.",
-        args_schema=AsyncToolArgs,
-        func=None,
-        coroutine=async_tool_impl,
-    )
-    config = _make_minimal_config([])
-    config.acp_agents = {"codex": object()}
-    mock_cfg.return_value = config
-
-    with (
-        patch("deerflow.tools.tools.BUILTIN_TOOLS", []),
-        patch("deerflow.tools.builtins.invoke_acp_agent_tool.build_invoke_acp_agent_tool", return_value=async_tool),
-    ):
-        result = get_available_tools(include_mcp=False, app_config=config)
-
-    assert async_tool in result
-    assert async_tool.func is not None
-    assert async_tool.invoke({"x": 9}) == "acp: 9"
 
 
 @patch("deerflow.tools.tools.get_app_config")

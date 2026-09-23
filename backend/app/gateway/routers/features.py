@@ -37,11 +37,18 @@ class McpTasksFeature(BaseModel):
 
 
 class SubagentBatchesFeature(BaseModel):
-    """Persistence, worker, and process capacity for native-subagent batches."""
+    """Persistence, worker, and process capacity for native-subagent batches.
 
-    enabled: bool = Field(..., description="Compatibility alias for worker_running")
-    repository_available: bool = Field(..., description="Whether durable batch history APIs are available")
-    worker_running: bool = Field(..., description="Whether this Gateway process is executing durable batch work")
+    The durable batch runtime was removed in Phase 5B; ``enabled``,
+    ``repository_available`` and ``worker_running`` stay in the response as
+    constant ``false`` so the frontend feature type still resolves. Only
+    ``max_running`` remains live, because the ordinary native-subagent
+    admission controller it reports is still configured at startup.
+    """
+
+    enabled: bool = Field(default=False, description="Compatibility alias for worker_running; always false")
+    repository_available: bool = Field(default=False, description="Whether durable batch history APIs are available; always false")
+    worker_running: bool = Field(default=False, description="Whether this Gateway process is executing durable batch work; always false")
     max_running: int = Field(..., description="Native subagent execution slots in this Gateway process")
 
 
@@ -69,7 +76,6 @@ class FeaturesResponse(BaseModel):
 )
 async def list_features(request: Request, config: AppConfig = Depends(get_config)) -> FeaturesResponse:
     """Return availability of optional frontend features."""
-    subagent_batch_worker_running = bool(getattr(request.app.state, "subagent_batches_available", False))
     return FeaturesResponse(
         # Constant false: the custom-agent management API was removed. The key
         # is retained so the frontend feature type keeps resolving.
@@ -79,12 +85,12 @@ async def list_features(request: Request, config: AppConfig = Depends(get_config
         # value that would require a Gateway restart to take effect.
         mcp_tasks=McpTasksFeature(enabled=bool(getattr(request.app.state, "mcp_tasks_available", False))),
         subagent_batches=SubagentBatchesFeature(
-            # Keep the historical `enabled` field as a compatibility alias
-            # while exposing read persistence independently from execution.
-            # A stopped/disabled worker must not hide durable history/export.
-            enabled=subagent_batch_worker_running,
-            repository_available=getattr(request.app.state, "subagent_batch_repo", None) is not None,
-            worker_running=subagent_batch_worker_running,
+            # The durable batch service and its repository were removed, so
+            # every availability field is a constant false. ``max_running``
+            # still reports the live ordinary-subagent admission capacity.
+            enabled=False,
+            repository_available=False,
+            worker_running=False,
             max_running=configured_subagent_max_running(),
         ),
         # Same predicate as run admission (``prepare_conversation_reader``), read

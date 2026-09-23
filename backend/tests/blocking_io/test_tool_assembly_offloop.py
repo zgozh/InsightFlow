@@ -4,9 +4,9 @@
 on async agent-assembly paths. The offload dispatches the (unchanged,
 synchronous) assembly to the dedicated assembly pool (``asyncio.to_thread``'
 s default-executor alternative) at the async entry points: ``task_tool``,
-``SubagentBatchService._execute_item``, the Gateway run worker's agent
-construction (``run_agent`` -> ``agent_factory`` -> lead-agent assembly), and
-the checkpoint state-accessor build (``abuild_checkpoint_state_accessor`` ->
+the Gateway run worker's agent construction (``run_agent`` ->
+``agent_factory`` -> lead-agent assembly), and the checkpoint state-accessor
+build (``abuild_checkpoint_state_accessor`` ->
 ``build_thread_checkpoint_state_accessor``).
 
 Under the strict Blockbuster context (this directory's conftest), any
@@ -43,7 +43,6 @@ from deerflow.subagents.config import SubagentConfig
 # importlib.import_module binds the real module: the package attribute
 # ``deerflow.tools.builtins.task_tool`` is shadowed by the StructuredTool.
 task_tool_module = importlib.import_module("deerflow.tools.builtins.task_tool")
-batch_service_module = importlib.import_module("deerflow.subagents.batch_service")
 # Imported at module scope: the first import of app.gateway.services pulls in
 # fastapi/pydantic, whose one-time metadata reads must not run inside a gated
 # test item.
@@ -156,90 +155,6 @@ async def test_task_tool_assembles_off_loop(monkeypatch, tmp_path):
     messages = command.update["messages"]
     assert len(messages) == 1
     assert isinstance(messages[0], ToolMessage)
-    assert observed_threads, "tool assembly must be invoked"
-    assert all(thread is not threading.main_thread() for thread in observed_threads)
-
-
-async def test_batch_item_assembles_off_loop(monkeypatch, tmp_path):
-    """SubagentBatchService._execute_item dispatches assembly to a worker thread."""
-    (tmp_path / "probe.txt").write_text("probe body", encoding="utf-8")
-    observed_threads: list = []
-    monkeypatch.setattr(
-        "deerflow.tools.get_available_tools",
-        _blocking_probe_tools(tmp_path / "probe.txt", observed_threads),
-    )
-    monkeypatch.setattr(batch_service_module, "SubagentStatus", _FakeSubagentStatus)
-    monkeypatch.setattr(batch_service_module, "SubagentExecutor", _DummyExecutor)
-    monkeypatch.setattr(
-        batch_service_module,
-        "get_background_task_result",
-        lambda _execution_id: _completed_result(),
-    )
-    monkeypatch.setattr(
-        batch_service_module,
-        "request_cancel_background_task",
-        lambda _execution_id: None,
-    )
-    monkeypatch.setattr(
-        batch_service_module,
-        "resolve_subagent_model_name",
-        lambda *_args, **_kwargs: "test-model",
-    )
-
-    service = batch_service_module.SubagentBatchService(
-        repository=SimpleNamespace(
-            mark_item_running=None,
-            renew_item_lease=None,
-            finalize_item=None,
-        ),
-        config=SimpleNamespace(
-            lease_seconds=10.0,
-            poll_interval_seconds=1.0,
-            max_result_chars=1000,
-            result_preview_max_chars=200,
-        ),
-        runtime_config=SimpleNamespace(),
-        app_config=SimpleNamespace(),
-        execution_capacity=None,
-    )
-
-    finalize_calls: list[dict] = []
-
-    async def _finalize_item(item_id, **kwargs):
-        finalize_calls.append({"item_id": item_id, **kwargs})
-
-    async def _renew_item_lease(item_id, **_kwargs):
-        return {"valid": True, "cancel_requested": False}
-
-    service._repository = SimpleNamespace(finalize_item=_finalize_item, renew_item_lease=_renew_item_lease)
-
-    item = {
-        "id": "item-1",
-        "item_key": "key-1",
-        "prompt": "do the thing",
-        "batch": {
-            "id": "batch-1",
-            "thread_id": "thread-1",
-            "user_id": "user-1",
-            "run_id": None,
-            "execution_spec": {
-                "subagent_config": {
-                    "name": "general-purpose",
-                    "description": "General helper",
-                    "system_prompt": "Base system prompt",
-                    "model": "test-model",
-                    "max_turns": 5,
-                    "timeout_seconds": 10,
-                },
-            },
-        },
-    }
-
-    await service._execute_item(item)
-
-    assert len(finalize_calls) == 1
-    assert finalize_calls[0]["item_id"] == "item-1"
-    assert finalize_calls[0]["succeeded"] is True
     assert observed_threads, "tool assembly must be invoked"
     assert all(thread is not threading.main_thread() for thread in observed_threads)
 

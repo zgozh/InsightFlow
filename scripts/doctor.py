@@ -402,54 +402,18 @@ def check_llm_package(config_path: Path) -> list[CheckResult]:
 
 
 def check_llm_auth(config_path: Path) -> list[CheckResult]:
+    """校验 config.yaml 能正常解析。
+
+    Phase 5 删除了 Codex/Claude Code/MindIE/vLLM 等本地凭据 provider，原来的
+    "本地 OAuth/凭据文件是否就位"逐一探针随之删除，这里只保留"配置可读且可解析"
+    这一条仍然成立的前置校验（解析失败仍报 fail）。
+    """
     if not config_path.exists():
         return []
 
     results: list[CheckResult] = []
     try:
-        data = _load_yaml_file(config_path)
-        for model in data.get("models") or []:
-            use = model.get("use", "")
-            model_name = model.get("name", "default")
-
-            if use == "deerflow.models.openai_codex_provider:CodexChatModel":
-                auth_path = Path(os.environ.get("CODEX_AUTH_PATH", "~/.codex/auth.json")).expanduser()
-                if auth_path.exists():
-                    results.append(CheckResult(f"Codex CLI auth available (model: {model_name})", "ok", str(auth_path)))
-                else:
-                    results.append(
-                        CheckResult(
-                            f"Codex CLI auth available (model: {model_name})",
-                            "fail",
-                            str(auth_path),
-                            fix="Run `codex login`, or set CODEX_AUTH_PATH to a valid auth.json",
-                        )
-                    )
-
-            if use == "deerflow.models.claude_provider:ClaudeChatModel":
-                credential_paths = [Path(os.environ["CLAUDE_CODE_CREDENTIALS_PATH"]).expanduser() for env_name in ("CLAUDE_CODE_CREDENTIALS_PATH",) if os.environ.get(env_name)]
-                credential_paths.append(Path("~/.claude/.credentials.json").expanduser())
-                has_oauth_env = any(
-                    os.environ.get(name)
-                    for name in (
-                        "ANTHROPIC_API_KEY",
-                        "CLAUDE_CODE_OAUTH_TOKEN",
-                        "ANTHROPIC_AUTH_TOKEN",
-                        "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
-                    )
-                )
-                existing_path = next((path for path in credential_paths if path.exists()), None)
-                if has_oauth_env or existing_path is not None:
-                    detail = "env var set" if has_oauth_env else str(existing_path)
-                    results.append(CheckResult(f"Claude auth available (model: {model_name})", "ok", detail))
-                else:
-                    results.append(
-                        CheckResult(
-                            f"Claude auth available (model: {model_name})",
-                            "fail",
-                            fix=("Set ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN, or place credentials at ~/.claude/.credentials.json"),
-                        )
-                    )
+        _load_yaml_file(config_path)
     except Exception as exc:
         results.append(CheckResult("LLM auth check", "fail", str(exc)))
     return results
@@ -482,45 +446,14 @@ def check_web_tool(config_path: Path, *, tool_name: str, label: str) -> CheckRes
                 fix=f"Run 'make setup' to configure {tool_name}",
             )
 
+        # Phase 5 之后只保留一条 Web Search/Fetch 主路径（DDG + Jina），
+        # 两者都不需要 API key，因此不再维护 key provider 表。
         free_providers = {
             "web_search": {"ddg_search": "DuckDuckGo (no key needed)"},
-            "web_fetch": {"jina_ai": "Jina AI Reader (no key needed)", "crawl4ai": "Crawl4AI (self-hosted, no key needed)"},
-            "image_search": {"deerflow.community.image_search.tools": "DuckDuckGo Images (no key needed)"},
+            "web_fetch": {"jina_ai": "Jina AI Reader (no key needed)"},
         }
-        key_providers = {
-            "web_search": {
-                "tavily": "TAVILY_API_KEY",
-                "infoquest": "INFOQUEST_API_KEY",
-                "exa": "EXA_API_KEY",
-                "firecrawl": "FIRECRAWL_API_KEY",
-                "fastcrw": "CRW_API_KEY",
-                "brave": "BRAVE_SEARCH_API_KEY",
-                "serper": "SERPER_API_KEY",
-                "serply": "SERPLY_API_KEY",
-                "sofya": "SOFYA_API_KEY",
-                "tencent_wsa": "TENCENTCLOUD_WSA_APIKEY",
-            },
-            "web_fetch": {
-                "infoquest": "INFOQUEST_API_KEY",
-                "exa": "EXA_API_KEY",
-                "firecrawl": "FIRECRAWL_API_KEY",
-                "fastcrw": "CRW_API_KEY",
-                "sofya": "SOFYA_API_KEY",
-            },
-            "image_search": {
-                "brave": "BRAVE_SEARCH_API_KEY",
-                "infoquest": "INFOQUEST_API_KEY",
-                "serper": "SERPER_API_KEY",
-            },
-            "web_capture": {
-                "browserless": "BROWSERLESS_TOKEN",
-            },
-        }
-        key_fields = {
-            "web_capture": {
-                "browserless": "token",
-            },
-        }
+        key_providers: dict[str, dict[str, str]] = {}
+        key_fields: dict[str, dict[str, str]] = {}
 
         def _configured_key_detail(tool: dict, default_var: str, key_field: str = "api_key") -> tuple[Status, str] | None:
             configured_key = tool.get(key_field)
@@ -538,10 +471,6 @@ def check_web_tool(config_path: Path, *, tool_name: str, label: str) -> CheckRes
 
             val = os.environ.get(default_var)
             return ("ok", f"{default_var} set") if val and val.strip() else None
-
-        def _browserless_self_hosted(tool: dict) -> bool:
-            base_url = str(tool.get("base_url") or "http://localhost:3032").lower()
-            return "browserless.io" not in base_url
 
         for tool in tool_entries:
             use = tool.get("use", "")
@@ -565,8 +494,6 @@ def check_web_tool(config_path: Path, *, tool_name: str, label: str) -> CheckRes
                                 fix=f"Move the {key_field} to .env as {var}=<your-key> and reference it as ${var}",
                             )
                         return CheckResult(label, "ok", f"{provider} ({detail})")
-                    if tool_name == "web_capture" and provider == "browserless" and _browserless_self_hosted(tool):
-                        return CheckResult(label, "ok", "browserless (self-hosted, token optional)")
                     return CheckResult(
                         label,
                         "warn",
@@ -603,14 +530,6 @@ def check_web_tool(config_path: Path, *, tool_name: str, label: str) -> CheckRes
 
 def check_web_fetch(config_path: Path) -> CheckResult:
     return check_web_tool(config_path, tool_name="web_fetch", label="web fetch configured")
-
-
-def check_web_capture(config_path: Path) -> CheckResult:
-    return check_web_tool(config_path, tool_name="web_capture", label="web capture configured")
-
-
-def check_image_search(config_path: Path) -> CheckResult:
-    return check_web_tool(config_path, tool_name="image_search", label="image search configured")
 
 
 def check_frontend_env(project_root: Path) -> CheckResult:
@@ -764,8 +683,6 @@ def main() -> int:
     search_checks = [
         check_web_search(config_path),
         check_web_fetch(config_path),
-        check_web_capture(config_path),
-        check_image_search(config_path),
     ]
     sections.append(("Web Capabilities", search_checks))
 

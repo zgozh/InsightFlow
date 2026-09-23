@@ -9,13 +9,9 @@ from deerflow.constants import CONVERSATION_TOOL_USE
 from deerflow.mcp.tasks.runtime import is_mcp_task_runtime_available
 from deerflow.reflection import resolve_variable
 from deerflow.sandbox.security import is_host_bash_allowed
-from deerflow.subagents.batch_runtime import is_subagent_batch_runtime_available
 from deerflow.tools.builtins import (
     ask_clarification_tool,
-    batch_status,
-    batch_task,
     cancel_background_task,
-    cancel_batch,
     list_background_tasks,
     list_uploaded_files,
     present_file_tool,
@@ -142,8 +138,6 @@ def get_available_tools(
     # Add subagent tools only if enabled via runtime parameter
     if subagent_enabled:
         builtin_tools.extend(SUBAGENT_TOOLS)
-        if is_subagent_batch_runtime_available():
-            builtin_tools.extend((batch_task, batch_status, cancel_batch))
         logger.info("Including native subagent tools")
 
     # If no model_name specified, use the first model (default)
@@ -185,29 +179,12 @@ def get_available_tools(
         except Exception as e:
             logger.error(f"Failed to get cached MCP tools: {e}")
 
-    # Add invoke_acp_agent tool if any ACP agents are configured
-    acp_tools: list[BaseTool] = []
-    try:
-        from deerflow.tools.builtins.invoke_acp_agent_tool import build_invoke_acp_agent_tool
-
-        if app_config is None:
-            from deerflow.config.acp_config import get_acp_agents
-
-            acp_agents = get_acp_agents()
-        else:
-            acp_agents = getattr(config, "acp_agents", {}) or {}
-        if acp_agents:
-            acp_tools.append(build_invoke_acp_agent_tool(acp_agents))
-            logger.info(f"Including invoke_acp_agent tool ({len(acp_agents)} agent(s): {list(acp_agents.keys())})")
-    except Exception as e:
-        logger.warning(f"Failed to load ACP tool: {e}")
-
-    logger.info(f"Total tools loaded: {len(loaded_tools)}, built-in tools: {len(builtin_tools)}, MCP tools: {len(mcp_tools)}, ACP tools: {len(acp_tools)}")
+    logger.info(f"Total tools loaded: {len(loaded_tools)}, built-in tools: {len(builtin_tools)}, MCP tools: {len(mcp_tools)}")
 
     # Deduplicate by tool name — config-loaded tools take priority, followed by
-    # built-ins, MCP tools, and ACP tools.  Duplicate names cause the LLM to
-    # receive ambiguous or concatenated function schemas (issue #1803).
-    all_tools = [_ensure_sync_invocable_tool(t) for t in loaded_tools + builtin_tools + mcp_tools + acp_tools]
+    # built-ins and MCP tools.  Duplicate names cause the LLM to receive
+    # ambiguous or concatenated function schemas (issue #1803).
+    all_tools = [_ensure_sync_invocable_tool(t) for t in loaded_tools + builtin_tools + mcp_tools]
     seen_names: set[str] = set()
     unique_tools: list[BaseTool] = []
     for t in all_tools:

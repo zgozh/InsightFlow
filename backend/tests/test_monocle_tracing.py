@@ -328,7 +328,6 @@ def test_gateway_lifespan_initializes_monocle():
 
     startup_config = SimpleNamespace(log_level="INFO", memory=SimpleNamespace(token_counting="char"))
 
-
     setup_spy = MagicMock(return_value=False)
 
     with (
@@ -364,7 +363,6 @@ def test_gateway_lifespan_survives_monocle_setup_failure(caplog):
         yield
 
     startup_config = SimpleNamespace(log_level="INFO", memory=SimpleNamespace(token_counting="char"))
-
 
     setup_spy = MagicMock(side_effect=ValueError("MONOCLE_EXPORTERS has unknown exporter(s): fle."))
 

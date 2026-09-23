@@ -25,19 +25,19 @@ baseline:
   tests: 1078
   text_loc: 717429
 forecast_after_all_batches: &id001
-  tracked: 2266
+  tracked: 2262
   source: 1058
-  tests: 872
-  text_loc: 542452
+  tests: 868
+  text_loc: 540774
 target_reachable: false
-target_verdict: 五批共删除 807 tracked / 341 source / 206 tests / 174977 text-LOC；剩余 2266 tracked / 1058 source / 872 tests / 542452 text-LOC。相对 tracked 目标区间 850–1050 差 1216–1416，相对硬上限 1200 仍高 1066；生产源码比目标上限 650 高 408；测试比目标上限 350 高 522；有效文本 LOC 比目标上限 220k 高 322452。剩余部分由 KEEP 契约的不可删成本构成，见 keep_cost_breakdown。
+target_verdict: 五批共删除 811 tracked / 341 source / 210 tests / 176655 text-LOC；剩余 2262 tracked / 1058 source / 868 tests / 540774 text-LOC。相对 tracked 目标区间 850–1050 差 1212–1412，相对硬上限 1200 仍高 1062；生产源码比目标上限 650 高 408；测试比目标上限 350 高 518；有效文本 LOC 比目标上限 220k 高 320774。剩余部分由 KEEP 契约的不可删成本构成，见 keep_cost_breakdown。
 keep_cost_breakdown:
 - area: backend/tests（Phase 0–4 安全与运行期回归的唯一载体）
-  tracked: 654
+  tracked: 650
   source: 0
-  tests: 654
-  text_loc: 271968
-  why_kept: KEEP 契约内的不可删成本；654 tracked 文件
+  tests: 650
+  text_loc: 270290
+  why_kept: KEEP 契约内的不可删成本；650 tracked 文件
 - area: backend/packages/harness/deerflow/persistence（26 个 Alembic revision + ORM model 必须与 create_all 集合一致）
   tracked: 81
   source: 50
@@ -75,11 +75,11 @@ keep_cost_breakdown:
   text_loc: 49605
   why_kept: KEEP 契约内的不可删成本；410 tracked 文件
 - area: 合计（删除后仍保留的全部 tracked 文件）
-  tracked: 2266
+  tracked: 2262
   source: 1058
-  tests: 872
-  text_loc: 542452
-  why_kept: baseline tracked=3073 → 保留 2266；text-LOC 717429 → 542452。剩余部分不是「尚未删干净」，而是 KEEP 契约指定的产品面本体。
+  tests: 868
+  text_loc: 540774
+  why_kept: baseline tracked=3073 → 保留 2262；text-LOC 717429 → 540774。剩余部分不是「尚未删干净」，而是 KEEP 契约指定的产品面本体。
 batches:
 - id: B1
   objective: 删除 InsightFlow 最终产品面之外的全部前端路由、孤儿营销组件与上游品牌资产，并把共享外壳从这些路由上解耦。
@@ -1219,6 +1219,7 @@ batches:
     text_loc: 983
     keep_exceptions: []
   delete_files:
+  - .github/workflows/chart.yaml
   - backend/app/gateway/routers/subagent_batches.py
   - backend/packages/harness/deerflow/community/url_safety.py
   - backend/packages/harness/deerflow/config/acp_config.py
@@ -1278,6 +1279,10 @@ batches:
   - backend/tests/test_patched_mimo.py
   - backend/tests/test_patched_minimax.py
   - backend/tests/test_patched_stepfun.py
+  - backend/tests/test_provisioner_kubeconfig.py
+  - backend/tests/test_provisioner_mount_contract.py
+  - backend/tests/test_provisioner_pvc_volumes.py
+  - backend/tests/test_provisioner_request_threading.py
   - backend/tests/test_ragflow_client.py
   - backend/tests/test_ragflow_tools.py
   - backend/tests/test_remote_search.py
@@ -1299,6 +1304,9 @@ batches:
   - docker/docker-compose.openviking.yaml
   - docs/OPENVIKING.md
   - docs/plans/OPENVIKING_HTTP_MEMORY_INTEGRATION.md
+  - scripts/check_chart_sandbox_service.sh
+  - scripts/check_chart_skill_upload_size.sh
+  - scripts/check_config_version.sh
   - scripts/export_claude_code_oauth.py
   modify_files:
   - path: backend/packages/harness/deerflow/models/factory.py
@@ -1329,12 +1337,6 @@ batches:
     change: 删除 provisioner 服务与其依赖
   - path: docker/docker-compose-dev.yaml
     change: 同上
-  - path: backend/pyproject.toml
-    change: 删除已删 provider/memory/sandbox 的依赖与 extras
-  - path: backend/packages/harness/pyproject.toml
-    change: 删除 harness extras（e2b/boxlite/tenki/opensandbox/groundroute/ollama/monocle 等）
-  - path: backend/uv.lock
-    change: 随 pyproject 重新生成（uv lock），必须与 pyproject 同批
   - path: scripts/verify_versions.sh
     change: 版本源从三处（pyproject/package.json/Chart.yaml）收敛为两处
   - path: scripts/bump_version.sh
@@ -1349,10 +1351,8 @@ batches:
     change: 删除 chart 打包/发布步骤
   - path: .github/workflows/nightly.yaml
     change: 删除 validate-chart job
-  - path: backend/docs/CONFIGURATION.md
-    change: 删除已删 provider/memory/sandbox 的配置章节
-  - path: backend/docs/GUARDRAILS.md
-    change: 删除 image_search 行
+  - path: backend/tests/test_nginx_langgraph_body_size.py
+    change: 断言范围去掉已删的 Helm ConfigMap 模板（三个位置→两个位置）
   - path: backend/scripts/benchmark/sandbox/bench_provider.py
     change: 删除 boxlite provider 用例，保留 local/AIO 基准
   - path: backend/packages/harness/deerflow/agents/lead_agent/prompt.py
@@ -1391,6 +1391,18 @@ batches:
     change: 删除 image_search 工具组与 provider zoo 描述
   - path: backend/docs/TODO.md
     change: 删除 image_search 相关待办条目
+  - path: docker/docker-compose.dood.yaml
+    change: 注释去掉 provisioner_url 与 K8s 模式说明
+  - path: docker/nginx/nginx.conf
+    change: 删除 /api/sandboxes 的 provisioner 转发
+  - path: scripts/docker.sh
+    change: 删除 provisioner 沙箱模式、服务列表与日志分支
+  - path: scripts/deploy.sh
+    change: 删除 provisioner 沙箱模式与服务列表
+  - path: scripts/AGENTS.md
+    change: 删除 browser 依赖探测措辞、provisioner 测试段、openviking 锚点与浏览器 Live 段
+  - path: backend/tests/test_agent_guidance_check.py
+    change: 指南清单删除已删的 community/tavily/AGENTS.md
   keep_exceptions:
   - backend/packages/harness/deerflow/persistence/subagent_batches/__init__.py
   - backend/packages/harness/deerflow/persistence/subagent_batches/model.py
@@ -1472,6 +1484,10 @@ batches:
   - backend/tests/test_patched_mimo.py
   - backend/tests/test_patched_minimax.py
   - backend/tests/test_patched_stepfun.py
+  - backend/tests/test_provisioner_kubeconfig.py
+  - backend/tests/test_provisioner_mount_contract.py
+  - backend/tests/test_provisioner_pvc_volumes.py
+  - backend/tests/test_provisioner_request_threading.py
   - backend/tests/test_ragflow_client.py
   - backend/tests/test_ragflow_tools.py
   - backend/tests/test_remote_search.py
@@ -1511,20 +1527,20 @@ batches:
   cumulative_gates:
   - B1–B3 之后 backend focused + 前端 KEEP E2E 全绿
   rollback: git revert <B3 commit>（该批一个 commit，revert 后 KEEP 主链自洽）
-  forecast_tracked_deleted: 184
-  forecast_source_deleted: 87
-  forecast_tests_deleted: 58
-  forecast_text_loc_deleted: 45840
+  forecast_tracked_deleted: 192
+  forecast_source_deleted: 90
+  forecast_tests_deleted: 62
+  forecast_text_loc_deleted: 47683
   before:
     tracked: 2614
     source: 1197
     tests: 942
     text_loc: 601897
   forecast_after:
-    tracked: 2430
-    source: 1110
-    tests: 884
-    text_loc: 556057
+    tracked: 2422
+    source: 1107
+    tests: 880
+    text_loc: 554214
 - id: B4
   objective: 删除 Skill 平台与媒体技能、移除随之失去最后一个 importer 的依赖与配置键、同步 CI 与文档，并把版本契约从三源收敛为两源。
   delete_roots:
@@ -1662,7 +1678,6 @@ batches:
     keep_exceptions: []
   delete_files:
   - .github/skill-review-waivers.v1.json
-  - .github/workflows/chart.yaml
   - .github/workflows/skill-review-ci.yml
   - backend/packages/harness/deerflow/tools/builtins/review_skill_package_tool.py
   - backend/tests/test_review_changed_public_skills.py
@@ -1671,9 +1686,6 @@ batches:
   - backend/tests/test_skill_review_core.py
   - backend/tests/test_skill_review_waivers.py
   - backend/tests/test_skill_reviewer_public_skill.py
-  - scripts/check_chart_sandbox_service.sh
-  - scripts/check_chart_skill_upload_size.sh
-  - scripts/check_config_version.sh
   - scripts/review_changed_public_skills.py
   - scripts/skill_review_waivers.py
   modify_files:
@@ -1767,20 +1779,20 @@ batches:
   cumulative_gates:
   - B1–B4 之后 backend focused + 前端 KEEP 单测/E2E 全绿，uv lock --check 通过
   rollback: git revert <B4 commit>（该批一个 commit，revert 后 KEEP 主链自洽）
-  forecast_tracked_deleted: 103
-  forecast_source_deleted: 38
+  forecast_tracked_deleted: 99
+  forecast_source_deleted: 35
   forecast_tests_deleted: 11
-  forecast_text_loc_deleted: 11834
+  forecast_text_loc_deleted: 11669
   before:
-    tracked: 2430
-    source: 1110
-    tests: 884
-    text_loc: 556057
+    tracked: 2422
+    source: 1107
+    tests: 880
+    text_loc: 554214
   forecast_after:
-    tracked: 2327
+    tracked: 2323
     source: 1072
-    tests: 873
-    text_loc: 544223
+    tests: 869
+    text_loc: 542545
 - id: B5
   objective: 清除孤儿引用、死 i18n 键、被删主题的历史文档与实验包袱，更新 README/AGENTS/文档，并对最终规模做一次对账。
   delete_roots:
@@ -1840,6 +1852,38 @@ batches:
     change: 追加 Phase 5 收缩条目
   - path: CHANGELOG_zh.md
     change: 同步中文变更日志
+  - path: README.md
+    change: 清掉指向已删脚本/文档/IM 渠道/记忆后端的段落（export_claude_code_oauth、OPENVIKING、mem0/honcho README、lark-cli-init、channel_connections）
+  - path: README_zh.md
+    change: 同上
+  - path: README_ja.md
+    change: 同上
+  - path: README_fr.md
+    change: 同上
+  - path: README_ru.md
+    change: 同上
+  - path: docs/ARCHITECTURE.md
+    change: 版本源说明去掉已删的 Helm Chart.yaml（三源→两源）
+  - path: backend/docs/CONFIGURATION.md
+    change: 收敛为最终配置面（含 B3 移交的 provider/memory/sandbox 章节，deviation 7）
+  - path: backend/docs/GUARDRAILS.md
+    change: 删除 image_search 行（B3 移交，deviation 7）
+  - path: backend/packages/harness/deerflow/config/AGENTS.md
+    change: startup-only 登记表删除 channel_connections（B2 遗留）
+  - path: config.example.yaml
+    change: 删除 channel_connections 注释块与 provisioner/k8s 残留措辞（B2/B3 遗留）
+  - path: scripts/wizard/writer.py
+    change: 删除 channel_connections 配置产出面与 _build_channel_connections_config（B2 遗留）
+  - path: backend/tests/test_setup_wizard.py
+    change: 同步删除 channel_connections 用例（B2 遗留）
+  - path: backend/app/gateway/routers/features.py
+    change: 删除已删 durable batch 的 subagent_batches 兼容键（与前端 api/hooks 同批）
+  - path: frontend/src/core/features/api.ts
+    change: 删除 subagent_batches 契约字段
+  - path: frontend/src/core/features/hooks.ts
+    change: 删除对应的 hook/派生
+  - path: frontend/src/core/api/static-response.ts
+    change: 删除静态兜底里的 subagent_batches 键
   keep_exceptions: []
   entrypoints:
   - README.md、AGENTS.md、backend/AGENTS.md、frontend/AGENTS.md、backend/docs/**
@@ -1878,10 +1922,10 @@ batches:
   forecast_tests_deleted: 1
   forecast_text_loc_deleted: 1771
   before:
-    tracked: 2327
+    tracked: 2323
     source: 1072
-    tests: 873
-    text_loc: 544223
+    tests: 869
+    text_loc: 542545
   forecast_after: *id001
 keep_whitelist:
   gateway_routers:
@@ -1964,6 +2008,55 @@ coverage:
   skill_platform_media: B4
   dependencies_config_tests_docs: B4（依赖/配置/CI/文档）+ B5（孤儿引用与 i18n）
   deer_svg_brand_asset: B1
+execution_deviations:
+- id: 4
+  batch: B3
+  item: backend/tests/test_provisioner_{kubeconfig,mount_contract,pvc_volumes,request_threading}.py
+  kind: 清单外补删（随主体死亡）
+  detail: 清单只把 docker/provisioner 目录列为删除根；这四个测试是它的专属测试。不删即留下对已删模块的 import。
+  evidence: git diff --name-status 80b9f50 c5ff729 --diff-filter=D | grep provisioner
+- id: 5
+  batch: B3
+  item: .github/workflows/chart.yaml、scripts/{check_config_version,check_chart_sandbox_service,check_chart_skill_upload_size}.sh
+  kind: 从 B4 移入 B3（避免跨批悬空引用）
+  detail: chart.yaml 的触发面包含 push tag v* 与 PR 修改 config.example.yaml，而 helm lint/template/package 的目标 deploy/helm/** 已在 B3 删除：留在 B4 会让 B3→B4 期间的发布与 PR 门禁必然失败。chart 与它的 CI 面必须同批死亡。
+  evidence: git show HEAD:.github/workflows/chart.yaml 的 on.push.tags/pull_request.paths 与 helm lint 步骤
+- id: 6
+  batch: B3
+  item: backend/pyproject.toml、backend/packages/harness/pyproject.toml、backend/uv.lock
+  kind: 从 B3 移入 B4（仓库规则）
+  detail: 清单原列为 B3；仓库规则规定只有 B4 可更新依赖与 lock（B2 曾因子代理用镜像索引重写 uv.lock 而回滚）。B3 因此保持 lock 字节不变。
+  evidence: git diff 80b9f50 c5ff729 -- backend/uv.lock 为空
+- id: 7
+  batch: B3
+  item: backend/docs/CONFIGURATION.md、backend/docs/GUARDRAILS.md
+  kind: 从 B3 移入 B5（文档收敛批）
+  detail: 两份文档的 provider/memory/sandbox 章节需要在 B4 依赖定稿后一次性重写，分两批改会写两遍。
+  evidence: docs/removal/phase-05-deletion-manifest.yaml 的 B5 modify_files 条目
+- id: 8
+  batch: B3
+  item: B2 遗留的 channel_connections 产出面（scripts/wizard/writer.py、backend/tests/test_setup_wizard.py、config.example.yaml 注释块、config/AGENTS.md 登记表、前端 i18n）
+  kind: 跨批遗留 → B5 孤儿清扫
+  detail: B2 删除了 channel_connections 配置类与路由，但向导仍会产出该配置节、示例文件与模块指南仍描述它。B3 只处理 B3 自身消费面，此项统一在 B5 收敛。
+  evidence: git grep -n channel_connections -- scripts config.example.yaml backend/packages/harness/deerflow/config/AGENTS.md
+- id: 9
+  batch: B3
+  item: AIO 沙箱的远程 provisioner 模式（community/aio_sandbox/remote_backend.py、sandbox.provisioner_api_key）
+  kind: 保留 + 改写文档（需复核）
+  detail: sandbox.provisioner_url 从不是 SandboxConfig 的声明字段，而是 extra="allow" 透传的 operator 配置，因此清单里app_config.py 的这条删除项是空操作；remote_backend.py 是 KEEP 域 community/aio_sandbox 的一部分。选择保留该客户端，只把 config.example.yaml 里指向仓库自带 provisioner/docker-compose-dev 的措辞改写为「外部自建 provisioner」并改号 Option 3。是否要彻底移除该模式，请复核者裁定。
+  evidence: git grep -n provisioner_url -- backend/packages/harness/deerflow/config/；git show HEAD:config.example.yaml 的 Option 4 段落
+- id: 10
+  batch: B3
+  item: config.example.yaml 的注释死块清理标准
+  kind: 执行方法偏差（可复核）
+  detail: '按「注释块内每个 use: 的 deerflow.* 模块文件是否仍然存在」机械判定，共删除 41 个死条目（含 mimo/stepfun/minimax/vllm/mindie/knowledge_search/web_search 备用后端/browser_* 等）与 3 个死 sandbox option 块（BoxLite/Tenki/OpenSandbox）；只删注释行，YAML 解析与 config_version 不变。工具见 .reviews/phase-05-comment-block-cleaner.py 与 phase-05-comment-block-refs.py。'
+  evidence: backend/.venv/Scripts/python.exe .reviews/phase-05-comment-block-cleaner.py --check → 0；.reviews/phase-05-dead-comment-refs.py → 0
+- id: 11
+  batch: B3
+  item: 根 scripts/ 的 9 个文件不满足 ruff format --check
+  kind: 基线既有，不修
+  detail: '仓库的 ruff 钩子与 Makefile 只覆盖 ^backend/（.pre-commit-config.yaml files: ^backend/、backend/Makefile `ruff check .`）。这 9 个文件在 B3 HEAD 时已同样不满足格式化，属基线既有；批量重排会引入与删除无关的噪声 diff。'
+  evidence: git show HEAD:scripts/wizard/writer.py 落盘后 ruff format --check 仍报 Would reformat
 blocked:
 - item: frontend/next.config.js 的 nextra 包装、src/mdx-components.ts、src/typings/md.d.ts 是否可在零 MDX 路由后删除
   missing_evidence: 需要真实 `pnpm build`；Phase 5A 保持只读，未运行构建。本清单按 BLOCKED→KEEP 处理，B5 若要删必须先跑通构建。

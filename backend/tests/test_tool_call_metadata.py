@@ -13,11 +13,11 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 
 from deerflow.agents.middlewares.tool_call_metadata import clone_ai_message_with_tool_calls
-from deerflow.models.claude_provider import ClaudeChatModel
 
-# DeerFlow deployments use ClaudeChatModel, which post-processes the payload
-# built by the upstream ChatAnthropic formatter; pin both.
-_ANTHROPIC_MODEL_CLASSES = pytest.mark.parametrize("model_class", [ChatAnthropic, ClaudeChatModel], ids=["ChatAnthropic", "ClaudeChatModel"])
+# DeerFlow's Anthropic adapter was removed in Phase 5B; the surviving production
+# path is upstream ``ChatAnthropic`` and its payload formatter, which is what the
+# pairing assertions below must keep pinning.
+_ANTHROPIC_MODEL_CLASSES = pytest.mark.parametrize("model_class", [ChatAnthropic], ids=["ChatAnthropic"])
 
 
 def _call(call_id: str, name: str = "bash") -> dict:

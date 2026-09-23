@@ -7,7 +7,7 @@ module guides that own the depth. For anything inside a module, read that module
 guide rather than expecting full detail here:
 
 - **[backend/AGENTS.md](backend/AGENTS.md)** — backend depth: harness/app split, agent &
-  middleware chain, sandbox, MCP, skills, memory, IM channels, persistence/migrations,
+  middleware chain, sandbox, MCP, skills, memory, persistence/migrations,
   config system, test layout.
 - **[frontend/AGENTS.md](frontend/AGENTS.md)** — frontend depth: Next.js App Router layout,
   thread/streaming data flow, code style, commands.
@@ -17,19 +17,20 @@ guide rather than expecting full detail here:
 DeerFlow is a LangGraph-based AI super-agent system with a full-stack architecture. The
 backend runs a "super agent" with sandboxed execution, persistent memory, subagent
 delegation, and extensible tools (built-in, MCP, community), all per-thread isolated. The
-frontend is a Next.js chat UI. External IM platforms (Feishu, Slack, Telegram, Discord,
-DingTalk) bridge into the same agent through the Gateway.
+frontend is a Next.js chat UI.
+
+Phase 5 之后产品面收缩为 InsightFlow 受控经营分析工作台：外部 IM 平台桥接、Custom/Managed
+Agent、Projects/Documents/Trash、Browser 与上游 provider zoo 已删除。
 
 ## Service Topology
 
-A single `make dev` / Docker stack runs four cooperating services:
+A single `make dev` / Docker stack runs three cooperating services:
 
 | Service         | Port   | Role                                                                 |
-| --------------- | ------ | ------------------------------------------------------------------- |
+| --------------- | ------ | -------------------------------------------------------------------- |
 | **Nginx**       | `2026` | Unified reverse-proxy entry point — open this in the browser        |
 | **Gateway API** | `8001` | FastAPI REST API + embedded LangGraph-compatible agent runtime      |
 | **Frontend**    | `3000` | Next.js web interface                                               |
-| **Provisioner** | `8002` | Optional — only when sandbox is configured for provisioner/K8s mode |
 
 Nginx is the single public entry: it proxies `/api/*` to the Gateway, rewriting
 `/api/langgraph/*` onto the Gateway's native routes, and serves the frontend — see
@@ -59,9 +60,9 @@ deer-flow/
 │   ├── extensions/sources/         # Deployable snapshots of locally installed Python extensions
 │   ├── packages/extension-api/     # deerflow-extension-api package (import: deerflow_extension_api.*) — public extension contract
 │   ├── packages/harness/           # deerflow-harness package (import: deerflow.*) — agent framework
-│   └── app/                        # FastAPI Gateway + IM channels (import: app.*)
+│   └── app/                        # FastAPI Gateway + analytics API (import: app.*)
 ├── frontend/                       # Next.js frontend (pnpm) — see frontend/AGENTS.md
-├── docker/                         # docker-compose files, nginx config, provisioner
+├── docker/                         # docker-compose files + nginx config
 ├── skills/                         # Agent skills: public/ (committed), custom/ (gitignored)
 │                                    # Managed integration skill packs are global at .deer-flow/integrations/skills/{provider}/
 │                                    # Integration credentials and enabled state remain per-user
@@ -237,10 +238,10 @@ These apply repo-wide; module guides own the module-specific detail.
   Python utilities that read or write them must pass `encoding="utf-8"` rather than
   relying on the platform locale.
 - **Version sources must stay in lockstep** — a release version must match identically in
-  `backend/pyproject.toml`, `frontend/package.json`, and `deploy/helm/deer-flow/Chart.yaml`
-  (`version` + `appVersion`). Pushing a `v*` git tag triggers CI that runs
+  `backend/pyproject.toml` and `frontend/package.json`.（Phase 5 删除了 Helm chart，
+  版本源从三源收缩为两源。）Pushing a `v*` git tag triggers CI that runs
   `scripts/verify_versions.sh` and **blocks all publishing** if any source drifts. Before
-  bumping a version, run `scripts/bump_version.sh <ver>` (aligns all four at once) and
+  bumping a version, run `scripts/bump_version.sh <ver>` (aligns both at once) and
   `scripts/verify_versions.sh <ver>` to catch drift early. See [RELEASING.md](RELEASING.md).
 - **Don't edit `CLAUDE.md`** — it only contains `@AGENTS.md`. All agent guidance changes
   belong here in `AGENTS.md`; `CLAUDE.md` is a thin import shim.

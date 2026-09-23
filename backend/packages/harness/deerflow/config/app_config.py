@@ -9,7 +9,6 @@ import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
-from deerflow.config.acp_config import ACPAgentConfig, load_acp_config_from_dict
 from deerflow.config.auth_config import AuthAppConfig
 from deerflow.config.authorization_config import AuthorizationConfig, load_authorization_config_from_dict
 from deerflow.config.checkpointer_config import CheckpointerConfig, load_checkpointer_config_from_dict
@@ -35,7 +34,6 @@ from deerflow.config.skill_evolution_config import SkillEvolutionConfig
 from deerflow.config.skill_scan_config import SkillScanConfig
 from deerflow.config.skills_config import SkillsConfig
 from deerflow.config.stream_bridge_config import StreamBridgeConfig, load_stream_bridge_config_from_dict
-from deerflow.config.subagent_batches_config import SubagentBatchesConfig
 from deerflow.config.subagent_runtime_config import SubagentRuntimeConfig
 from deerflow.config.subagents_config import SubagentsAppConfig, load_subagents_config_from_dict
 from deerflow.config.suggestions_config import SuggestionsConfig
@@ -240,7 +238,6 @@ class AppConfig(BaseModel):
     summarization: SummarizationConfig = Field(default_factory=SummarizationConfig, description="Conversation summarization configuration")
     task_continuity: TaskContinuityConfig = Field(default_factory=TaskContinuityConfig, description="Thread-local notes and compacted-source recall")
     memory: MemoryConfig = Field(default_factory=MemoryConfig, description="Memory subsystem configuration")
-    acp_agents: dict[str, ACPAgentConfig] = Field(default_factory=dict, description="ACP-compatible agent configuration")
     subagents: SubagentsAppConfig = Field(default_factory=SubagentsAppConfig, description="Subagent runtime configuration")
     guardrails: GuardrailsConfig = Field(default_factory=GuardrailsConfig, description="Guardrail middleware configuration")
     authorization: AuthorizationConfig = Field(default_factory=AuthorizationConfig, description="Fine-grained resource authorization configuration (RBAC and beyond)")
@@ -287,14 +284,7 @@ class AppConfig(BaseModel):
         default_factory=SubagentRuntimeConfig,
         description=format_field_description(
             "subagent_runtime",
-            field_doc="Process-local admission and execution capacity shared by ordinary and batch subagents.",
-        ),
-    )
-    subagent_batches: SubagentBatchesConfig = Field(
-        default_factory=SubagentBatchesConfig,
-        description=format_field_description(
-            "subagent_batches",
-            field_doc="Durable native-subagent batch scheduling, lease, and recovery configuration.",
+            field_doc="Process-local admission and execution capacity shared by ordinary subagents.",
         ),
     )
     checkpointer: CheckpointerConfig | None = Field(
@@ -426,21 +416,11 @@ class AppConfig(BaseModel):
                 "No models are configured in %s. Add at least one entry under `models:` (see the commented examples in config.example.yaml) or run `make setup`.",
                 resolved_path,
             )
-        acp_agents = cls._validate_acp_agents(config_data.get("acp_agents", {}))
-        cls._apply_singleton_configs(result, acp_agents)
+        cls._apply_singleton_configs(result)
         return result
 
     @classmethod
-    def _validate_acp_agents(
-        cls,
-        config_data: Mapping[str, Mapping[str, object]] | None,
-    ) -> dict[str, ACPAgentConfig]:
-        if config_data is None:
-            config_data = {}
-        return {name: ACPAgentConfig(**cfg) for name, cfg in config_data.items()}
-
-    @classmethod
-    def _apply_singleton_configs(cls, config: Self, acp_agents: dict[str, ACPAgentConfig]) -> None:
+    def _apply_singleton_configs(cls, config: Self) -> None:
         from deerflow.config.checkpointer_config import get_checkpointer_config
 
         previous_checkpointer_config = get_checkpointer_config()
@@ -454,7 +434,6 @@ class AppConfig(BaseModel):
         load_authorization_config_from_dict(config.authorization.model_dump())
         load_checkpointer_config_from_dict(config.checkpointer.model_dump() if config.checkpointer is not None else None)
         load_stream_bridge_config_from_dict(config.stream_bridge.model_dump() if config.stream_bridge is not None else None)
-        load_acp_config_from_dict({name: agent.model_dump() for name, agent in acp_agents.items()})
 
         if previous_checkpointer_config != config.checkpointer:
             # These runtime singletons derive their backend from checkpointer config.

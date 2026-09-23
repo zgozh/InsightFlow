@@ -81,7 +81,6 @@ def _yaml_dump(data: Any) -> str:
 
 def _default_tools() -> list[dict[str, Any]]:
     return [
-        {"name": "image_search", "use": "deerflow.community.image_search.tools:image_search_tool", "group": "web", "max_results": 5},
         {"name": "ls", "use": "deerflow.sandbox.tools:ls_tool", "group": "file:read"},
         {"name": "read_file", "use": "deerflow.sandbox.tools:read_file_tool", "group": "file:read"},
         {"name": "glob", "use": "deerflow.sandbox.tools:glob_tool", "group": "file:read"},

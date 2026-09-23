@@ -75,7 +75,6 @@ def _collect_thread_id_routes():
         runs,
         scheduled_tasks,
         skills,
-        subagent_batches,
         suggestions,
         thread_runs,
         threads,
@@ -89,7 +88,6 @@ def _collect_thread_id_routes():
         runs,
         scheduled_tasks,
         skills,
-        subagent_batches,
         suggestions,
         thread_runs,
         threads,
@@ -119,7 +117,6 @@ def test_sweep_covers_expected_surface():
     assert len(_THREAD_ID_ROUTES) >= 30
     assert any("suggestions" in name for name, _, _ in _THREAD_ID_ROUTES)
     assert any("mcp_tasks" in name for name, _, _ in _THREAD_ID_ROUTES)
-    assert any("subagent_batches" in name for name, _, _ in _THREAD_ID_ROUTES)
 
 
 def test_sweep_covers_every_router_module_with_thread_id_routes():

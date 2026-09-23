@@ -3,11 +3,10 @@
 DeerFlow already treats the genuine user message as untrusted and neutralizes
 framework/injection tags in it (see ``InputSanitizationMiddleware``). Remote
 content that the agent *fetches* — web page bodies and search snippets returned
-by ``web_fetch`` / ``web_search`` / ``image_search``, plus the target site's
-response-status text surfaced by ``web_capture`` — is equally untrusted, yet
-it entered the model context verbatim. A page the attacker controls could embed
-a forged ``<system-reminder>`` block (or a ``--- END USER INPUT ---`` marker) and
-have it reach the model as authoritative framework context.
+by ``web_fetch`` / ``web_search`` — is equally untrusted, yet it entered the
+model context verbatim. A page the attacker controls could embed a forged
+``<system-reminder>`` block (or a ``--- END USER INPUT ---`` marker) and have it
+reach the model as authoritative framework context.
 
 This middleware narrows that gap by applying the *same* structural
 neutralization (``neutralize_untrusted_tags``) to the results of the first-party
@@ -41,13 +40,10 @@ from deerflow.tools.mcp_metadata import is_mcp_tool
 
 logger = logging.getLogger(__name__)
 
-# Tool names whose results are attacker-influenceable remote content. The
-# first-party search/fetch providers all normalize to ``web_fetch`` /
-# ``web_search`` / ``image_search`` (see community/*/tools.py), so the set stays
-# provider-agnostic. ``web_capture`` (Browserless screenshot) additionally
-# surfaces the target site's response-status text (``X-Response-Status``, a
-# free-form reason phrase controlled by whatever server is being captured) into
-# its result message, so it is untrusted remote content too and belongs here.
+# Tool names whose results are attacker-influenceable remote content.
+# Phase 5 删除了 image_search（RAGFlow/LightRAG 之外的上游 provider zoo）与
+# web_capture（Browserless），这里只保留仍在的第一方网络工具名，所以集合是
+# provider-agnostic 的 DDG 搜索 + Jina 抓取两条主路径。
 # The gate is name-based for the first-party web tools; MCP-sourced tools are
 # covered by their ``deerflow_mcp`` metadata tag instead (every MCP server is
 # third-party remote code, so its results are untrusted regardless of what the
@@ -58,8 +54,6 @@ _REMOTE_CONTENT_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "web_fetch",
         "web_search",
-        "image_search",
-        "web_capture",
     }
 )
 
@@ -122,8 +116,8 @@ def _sanitize_result(result: ToolMessage | Command) -> ToolMessage | Command:
 class ToolResultSanitizationMiddleware(AgentMiddleware[AgentState]):
     """Escape injection/framework tags in remote tool results before the model sees them.
 
-    Results of the first-party network tools (``web_fetch`` / ``web_search`` /
-    ``image_search`` / ``web_capture``) are rewritten; every other tool's output
+    Results of the first-party network tools (``web_fetch`` / ``web_search``)
+    are rewritten; every other tool's output
     is returned unchanged. Mirrors the user-input guardrail so untrusted remote
     content and untrusted user input receive the same structural neutralization.
 

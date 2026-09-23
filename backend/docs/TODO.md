@@ -23,7 +23,7 @@
 - [ ] Skill marketplace / remote skill installation
 - [ ] Optimize async concurrency in agent hot path (IM channels multi-task scenario)
 - [ ] Replace `subprocess.run()` with `asyncio.create_subprocess_shell()` in `packages/harness/deerflow/sandbox/local/local_sandbox.py`
-  - Replace sync `requests` with `httpx.AsyncClient` in community tools (tavily, jina_ai, firecrawl, infoquest, image_search)
+  - Replace sync `requests` with `httpx.AsyncClient` in community tools (jina_ai)
   - [x] Replace sync `model.invoke()` with async `model.ainvoke()` in title_middleware and memory updater
   - Consider `asyncio.to_thread()` wrapper for remaining blocking file I/O
   - For production: tune Gateway worker/runtime settings for long-running agent workloads

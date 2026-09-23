@@ -23,9 +23,10 @@ config reading): nginx's defaults are unfit for a text-chat proxy route.
 The uploads location (``/api/threads/{id}/uploads``) already carries both
 settings for file uploads. This locks the same settings onto
 ``/api/langgraph/`` for chat prompts, sized for text rather than binary
-uploads (see the range check below), across all three places this nginx
-config is maintained: the Docker production config, the local-dev config
-used by ``make dev``, and the Kubernetes/Helm ConfigMap template.
+uploads (see the range check below), across both places this nginx config is
+maintained: the Docker production config and the local-dev config used by
+``make dev``. Phase 5 删除了 Helm chart，因此 Kubernetes ConfigMap 模板这份
+第三处配置已不存在（断言范围随主体收窄，不改判定阈值）。
 """
 
 from __future__ import annotations
@@ -39,7 +40,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 NGINX_CONFIGS = (
     "docker/nginx/nginx.conf",
     "docker/nginx/nginx.local.conf",
-    "deploy/helm/deer-flow/templates/configmap-nginx.yaml",
 )
 
 # Text prompts never carry binary file attachments (those go through the

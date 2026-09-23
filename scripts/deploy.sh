@@ -8,7 +8,7 @@
 #   deploy.sh start              — start from pre-built images
 #   deploy.sh down               — stop and remove containers
 #
-# Sandbox mode (local / aio / provisioner) is auto-detected from config.yaml.
+# Sandbox mode (local / aio) is auto-detected from config.yaml.
 #
 # Examples:
 #   deploy.sh                    # build + start
@@ -273,7 +273,6 @@ fi
 
 detect_sandbox_mode() {
     local sandbox_use=""
-    local provisioner_url=""
 
     [ -f "$DEER_FLOW_CONFIG_PATH" ] || { echo "local"; return; }
 
@@ -285,20 +284,8 @@ detect_sandbox_mode() {
         }
     ' "$DEER_FLOW_CONFIG_PATH")
 
-    provisioner_url=$(awk '
-        /^[[:space:]]*sandbox:[[:space:]]*$/ { in_sandbox=1; next }
-        in_sandbox && /^[^[:space:]#]/ { in_sandbox=0 }
-        in_sandbox && /^[[:space:]]*provisioner_url:[[:space:]]*/ {
-            line=$0; sub(/^[[:space:]]*provisioner_url:[[:space:]]*/, "", line); print line; exit
-        }
-    ' "$DEER_FLOW_CONFIG_PATH")
-
     if [[ "$sandbox_use" == *"deerflow.community.aio_sandbox:AioSandboxProvider"* ]]; then
-        if [ -n "$provisioner_url" ]; then
-            echo "provisioner"
-        else
-            echo "aio"
-        fi
+        echo "aio"
     else
         echo "local"
     fi
@@ -348,7 +335,7 @@ echo "=========================================="
 echo ""
 
 # ── Detect runtime configuration ────────────────────────────────────────────
-# Only needed for start / up — determines whether provisioner is launched.
+# Only needed for start / up — determines whether the Docker sandbox overlay is added.
 
 sandbox_mode="$(detect_sandbox_mode)"
 echo -e "${BLUE}Sandbox mode: $sandbox_mode${NC}"
@@ -357,14 +344,11 @@ echo -e "${BLUE}Runtime: Gateway embedded agent runtime${NC}"
 
 services="redis frontend gateway nginx"
 
-if [ "$sandbox_mode" = "provisioner" ]; then
-    services="$services provisioner"
-fi
 
 # ── DEER_FLOW_DOCKER_SOCKET (aio / pure-DooD mode only) ──────────────────────
-# Only aio mode (AioSandboxProvider without provisioner_url) needs the host
+# Only aio mode (AioSandboxProvider) needs the host
 # Docker socket. It is mounted via the opt-in docker-compose.dood.yaml overlay,
-# appended here, so the default (local) and provisioner modes never expose the
+# appended here, so the default (local) mode never exposes the
 # host daemon. Mounting the socket = root-equivalent host control; see SECURITY.md.
 
 docker_socket="$(read_dotenv_value DEER_FLOW_DOCKER_SOCKET)"

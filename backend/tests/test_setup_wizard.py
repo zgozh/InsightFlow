@@ -8,7 +8,15 @@ from __future__ import annotations
 
 import yaml
 from wizard import ui as wizard_ui
-from wizard.providers import LLM_PROVIDERS, SEARCH_PROVIDERS, WEB_FETCH_PROVIDERS, LLMProvider, with_thinking_support
+from wizard.providers import (
+    LLM_PROVIDERS,
+    SEARCH_PROVIDERS,
+    WEB_FETCH_PROVIDERS,
+    LLMProvider,
+    SearchProvider,
+    WebProvider,
+    with_thinking_support,
+)
 from wizard.steps import llm as llm_step
 from wizard.steps import search as search_step
 from wizard.writer import (
@@ -36,25 +44,32 @@ class TestProviders:
             "anthropic",
             "google",
             "gemini_openai_gateway",
-            "mimo",
             "deepseek",
             "kimi",
             "novita",
             "minimax",
             "minimax_cn",
             "openrouter",
-            "vllm",
-            "mindie",
-            "codex",
-            "claude_code",
         }
         assert expected.issubset(providers)
 
         assert providers["openai_responses"].extra_config["use_responses_api"] is True
         assert providers["gemini_openai_gateway"].use == "deerflow.models.patched_openai:PatchedChatOpenAI"
-        assert providers["mimo"].use == "deerflow.models.patched_mimo:PatchedChatMiMo"
         assert providers["deepseek"].use == "deerflow.models.patched_deepseek:PatchedChatDeepSeek"
         assert providers["volcengine"].extra_config["api_base"] == "https://ark.cn-beijing.volces.com/api/v3"
+
+    def test_deleted_provider_families_are_not_offered(self):
+        """Phase 5 删除了上游 provider zoo；向导不得再提供已删模块的入口。"""
+        names = {provider.name for provider in LLM_PROVIDERS}
+
+        assert not (names & {"mimo", "vllm", "mindie", "codex", "claude_code", "stepfun"})
+        for provider in LLM_PROVIDERS:
+            module = provider.use.split(":", 1)[0]
+            if module.startswith("deerflow.models."):
+                assert module in {
+                    "deerflow.models.patched_openai",
+                    "deerflow.models.patched_deepseek",
+                }, f"{provider.name} 指向已删模型模块 {module}"
 
     def test_zai_glm_flash_uses_required_thinking_workaround(self):
         provider = next(p for p in LLM_PROVIDERS if p.name == "zai")
@@ -131,9 +146,10 @@ class TestProviders:
             assert sp.use
             assert ":" in sp.use
 
-    def test_search_and_fetch_include_firecrawl(self):
-        assert any(provider.name == "firecrawl" for provider in SEARCH_PROVIDERS)
-        assert any(provider.name == "firecrawl" for provider in WEB_FETCH_PROVIDERS)
+    def test_search_and_fetch_offer_only_the_primary_path(self):
+        """Phase 5 只保留 DDG 搜索 + Jina 阅读器这一条主路径。"""
+        assert [provider.name for provider in SEARCH_PROVIDERS] == ["ddg"]
+        assert [provider.name for provider in WEB_FETCH_PROVIDERS] == ["jina_ai"]
 
     def test_web_fetch_providers_have_required_fields(self):
         for provider in WEB_FETCH_PROVIDERS:
@@ -345,25 +361,6 @@ class TestBuildMinimalConfig:
         assert model["use_responses_api"] is True
         assert model["output_version"] == "responses/v1"
         assert model["supports_vision"] is True
-
-    def test_patched_thinking_provider_defaults_are_preserved(self):
-        provider = next(p for p in LLM_PROVIDERS if p.name == "mimo")
-        content = build_minimal_config(
-            provider_use=provider.use,
-            model_name=provider.default_model,
-            display_name=provider.display_name,
-            api_key_field=provider.api_key_field,
-            env_var=provider.env_var,
-            extra_model_config=provider.extra_config,
-        )
-        data = yaml.safe_load(content)
-        model = data["models"][0]
-        assert model["use"] == "deerflow.models.patched_mimo:PatchedChatMiMo"
-        assert model["base_url"] == "https://api.xiaomimimo.com/v1"
-        assert model["api_key"] == "$MIMO_API_KEY"
-        assert model["supports_thinking"] is True
-        assert model["when_thinking_enabled"]["extra_body"]["thinking"]["type"] == "enabled"
-        assert model["when_thinking_disabled"]["extra_body"]["thinking"]["type"] == "disabled"
 
     def test_can_enable_selected_channel_connections(self):
         content = build_minimal_config(
@@ -650,10 +647,9 @@ class TestWriteConfigYaml:
                             "timeout": 10,
                         },
                         {
-                            "name": "image_search",
-                            "group": "web",
-                            "use": "deerflow.community.image_search.tools:image_search_tool",
-                            "max_results": 5,
+                            "name": "read_file",
+                            "group": "file:read",
+                            "use": "deerflow.sandbox.tools:read_file_tool",
                         },
                         {"name": "ls", "group": "file:read", "use": "deerflow.sandbox.tools:ls_tool"},
                         {"name": "write_file", "group": "file:write", "use": "deerflow.sandbox.tools:write_file_tool"},
@@ -685,7 +681,7 @@ class TestWriteConfigYaml:
         assert data["token_usage"]["enabled"] is True
         assert data["tool_groups"][0]["name"] == "web"
         assert data["summarization"]["max_tokens"] == 2048
-        assert any(tool["name"] == "image_search" and tool["max_results"] == 5 for tool in data["tools"])
+        assert any(tool["name"] == "read_file" for tool in data["tools"])
 
     def test_config_version_read_from_example(self, tmp_path):
         """write_config_yaml should read config_version from config.example.yaml if present."""
@@ -724,11 +720,34 @@ class TestWriteConfigYaml:
 
 class TestSearchStep:
     def test_reuses_api_key_for_same_provider(self, monkeypatch):
+        """同一 provider 同时用于 search 与 fetch 时复用已输入的密钥。
+
+        Phase 5 之后内置列表只剩无需密钥的 ddg/jina_ai，无法再构造"两处同 provider
+        且需要密钥"的真实组合，因此用桩 provider 保留对复用分支（不二次提问）的覆盖。
+        """
         monkeypatch.setattr(search_step, "print_header", lambda *_args, **_kwargs: None)
         monkeypatch.setattr(search_step, "print_success", lambda *_args, **_kwargs: None)
         monkeypatch.setattr(search_step, "print_info", lambda *_args, **_kwargs: None)
 
-        choices = iter([3, 1])
+        stub_search = SearchProvider(
+            name="stub",
+            display_name="Stub Search",
+            description="stub",
+            use="stub.module:web_search_tool",
+            env_var="STUB_API_KEY",
+        )
+        stub_fetch = WebProvider(
+            name="stub",
+            display_name="Stub Fetch",
+            description="stub",
+            use="stub.module:web_fetch_tool",
+            env_var="STUB_API_KEY",
+            tool_name="web_fetch",
+        )
+        monkeypatch.setattr(search_step, "SEARCH_PROVIDERS", [stub_search])
+        monkeypatch.setattr(search_step, "WEB_FETCH_PROVIDERS", [stub_fetch])
+
+        choices = iter([0, 0])
         prompts: list[str] = []
 
         def fake_choice(_prompt, _options, default=0):
@@ -745,8 +764,8 @@ class TestSearchStep:
 
         assert result.search_provider is not None
         assert result.fetch_provider is not None
-        assert result.search_provider.name == "exa"
-        assert result.fetch_provider.name == "exa"
+        assert result.search_provider.name == "stub"
+        assert result.fetch_provider.name == "stub"
         assert result.search_api_key == "shared-api-key"
         assert result.fetch_api_key == "shared-api-key"
-        assert prompts == ["EXA_API_KEY"]
+        assert prompts == ["STUB_API_KEY"]

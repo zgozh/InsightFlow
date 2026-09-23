@@ -279,7 +279,7 @@ function describeToolCall(
   }
 
   if (
-    (toolCall.name === "web_search" || toolCall.name === "image_search") &&
+    toolCall.name === "web_search" &&
     typeof toolCall.args.query === "string"
   ) {
     return t.toolCalls.searchFor(toolCall.args.query);

@@ -234,7 +234,6 @@ def _preserve_process_config_singletons(monkeypatch: pytest.MonkeyPatch) -> None
     """
 
     from deerflow.config import (
-        acp_config,
         checkpointer_config,
         guardrails_config,
         memory_config,
@@ -254,7 +253,6 @@ def _preserve_process_config_singletons(monkeypatch: pytest.MonkeyPatch) -> None
         (guardrails_config, "_guardrails_config"),
         (checkpointer_config, "_checkpointer_config"),
         (stream_bridge_config, "_stream_bridge_config"),
-        (acp_config, "_acp_agents"),
     ):
         monkeypatch.setattr(module, attr, getattr(module, attr), raising=False)
 

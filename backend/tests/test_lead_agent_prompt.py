@@ -84,7 +84,14 @@ def test_apply_prompt_template_includes_custom_mounts(monkeypatch):
     monkeypatch.setattr("deerflow.config.get_app_config", lambda: config)
     monkeypatch.setattr(prompt_module, "_get_enabled_skills", lambda: [])
     monkeypatch.setattr(prompt_module, "get_deferred_tools_prompt_section", lambda **kwargs: "")
-    monkeypatch.setattr(prompt_module, "_build_acp_section", lambda **kwargs: "")
+    monkeypatch.setattr(prompt_module, "_get_memory_context", lambda agent_name=None, **kwargs: "")
+    monkeypatch.setattr(prompt_module, "get_agent_soul", lambda agent_name=None, **kwargs: "")
+
+    prompt = prompt_module.apply_prompt_template()
+
+    assert "**Custom Mounted Directories:**" in prompt
+    assert "`/home/user/shared`" in prompt
+    assert "Host directory mapped into the sandbox (read-write)" in prompt
 
 
 def test_apply_prompt_template_includes_relative_path_guidance(monkeypatch):
@@ -95,7 +102,6 @@ def test_apply_prompt_template_includes_relative_path_guidance(monkeypatch):
     monkeypatch.setattr("deerflow.config.get_app_config", lambda: config)
     monkeypatch.setattr(prompt_module, "_get_enabled_skills", lambda: [])
     monkeypatch.setattr(prompt_module, "get_deferred_tools_prompt_section", lambda **kwargs: "")
-    monkeypatch.setattr(prompt_module, "_build_acp_section", lambda **kwargs: "")
     monkeypatch.setattr(prompt_module, "_get_memory_context", lambda agent_name=None, **kwargs: "")
     monkeypatch.setattr(prompt_module, "get_agent_soul", lambda agent_name=None, **kwargs: "")
 
@@ -112,7 +118,6 @@ def test_apply_prompt_template_includes_memory_tool_guidance_only_in_tool_mode(m
         skill_evolution=SimpleNamespace(enabled=False),
         tool_search=SimpleNamespace(enabled=False),
         memory=SimpleNamespace(enabled=True, mode="tool", injection_enabled=False),
-        acp_agents={},
     )
     middleware_config = SimpleNamespace(
         sandbox=SimpleNamespace(mounts=[]),
@@ -120,12 +125,10 @@ def test_apply_prompt_template_includes_memory_tool_guidance_only_in_tool_mode(m
         skill_evolution=SimpleNamespace(enabled=False),
         tool_search=SimpleNamespace(enabled=False),
         memory=SimpleNamespace(enabled=True, mode="middleware"),
-        acp_agents={},
     )
     monkeypatch.setattr(prompt_module, "get_or_new_skill_storage", lambda app_config=None: SimpleNamespace(load_skills=lambda enabled_only=True: []))
     monkeypatch.setattr(prompt_module, "get_or_new_user_skill_storage", lambda user_id, app_config=None: SimpleNamespace(load_skills=lambda *, enabled_only: []))
     monkeypatch.setattr(prompt_module, "get_deferred_tools_prompt_section", lambda **kwargs: "")
-    monkeypatch.setattr(prompt_module, "_build_acp_section", lambda **kwargs: "")
     monkeypatch.setattr(prompt_module, "get_agent_soul", lambda agent_name=None, **kwargs: "")
 
     tool_prompt = prompt_module.apply_prompt_template(app_config=tool_config)
@@ -149,7 +152,6 @@ def test_apply_prompt_template_threads_explicit_app_config_without_global_config
         skill_evolution=SimpleNamespace(enabled=False),
         tool_search=SimpleNamespace(enabled=False),
         memory=SimpleNamespace(enabled=False, injection_enabled=True, max_injection_tokens=2000),
-        acp_agents={},
     )
 
     def fail_get_app_config():
@@ -189,7 +191,6 @@ def test_apply_prompt_template_threads_explicit_app_config_to_subagents_without_
         skill_evolution=SimpleNamespace(enabled=False),
         tool_search=SimpleNamespace(enabled=False),
         memory=SimpleNamespace(enabled=False, injection_enabled=True, max_injection_tokens=2000),
-        acp_agents={},
     )
 
     def fail_get_app_config():
@@ -222,7 +223,6 @@ def test_apply_prompt_template_includes_subagent_total_limit(monkeypatch):
         skill_evolution=SimpleNamespace(enabled=False),
         tool_search=SimpleNamespace(enabled=False),
         memory=SimpleNamespace(enabled=False, injection_enabled=True, max_injection_tokens=2000),
-        acp_agents={},
     )
 
     monkeypatch.setattr(prompt_module, "get_or_new_skill_storage", lambda app_config=None: SimpleNamespace(load_skills=lambda enabled_only=True: []))
@@ -256,7 +256,6 @@ def test_apply_prompt_template_clamps_subagent_limits_to_enforced_bounds(monkeyp
         skill_evolution=SimpleNamespace(enabled=False),
         tool_search=SimpleNamespace(enabled=False),
         memory=SimpleNamespace(enabled=False, injection_enabled=True, max_injection_tokens=2000),
-        acp_agents={},
     )
 
     monkeypatch.setattr(prompt_module, "get_or_new_skill_storage", lambda app_config=None: SimpleNamespace(load_skills=lambda enabled_only=True: []))
@@ -290,7 +289,6 @@ def test_apply_prompt_template_prefers_startup_execution_capacity_after_reload(m
         skill_evolution=SimpleNamespace(enabled=False),
         tool_search=SimpleNamespace(enabled=False),
         memory=SimpleNamespace(enabled=False, injection_enabled=True, max_injection_tokens=2000),
-        acp_agents={},
     )
     monkeypatch.setattr(prompt_module, "get_or_new_skill_storage", lambda app_config=None: SimpleNamespace(load_skills=lambda enabled_only=True: []))
     monkeypatch.setattr(prompt_module, "get_agent_soul", lambda agent_name=None, **kwargs: "")
@@ -328,7 +326,6 @@ def test_apply_prompt_template_single_subagent_limit_matches_middleware(monkeypa
         skill_evolution=SimpleNamespace(enabled=False),
         tool_search=SimpleNamespace(enabled=False),
         memory=SimpleNamespace(enabled=False, injection_enabled=True, max_injection_tokens=2000),
-        acp_agents={},
     )
 
     monkeypatch.setattr(prompt_module, "get_or_new_skill_storage", lambda app_config=None: SimpleNamespace(load_skills=lambda enabled_only=True: []))
@@ -351,20 +348,6 @@ def test_apply_prompt_template_single_subagent_limit_matches_middleware(monkeypa
     assert "expected benefit from real parallel latency" not in prompt
     assert "material within-batch parallel savings" not in prompt
     assert "Multi-batch example" not in prompt
-
-
-def test_build_acp_section_uses_explicit_app_config_without_global_config(monkeypatch):
-    explicit_config = SimpleNamespace(acp_agents={"codex": object()})
-
-    def fail_get_acp_agents():
-        raise AssertionError("ambient get_acp_agents() must not be used when app_config is explicit")
-
-    monkeypatch.setattr("deerflow.config.acp_config.get_acp_agents", fail_get_acp_agents)
-
-    section = prompt_module._build_acp_section(app_config=explicit_config)
-
-    assert "ACP Agent Tasks" in section
-    assert "/mnt/acp-workspace/" in section
 
 
 def test_get_memory_context_uses_explicit_app_config_without_global_config(monkeypatch):
@@ -674,7 +657,7 @@ def test_system_prompt_template_preserves_placeholders():
         "{skills_section}",
         "{deferred_tools_section}",
         "{subagent_section}",
-        "{acp_section}",
+        "{custom_mounts_section}",
         "{subagent_reminder}",
         "{skill_first_reminder}",
     ):
@@ -688,7 +671,6 @@ def _make_minimal_app_config():
         skill_evolution=SimpleNamespace(enabled=False),
         tool_search=SimpleNamespace(enabled=False),
         memory=SimpleNamespace(enabled=False, injection_enabled=True, max_injection_tokens=2000),
-        acp_agents={},
     )
 
 

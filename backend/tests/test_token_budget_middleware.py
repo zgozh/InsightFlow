@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from langchain.agents import create_agent
+from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool as as_tool
@@ -10,7 +11,6 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from deerflow.agents.middlewares.token_budget_middleware import TokenBudgetMiddleware
 from deerflow.config.token_budget_config import TokenBudgetConfig
-from deerflow.models.claude_provider import ClaudeChatModel
 
 
 def _make_runtime(thread_id="test-thread", run_id="test-run"):
@@ -419,7 +419,7 @@ class TestTokenBudgetAgentGraph:
         graph.invoke({"messages": [HumanMessage("continue")]}, config=config, context={"thread_id": "stopped-thread", "run_id": "run-2"})
 
         assert executed == []
-        payload = ClaudeChatModel(model="claude-sonnet-4-5", anthropic_api_key="sk-ant-offline")._get_request_payload(model.requests[1])
+        payload = ChatAnthropic(model="claude-sonnet-4-5", anthropic_api_key="sk-ant-offline")._get_request_payload(model.requests[1])
         turns = [turn["content"] if isinstance(turn["content"], list) else [] for turn in payload["messages"]]
         for index, blocks in enumerate(turns):
             tool_use_ids = {block["id"] for block in blocks if block["type"] == "tool_use"}

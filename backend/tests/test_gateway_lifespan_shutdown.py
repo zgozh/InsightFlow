@@ -290,7 +290,6 @@ async def _run_lifespan_with_warm_return(warm_return: bool | None) -> MagicMock:
     )
     close_oidc_service = AsyncMock()
 
-
     manager = MagicMock()
     manager.warm.return_value = warm_return
 
@@ -345,7 +344,6 @@ async def _run_lifespan_with_slow_retrieval_warm() -> float:
     manager.warm.return_value = True
     manager.shutdown_flush.return_value = True
 
-
     with (
         patch("app.gateway.app.get_app_config", return_value=startup_config),
         patch("app.gateway.app.get_gateway_config", return_value=MagicMock(host="x", port=0)),
@@ -393,7 +391,6 @@ async def _run_shutdown_with_blocked_retrieval_warm() -> tuple[float, MagicMock]
     manager.warm_retrieval.side_effect = block_rebuild
     manager.warm.return_value = True
     manager.shutdown_flush.return_value = True
-
 
     with (
         patch("app.gateway.app.get_app_config", return_value=startup_config),

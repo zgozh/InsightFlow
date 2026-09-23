@@ -314,8 +314,8 @@ def test_get_user_skill_mounts_mounts_only_global_integrations(tmp_path, monkeyp
     assert bob["/mnt/skills/integrations"] == str(tmp_path / "home" / "users" / "bob" / "skills_view" / "integrations")
 
 
-def test_get_extra_mounts_provisioner_payload_has_unique_container_paths(tmp_path, monkeypatch, provisioner_module):
-    """Full AIO mount composition must not send duplicate paths to provisioner."""
+def test_get_extra_mounts_payload_has_unique_container_paths(tmp_path, monkeypatch):
+    """Full AIO mount composition must not emit duplicate container paths."""
     aio_mod = importlib.import_module("deerflow.community.aio_sandbox.aio_sandbox_provider")
     remote_backend = importlib.import_module("deerflow.community.aio_sandbox.remote_backend")
     skills_root = tmp_path / "skills"
@@ -345,13 +345,7 @@ def test_get_extra_mounts_provisioner_payload_has_unique_container_paths(tmp_pat
     payload = remote_backend._provisioner_extra_mounts_payload(mounts)
     payload_paths = [str(item["container_path"]) for item in payload]
     assert len(payload_paths) == len(set(payload_paths))
-
-    provisioner_module.DEER_FLOW_HOST_BASE_DIR = str(home)
-    validated = provisioner_module._validated_extra_mounts([provisioner_module.ExtraMount(**item) for item in payload])
-    validated_paths = [mount.container_path for mount in validated]
-
-    assert len(validated_paths) == len(set(validated_paths))
-    assert set(validated_paths) == {
+    assert set(payload_paths) == {
         "/mnt/acp-workspace",
         "/mnt/skills/public",
         "/mnt/skills/custom",

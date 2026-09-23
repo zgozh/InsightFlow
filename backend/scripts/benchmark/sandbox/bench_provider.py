@@ -7,7 +7,7 @@ workloads, and concurrency levels.  Outputs JSONL for aggregation.
 Usage::
 
     python scripts/benchmark/sandbox/bench_provider.py \\
-        --provider boxlite \\
+        --provider aio-docker \\
         --scenario warm_same_thread \\
         --workload noop \\
         --iterations 50 \\
@@ -15,7 +15,7 @@ Usage::
         --output results.jsonl
 
     python scripts/benchmark/sandbox/bench_provider.py \\
-        --provider boxlite \\
+        --provider aio-docker \\
         --scenario cold_unique_thread \\
         --no-warmpool \\
         --iterations 30 \\
@@ -23,8 +23,10 @@ Usage::
 
 Providers
 ---------
-``boxlite``       BoxLite micro-VM sandbox (requires ``pip install boxlite``).
-``aio-docker``    AIO Docker sandbox (requires Docker daemon + ``deerflow-harness`` extras).
+``aio-docker``    AIO Docker sandbox (requires Docker daemon + ``deerflow-harness`` extras)。
+
+Phase 5 删除了 BoxLite / E2B / OpenSandbox / Tenki 等远程与 micro-VM 沙箱实现，
+因此本基准只保留 KEEP 的 AIO Docker 路径。
 
 Scenarios
 ---------
@@ -47,9 +49,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
-import importlib.metadata
 import json
-import os
 import sys
 import threading
 import time
@@ -139,84 +139,6 @@ def _patched_module_attr(module_name: str, attr_name: str, value: Any):
         setattr(module, attr_name, original)
 
 
-def _boxlite_version() -> str | None:
-    try:
-        return importlib.metadata.version("boxlite")
-    except importlib.metadata.PackageNotFoundError:
-        return None
-
-
-def _chmod_boxlite_shims(boxes_dir: str) -> int:
-    fixed = 0
-    for shim in Path(boxes_dir).glob("*/bin/boxlite-shim"):
-        st = shim.stat()
-        if st.st_mode & 0o111:
-            continue
-        shim.chmod(st.st_mode | 0o111)
-        fixed += 1
-    return fixed
-
-
-def _create_box_with_097_shim_workaround(
-    create_box: Callable[[str], Any],
-    sandbox_id: str,
-    *,
-    boxes_dir: str,
-) -> Any:
-    try:
-        return create_box(sandbox_id)
-    except RuntimeError as exc:
-        version = _boxlite_version()
-        if version != "0.9.7":
-            raise RuntimeError(f"BoxLite benchmark shim workaround only supports boxlite 0.9.7; got {version!r}") from exc
-        fixed = _chmod_boxlite_shims(boxes_dir)
-        if fixed == 0:
-            raise
-        return create_box(sandbox_id)
-
-
-def _make_boxlite_provider(config: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
-    """Create a BoxliteProvider with stub config; returns (provider, config_used).
-
-    On BoxLite 0.9.7 only, retries a failed create after fixing missing execute
-    bits on extracted ``boxlite-shim`` binaries under ``~/.boxlite/boxes``.
-    """
-    from deerflow.community.boxlite.provider import BoxliteProvider
-
-    sandbox_attrs = {
-        "image": config.get("image") or "python:3.12-slim",
-        "replicas": config.get("replicas", 3),
-        "idle_timeout": config.get("idle_timeout", 600),
-        "health_check_skip_seconds": config.get("health_check_skip_seconds", 0.0),
-    }
-    if "memory_mib" in config:
-        sandbox_attrs["memory_mib"] = config["memory_mib"]
-    if "cpus" in config:
-        sandbox_attrs["cpus"] = config["cpus"]
-    if "environment" in config:
-        sandbox_attrs["environment"] = config["environment"]
-
-    with _patched_module_attr(
-        "deerflow.community.boxlite.provider",
-        "get_app_config",
-        lambda: _stub_config(sandbox_attrs),
-    ):
-        provider = BoxliteProvider()
-
-    original_create_box = provider._create_box
-    boxes_dir = os.path.expanduser("~/.boxlite/boxes")
-
-    def _patched_create_box(self: Any, sandbox_id: str) -> Any:
-        return _create_box_with_097_shim_workaround(
-            original_create_box,
-            sandbox_id,
-            boxes_dir=boxes_dir,
-        )
-
-    provider._create_box = types.MethodType(_patched_create_box, provider)
-    return provider, sandbox_attrs
-
-
 def _make_aio_provider(config: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
     """Create an AioSandboxProvider with stub config."""
     from deerflow.community.aio_sandbox.aio_sandbox_provider import AioSandboxProvider
@@ -242,7 +164,6 @@ def _make_aio_provider(config: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
 
 
 PROVIDER_FACTORIES: dict[str, Callable] = {
-    "boxlite": _make_boxlite_provider,
     "aio-docker": _make_aio_provider,
 }
 

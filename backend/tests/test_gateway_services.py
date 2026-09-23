@@ -2694,7 +2694,6 @@ def test_start_run_strips_client_supplied_project_context_key(_stub_app_config):
     assert PROJECT_CONTEXT_KEY not in config.get("configurable", {})
 
 
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("run_store_backend", ["memory", "sql"])
 async def test_start_run_peer_idempotent_reuse_does_not_reject_later_runs_after_owner_completes(_stub_app_config, run_store_backend, tmp_path):

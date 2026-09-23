@@ -8,17 +8,16 @@ the gateway captures once at startup — engines, singletons, IM clients,
 the logging handler — and that therefore require a process restart to
 change at runtime.
 
-The registry covers two kinds of entries:
+The registry covers ``AppConfig`` fields and explicitly registered nested fields
+(``database``, ``checkpointer``, ``run_events``, ``stream_bridge``, ``sandbox``,
+``log_level``). For these, :func:`format_field_description` produces the
+standardised ``"startup-only: ..."`` prefix that the matching Pydantic
+``Field(description=...)`` carries, so the boundary surfaces in IDE hover next
+to the field itself.
 
-- ``AppConfig`` fields and explicitly registered nested fields (``database``, ``checkpointer``,
-  ``run_events``, ``stream_bridge``, ``sandbox``, ``log_level``). For
-  these, :func:`format_field_description` produces the standardised
-  ``"startup-only: ..."`` prefix that the matching Pydantic
-  ``Field(description=...)`` carries, so the boundary surfaces in IDE
-  hover next to the field itself.
-- Top-level ``config.yaml`` sections that are not part of the
-  ``AppConfig`` schema (``channels``). These cannot be standardised at
-  the schema level, so the registry is their only canonical location.
+（Phase 5 删除了不属于 ``AppConfig`` 结构的顶层节，例如 ``channels`` 与
+``channel_connections``；注册表现在只覆盖 schema 内的字段，因此不再需要
+"schema 外顶层节"这一类条目。）
 
 Any future "needs restart" scanner — operator tooling, lint hooks, doc
 generators — should drive off this registry rather than re-parsing
@@ -50,8 +49,7 @@ STARTUP_ONLY_FIELDS: dict[str, str] = {
     "stream_bridge": ("make_stream_bridge() constructs the stream-bridge singleton once during startup."),
     "sandbox": ("get_sandbox_provider() caches the provider singleton (``_default_sandbox_provider``); a different ``sandbox.use`` class path only takes effect on next process start."),
     "skills.container_path": (
-        "AioSandboxProvider and E2BSandboxProvider normalize and capture the skills mount root when their provider singleton starts; "
-        "sandbox identity, mounts, remote metadata, and skill synchronization must keep using that one root until the Gateway restarts."
+        "AioSandboxProvider normalizes and captures the skills mount root when its provider singleton starts; sandbox identity, mounts, remote metadata, and skill synchronization must keep using that one root until the Gateway restarts."
     ),
     "log_level": (
         "apply_logging_level() runs only during app.py startup; it sets the deerflow/app logger levels and may lower root handler thresholds so configured messages can propagate. A freshly reloaded AppConfig does not retrigger it."
@@ -72,7 +70,6 @@ STARTUP_ONLY_FIELDS: dict[str, str] = {
         "and max_concurrent_polls are captured into the service instance and the background poller task is not rebuilt on config.yaml edits."
     ),
     "subagent_runtime": ("the shared native-subagent admission controller and isolated execution loop are configured once during Gateway lifespan startup; changing process slots, queue policy, or queue bounds requires a restart."),
-    "subagent_batches": ("the durable subagent batch service is constructed and started once during Gateway lifespan startup; scheduler limits, leases, and recovery behavior are captured by that service instance."),
     "run_ownership": (
         "RunOwnershipConfig is captured once into RunManager at langgraph_runtime() startup; the lease heartbeat background task is created and "
         "started there, and heartbeat_enabled / lease_seconds / grace_seconds are not re-read on config.yaml edits."

@@ -139,14 +139,11 @@ def _apply_stream_chunk_timeout_default(model_class: type, model_settings_from_c
 
     ``stream_chunk_timeout`` is a field of langchain-openai's ``BaseChatOpenAI``, so
     it is accepted by ``ChatOpenAI`` and by every DeerFlow provider that subclasses
-    it: ``PatchedChatOpenAI`` plus the self-hosted / reasoning adapters
-    ``VllmChatModel``, ``MindIEChatModel``, ``PatchedChatDeepSeek``,
-    ``PatchedChatMiMo``, ``PatchedChatStepFun`` and ``PatchedChatMiniMax``. We gate on
+    it (``PatchedChatOpenAI`` and ``PatchedChatDeepSeek``). We gate on
     ``issubclass(model_class, BaseChatOpenAI)`` rather than an explicit class-path
     allowlist so any OpenAI-compatible subclass inherits the default (and honors an
-    explicit override) automatically. Issue #3189 was reported against ``mimo-v2.5``
-    (``PatchedChatMiMo``); the original fix (#3195) matched only ``ChatOpenAI`` /
-    ``PatchedChatOpenAI``, so those subclasses kept langchain-openai's aggressive
+    explicit override) automatically. Issue #3189 was reported against a
+    reasoning-model adapter whose subclass kept langchain-openai's aggressive
     built-in chunk-gap timeout and — worse — silently discarded a user's explicit
     ``stream_chunk_timeout``.
 
@@ -181,9 +178,9 @@ def create_chat_model(name: str | None = None, thinking_enabled: bool = False, *
         model_overrides: Optional per-caller sampling overrides (e.g. a custom
             agent's ``temperature`` / ``max_tokens``) layered on top of the
             model profile. ``None`` values are ignored so an unset override
-            never clobbers a profile value. Applied before the thinking / Codex
-            transforms so provider-specific normalization (e.g. Codex dropping
-            ``max_tokens``) still governs an overridden value.
+            never clobbers a profile value. Applied before the thinking
+            transforms so provider-specific normalization (thinking
+            disable-paths) still governs an overridden value.
         attach_tracing: When True (default), attach tracing callbacks (Langfuse,
             LangSmith) directly to the model instance. Standalone callers — anything
             that invokes the model outside a LangGraph run that already wires tracing
@@ -232,21 +229,17 @@ def create_chat_model(name: str | None = None, thinking_enabled: bool = False, *
     # Layer per-caller sampling overrides (e.g. a custom agent's temperature /
     # max_tokens) on top of the profile. Ignore None so an unset override never
     # clobbers a configured profile value. Applied here — before the thinking
-    # and Codex transforms below — so provider-specific normalization (Codex
-    # dropping max_tokens, thinking disable-paths) still governs the merged
-    # value exactly as it would a profile-native one.
+    # transforms below — so provider-specific normalization (thinking
+    # disable-paths) still governs the merged value exactly as it would a
+    # profile-native one.
     if model_overrides:
         model_settings_from_config.update({key: value for key, value in model_overrides.items() if value is not None})
     # The per-request reasoning effort layers the same way. The regular lead-agent
     # build forwards the key even when None (neither the request nor the custom
     # agent chose one), so it must leave kwargs: a profile that also yields
     # reasoning_effort would otherwise hand the constructor the keyword twice.
-    # Codex validates and maps the requested value itself below.
-    from deerflow.models.openai_codex_provider import CodexChatModel
-
-    is_codex_model = issubclass(model_class, CodexChatModel)
     requested_reasoning_effort = kwargs.pop("reasoning_effort", None)
-    if requested_reasoning_effort is not None and not is_codex_model:
+    if requested_reasoning_effort is not None:
         model_settings_from_config["reasoning_effort"] = requested_reasoning_effort
     # Compute effective when_thinking_enabled by merging in the `thinking` shortcut field.
     # The `thinking` shortcut is equivalent to setting when_thinking_enabled["thinking"].
@@ -281,32 +274,12 @@ def create_chat_model(name: str | None = None, thinking_enabled: bool = False, *
             # Native langchain_anthropic: thinking is a direct constructor parameter
             model_settings_from_config["thinking"] = {"type": "disabled"}
     if not model_config.supports_reasoning_effort:
-        requested_reasoning_effort = None
         model_settings_from_config.pop("reasoning_effort", None)
 
     # Normalize the api_base -> base_url alias FIRST, so the downstream OpenAI-compatible
     # heuristics (stream_usage default below / stream_chunk_timeout) see the canonical endpoint key.
     _normalize_openai_base_url(model_class, model_settings_from_config)
     _apply_stream_chunk_timeout_default(model_class, model_settings_from_config)
-
-    # For Codex Responses API models: map thinking mode to reasoning_effort
-    if is_codex_model:
-        # The ChatGPT Codex endpoint currently rejects max_tokens/max_output_tokens.
-        model_settings_from_config.pop("max_tokens", None)
-
-        # Use explicit reasoning_effort from frontend if provided (low/medium/high)
-        if not thinking_enabled:
-            model_settings_from_config["reasoning_effort"] = "none"
-        elif requested_reasoning_effort in ("low", "medium", "high", "xhigh"):
-            model_settings_from_config["reasoning_effort"] = requested_reasoning_effort
-        elif "reasoning_effort" not in model_settings_from_config:
-            model_settings_from_config["reasoning_effort"] = "medium"
-
-    # For MindIE models: enforce conservative retry defaults.
-    # Timeout normalization is handled inside MindIEChatModel itself.
-    if getattr(model_class, "__name__", "") == "MindIEChatModel":
-        # Enforce max_retries constraint to prevent cascading timeouts.
-        model_settings_from_config["max_retries"] = model_settings_from_config.get("max_retries", 1)
 
     # Ensure stream_usage is enabled so that token usage metadata is available
     # in streaming responses.  LangChain's BaseChatOpenAI only defaults

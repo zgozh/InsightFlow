@@ -4184,8 +4184,6 @@ def test_archive_patch_cannot_modify_another_users_thread():
     assert asyncio.run(store.aget(THREADS_NS, "private")).value["metadata"] == {}
 
 
-
-
 @pytest.mark.parametrize("mode", ["full", "delta"])
 @pytest.mark.parametrize("fallback", [False, True])
 def test_task_notes_state_write_normalizes_and_replaces(monkeypatch, mode, fallback):

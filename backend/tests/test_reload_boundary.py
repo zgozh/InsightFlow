@@ -107,9 +107,8 @@ def test_appconfig_schema_marks_registered_fields_with_prefix():
     schema_fields = AppConfig.model_fields
     for field_path in STARTUP_ONLY_FIELDS:
         if field_path not in schema_fields:
-            # Some entries (e.g. ``channels``) live outside the AppConfig
-            # schema. The registry still owns them, but the schema-prefix
-            # assertion does not apply.
+            # 嵌套字段路径（例如 ``skills.container_path``）不在顶层 schema 里，
+            # 由注册表单独拥有；schema 前缀断言对它们不适用。
             continue
         description = schema_fields[field_path].description or ""
         assert description.startswith(STARTUP_ONLY_PREFIX), f"AppConfig.{field_path} should have Field(description=) starting with {STARTUP_ONLY_PREFIX!r}, got {description!r}"

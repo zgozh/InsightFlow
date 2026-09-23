@@ -5,12 +5,12 @@ from __future__ import annotations
 import pytest
 from langchain.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage
+from langchain_openai import ChatOpenAI
 
 from deerflow.config.app_config import AppConfig
 from deerflow.config.model_config import ModelConfig
 from deerflow.config.sandbox_config import SandboxConfig
 from deerflow.models import factory as factory_module
-from deerflow.models import openai_codex_provider as codex_provider_module
 from deerflow.reflection import resolve_class
 
 # ---------------------------------------------------------------------------
@@ -903,130 +903,11 @@ def test_openai_compatible_provider_multiple_models(monkeypatch):
     assert captured.get("model") == "MiniMax-M2.7-highspeed"
 
 
-# ---------------------------------------------------------------------------
-# Codex provider reasoning_effort mapping
-# ---------------------------------------------------------------------------
-
-
-class FakeCodexChatModel(FakeChatModel):
-    pass
-
-
-def test_codex_provider_disables_reasoning_when_thinking_disabled(monkeypatch):
-    cfg = _make_app_config(
-        [
-            _make_model(
-                "codex",
-                use="deerflow.models.openai_codex_provider:CodexChatModel",
-                supports_thinking=True,
-                supports_reasoning_effort=True,
-            )
-        ]
-    )
-    _patch_factory(monkeypatch, cfg, model_class=FakeCodexChatModel)
-    monkeypatch.setattr(codex_provider_module, "CodexChatModel", FakeCodexChatModel)
-
-    FakeChatModel.captured_kwargs = {}
-    factory_module.create_chat_model(name="codex", thinking_enabled=False)
-
-    assert FakeChatModel.captured_kwargs.get("reasoning_effort") == "none"
-
-
-def test_codex_provider_preserves_explicit_reasoning_effort(monkeypatch):
-    cfg = _make_app_config(
-        [
-            _make_model(
-                "codex",
-                use="deerflow.models.openai_codex_provider:CodexChatModel",
-                supports_thinking=True,
-                supports_reasoning_effort=True,
-            )
-        ]
-    )
-    _patch_factory(monkeypatch, cfg, model_class=FakeCodexChatModel)
-    monkeypatch.setattr(codex_provider_module, "CodexChatModel", FakeCodexChatModel)
-
-    FakeChatModel.captured_kwargs = {}
-    factory_module.create_chat_model(name="codex", thinking_enabled=True, reasoning_effort="high")
-
-    assert FakeChatModel.captured_kwargs.get("reasoning_effort") == "high"
-
-
-def test_codex_provider_defaults_reasoning_effort_to_medium(monkeypatch):
-    cfg = _make_app_config(
-        [
-            _make_model(
-                "codex",
-                use="deerflow.models.openai_codex_provider:CodexChatModel",
-                supports_thinking=True,
-                supports_reasoning_effort=True,
-            )
-        ]
-    )
-    _patch_factory(monkeypatch, cfg, model_class=FakeCodexChatModel)
-    monkeypatch.setattr(codex_provider_module, "CodexChatModel", FakeCodexChatModel)
-
-    FakeChatModel.captured_kwargs = {}
-    factory_module.create_chat_model(name="codex", thinking_enabled=True)
-
-    assert FakeChatModel.captured_kwargs.get("reasoning_effort") == "medium"
-
-
-@pytest.mark.parametrize(
-    ("supports_reasoning_effort", "requested_effort"),
-    [
-        pytest.param(True, "minimal", id="value-outside-codex-levels"),
-        pytest.param(False, "high", id="profile-without-effort-support"),
-    ],
-)
-def test_codex_provider_falls_back_to_medium_for_request_it_cannot_honor(monkeypatch, supports_reasoning_effort, requested_effort):
-    """Codex resolves the requested effort itself; the generic request layering
-    must not smuggle a value past its level check or the capability guard."""
-    cfg = _make_app_config(
-        [
-            _make_model(
-                "codex",
-                use="deerflow.models.openai_codex_provider:CodexChatModel",
-                supports_thinking=True,
-                supports_reasoning_effort=supports_reasoning_effort,
-            )
-        ]
-    )
-    _patch_factory(monkeypatch, cfg, model_class=FakeCodexChatModel)
-    monkeypatch.setattr(codex_provider_module, "CodexChatModel", FakeCodexChatModel)
-
-    FakeChatModel.captured_kwargs = {}
-    factory_module.create_chat_model(name="codex", thinking_enabled=True, reasoning_effort=requested_effort)
-
-    assert FakeChatModel.captured_kwargs.get("reasoning_effort") == "medium"
-
-
-def test_codex_provider_strips_unsupported_max_tokens(monkeypatch):
-    cfg = _make_app_config(
-        [
-            _make_model(
-                "codex",
-                use="deerflow.models.openai_codex_provider:CodexChatModel",
-                supports_thinking=True,
-                supports_reasoning_effort=True,
-                max_tokens=4096,
-            )
-        ]
-    )
-    _patch_factory(monkeypatch, cfg, model_class=FakeCodexChatModel)
-    monkeypatch.setattr(codex_provider_module, "CodexChatModel", FakeCodexChatModel)
-
-    FakeChatModel.captured_kwargs = {}
-    factory_module.create_chat_model(name="codex", thinking_enabled=True)
-
-    assert "max_tokens" not in FakeChatModel.captured_kwargs
-
-
 def test_thinking_disabled_vllm_chat_template_format(monkeypatch):
     wte = {"extra_body": {"chat_template_kwargs": {"thinking": True}}}
     model = _make_model(
         "vllm-qwen",
-        use="deerflow.models.vllm_provider:VllmChatModel",
+        use="langchain_openai:ChatOpenAI",
         supports_thinking=True,
         when_thinking_enabled=wte,
     )
@@ -1053,7 +934,7 @@ def test_thinking_disabled_vllm_enable_thinking_format(monkeypatch):
     wte = {"extra_body": {"chat_template_kwargs": {"enable_thinking": True}}}
     model = _make_model(
         "vllm-qwen-enable",
-        use="deerflow.models.vllm_provider:VllmChatModel",
+        use="langchain_openai:ChatOpenAI",
         supports_thinking=True,
         when_thinking_enabled=wte,
     )
@@ -1193,18 +1074,18 @@ def test_openai_responses_api_settings_are_passed_to_chatopenai(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("model_id", ["mimo-v2.5-pro", "mimo-v2.5", "mimo-v2-flash"])
-def test_create_chat_model_resolves_patched_mimo_provider(model_id):
-    from deerflow.models.patched_mimo import PatchedChatMiMo
+@pytest.mark.parametrize("model_id", ["deepseek-reasoner", "deepseek-chat"])
+def test_create_chat_model_resolves_patched_deepseek_provider(model_id):
+    from deerflow.models.patched_deepseek import PatchedChatDeepSeek
 
     model = ModelConfig(
         name=f"{model_id}-thinking",
         display_name=f"{model_id} Thinking",
         description=None,
-        use="deerflow.models.patched_mimo:PatchedChatMiMo",
+        use="deerflow.models.patched_deepseek:PatchedChatDeepSeek",
         model=model_id,
         api_key="test-key",
-        base_url="https://api.xiaomimimo.com/v1",
+        api_base="https://api.deepseek.com/v1",
         supports_thinking=True,
         when_thinking_enabled={"extra_body": {"thinking": {"type": "enabled"}}},
         supports_vision=False,
@@ -1218,7 +1099,7 @@ def test_create_chat_model_resolves_patched_mimo_provider(model_id):
         attach_tracing=False,
     )
 
-    assert isinstance(chat_model, PatchedChatMiMo)
+    assert isinstance(chat_model, PatchedChatDeepSeek)
     assert chat_model.model_name == model_id
     assert chat_model.extra_body["thinking"]["type"] == "enabled"
 
@@ -1403,21 +1284,17 @@ def test_stream_chunk_timeout_popped_for_non_openai_provider_when_user_set_it(mo
 
 
 # ---------------------------------------------------------------------------
-# stream_chunk_timeout applies to ALL BaseChatOpenAI subclasses, not just the
-# ChatOpenAI/PatchedChatOpenAI class-path allowlist (issue #3189 was reported on
-# mimo-v2.5 → PatchedChatMiMo, which the original #3195 allowlist excluded).
+# stream_chunk_timeout applies to ALL BaseChatOpenAI subclasses, not just a
+# ChatOpenAI/PatchedChatOpenAI class-path allowlist (issue #3189 was reported by a
+# non-allowlisted OpenAI-compatible reasoning adapter, which the original #3195
+# allowlist excluded).
 # ---------------------------------------------------------------------------
 
-# Every in-repo provider that subclasses BaseChatOpenAI (and therefore inherits the
-# stream_chunk_timeout mechanism) but was NOT in the original ChatOpenAI /
-# PatchedChatOpenAI allowlist.
+# Every remaining in-repo provider that subclasses BaseChatOpenAI (and therefore
+# inherits the stream_chunk_timeout mechanism) but was NOT in the original
+# ChatOpenAI / PatchedChatOpenAI allowlist.
 _STREAM_TIMEOUT_OPENAI_SUBCLASS_USE_PATHS = [
-    "deerflow.models.vllm_provider:VllmChatModel",
-    "deerflow.models.mindie_provider:MindIEChatModel",
     "deerflow.models.patched_deepseek:PatchedChatDeepSeek",
-    "deerflow.models.patched_mimo:PatchedChatMiMo",
-    "deerflow.models.patched_stepfun:PatchedChatStepFun",
-    "deerflow.models.patched_minimax:PatchedChatMiniMax",
 ]
 
 
@@ -1463,25 +1340,24 @@ def test_stream_chunk_timeout_user_override_honored_for_all_openai_subclasses(mo
     assert captured.get("stream_chunk_timeout") == 300.0
 
 
-def test_stream_chunk_timeout_240_reaches_real_mimo_constructor(monkeypatch):
-    """End-to-end anchor for issue #3189 (reported on mimo-v2.5): the 240s default
-    must be accepted as a genuine ``stream_chunk_timeout`` field by the real
-    ``PatchedChatMiMo`` constructor — not diverted into ``model_kwargs`` — so the
-    streaming layer actually honors it. Builds the real class (no network / dummy
-    key) instead of a capturing stub.
+def test_stream_chunk_timeout_240_reaches_real_deepseek_constructor(monkeypatch):
+    """End-to-end anchor for issue #3189: the 240s default must be accepted as a genuine
+    ``stream_chunk_timeout`` field by a real non-allowlisted OpenAI-compatible
+    constructor — not diverted into ``model_kwargs`` — so the streaming layer actually
+    honors it. Builds the real class (no network / dummy key) instead of a capturing stub.
     """
     model = _make_model_with_extras(
-        "mimo",
-        use="deerflow.models.patched_mimo:PatchedChatMiMo",
+        "deepseek-reasoner",
+        use="deerflow.models.patched_deepseek:PatchedChatDeepSeek",
         api_key="sk-dummy",
-        base_url="http://localhost:8000/v1",
+        api_base="http://localhost:8000/v1",
     )
     cfg = _make_app_config([model])
-    # Do NOT patch resolve_class — construct the real PatchedChatMiMo class.
+    # Do NOT patch resolve_class — construct the real PatchedChatDeepSeek class.
     monkeypatch.setattr(factory_module, "get_app_config", lambda: cfg)
     monkeypatch.setattr(factory_module, "build_tracing_callbacks", lambda: [])
 
-    instance = factory_module.create_chat_model(name="mimo")
+    instance = factory_module.create_chat_model(name="deepseek-reasoner")
 
     assert instance.stream_chunk_timeout == 240.0
 
@@ -1658,37 +1534,35 @@ def test_no_unknown_key_warning_for_non_openai_class(monkeypatch, caplog):
 
 # ---------------------------------------------------------------------------
 # The OpenAI-compatible family is issubclass(BaseChatOpenAI), not a class-path allowlist
-# (regression: six in-repo BaseChatOpenAI subclasses were excluded from api_base
+# (regression: in-repo BaseChatOpenAI subclasses were excluded from api_base
 #  normalization and from the unknown-key warning)
 # ---------------------------------------------------------------------------
 
-# Every in-repo BaseChatOpenAI subclass that inherits only `openai_api_base` (alias `base_url`)
-# and was NOT in the original ChatOpenAI / PatchedChatOpenAI allowlist. PatchedChatDeepSeek is
-# deliberately absent: it declares `api_base` itself and is covered by the preservation test above.
-_OPENAI_SUBCLASS_USE_PATHS_WITHOUT_API_BASE = [
-    "deerflow.models.vllm_provider:VllmChatModel",
-    "deerflow.models.mindie_provider:MindIEChatModel",
-    "deerflow.models.patched_mimo:PatchedChatMiMo",
-    "deerflow.models.patched_stepfun:PatchedChatStepFun",
-    "deerflow.models.patched_minimax:PatchedChatMiniMax",
-]
+
+class _BareOpenAISubclass(ChatOpenAI):
+    """A ``BaseChatOpenAI`` subclass outside any stock class path.
+
+    Stands in for the in-repo provider adapters this batch removed: it inherits the
+    endpoint field as ``openai_api_base`` (alias ``base_url``) and does not declare
+    ``api_base``. The factory must gate on ``issubclass(model_class,
+    BaseChatOpenAI)``, never on a class-path list, or such a class silently loses
+    endpoint normalization and the unknown-key diagnostic.
+    """
 
 
-@pytest.mark.parametrize("use_path", _OPENAI_SUBCLASS_USE_PATHS_WITHOUT_API_BASE)
-def test_api_base_normalized_for_all_openai_subclasses(monkeypatch, use_path):
+def test_api_base_normalized_for_openai_subclass(monkeypatch):
     """`api_base` must become `base_url` for every BaseChatOpenAI subclass, not just the two
     stock OpenAI paths.
 
-    These classes inherit the endpoint field as `openai_api_base` (alias `base_url`) and do not
+    The class inherits the endpoint field as `openai_api_base` (alias `base_url`) and does not
     declare `api_base`. Excluded by the old class-path allowlist, a user's `api_base` was diverted
     into `model_kwargs` — so the endpoint override was silently dropped (the client fell back to
     the default OpenAI endpoint) and the stray key was spread into every `Completions.create()`
     call, failing at request time with an opaque `unexpected keyword argument 'api_base'`.
     """
-    real_cls = resolve_class(use_path, BaseChatModel)
-    cfg = _make_app_config([_make_model_with_extras("m", use=use_path, api_base="http://gw.example/v1")])
+    cfg = _make_app_config([_make_model_with_extras("m", api_base="http://gw.example/v1")])
     captured: dict = {}
-    _patch_factory(monkeypatch, cfg, model_class=_capturing_class(real_cls, captured))
+    _patch_factory(monkeypatch, cfg, model_class=_capturing_class(_BareOpenAISubclass, captured))
 
     factory_module.create_chat_model(name="m")
 
@@ -1696,8 +1570,7 @@ def test_api_base_normalized_for_all_openai_subclasses(monkeypatch, use_path):
     assert "api_base" not in captured
 
 
-@pytest.mark.parametrize("use_path", _OPENAI_SUBCLASS_USE_PATHS_WITHOUT_API_BASE)
-def test_unknown_config_key_warns_for_all_openai_subclasses(monkeypatch, use_path, caplog):
+def test_unknown_config_key_warns_for_openai_subclass(monkeypatch, caplog):
     """The unknown-key warning must fire for every BaseChatOpenAI subclass.
 
     The `model_kwargs` divert-and-crash behaviour is implemented in `BaseChatOpenAI`, so every
@@ -1706,10 +1579,9 @@ def test_unknown_config_key_warns_for_all_openai_subclasses(monkeypatch, use_pat
     """
     import logging
 
-    real_cls = resolve_class(use_path, BaseChatModel)
-    cfg = _make_app_config([_make_model_with_extras("m", use=use_path, definitely_not_a_real_kwarg=True)])
+    cfg = _make_app_config([_make_model_with_extras("m", definitely_not_a_real_kwarg=True)])
     captured: dict = {}
-    _patch_factory(monkeypatch, cfg, model_class=_capturing_class(real_cls, captured))
+    _patch_factory(monkeypatch, cfg, model_class=_capturing_class(_BareOpenAISubclass, captured))
 
     with caplog.at_level(logging.WARNING, logger=factory_module.__name__):
         factory_module.create_chat_model(name="m")
@@ -1717,30 +1589,30 @@ def test_unknown_config_key_warns_for_all_openai_subclasses(monkeypatch, use_pat
     assert any("definitely_not_a_real_kwarg" in rec.message for rec in caplog.records)
 
 
-def test_api_base_reaches_real_minimax_constructor_as_base_url(monkeypatch):
+def test_api_base_reaches_real_patched_openai_constructor_as_base_url(monkeypatch):
     """End-to-end anchor on a real provider class, nothing stubbed.
 
-    Builds the genuine `PatchedChatMiniMax` (dummy key, no network) from a config that sets
+    Builds the genuine `PatchedChatOpenAI` (dummy key, no network) from a config that sets
     `api_base`, and asserts the endpoint actually lands on the client's `openai_api_base` field
     instead of being diverted into `model_kwargs`.
     """
     cfg = _make_app_config(
         [
             _make_model_with_extras(
-                "minimax",
-                use="deerflow.models.patched_minimax:PatchedChatMiniMax",
+                "patched-oai",
+                use="deerflow.models.patched_openai:PatchedChatOpenAI",
                 api_key="sk-dummy",
-                api_base="https://api.minimax.io/v1",
+                api_base="https://api.example.com/v1",
             )
         ]
     )
-    # Do NOT patch resolve_class — construct the real PatchedChatMiniMax class.
+    # Do NOT patch resolve_class — construct the real PatchedChatOpenAI class.
     monkeypatch.setattr(factory_module, "get_app_config", lambda: cfg)
     monkeypatch.setattr(factory_module, "build_tracing_callbacks", lambda: [])
 
-    instance = factory_module.create_chat_model(name="minimax")
+    instance = factory_module.create_chat_model(name="patched-oai")
 
-    assert instance.openai_api_base == "https://api.minimax.io/v1"
+    assert instance.openai_api_base == "https://api.example.com/v1"
     assert "api_base" not in (instance.model_kwargs or {})
 
 
@@ -1782,17 +1654,3 @@ def test_model_overrides_none_is_a_noop(monkeypatch):
     factory_module.create_chat_model(name="base", model_overrides=None)
 
     assert FakeChatModel.captured_kwargs.get("max_tokens") == 4096
-
-
-def test_codex_still_strips_overridden_max_tokens(monkeypatch):
-    """Codex drops max_tokens even when it arrived via an override, so the
-    provider-specific normalization still governs the merged value."""
-    cfg = _make_app_config([_make_model("codex", use="deerflow.models.openai_codex_provider:CodexChatModel")])
-    captured: dict = {}
-    monkeypatch.setattr(factory_module, "get_app_config", lambda: cfg)
-    monkeypatch.setattr(factory_module, "resolve_class", lambda path, base: _capturing_class(codex_provider_module.CodexChatModel, captured))
-    monkeypatch.setattr(factory_module, "build_tracing_callbacks", lambda: [])
-
-    factory_module.create_chat_model(name="codex", model_overrides={"max_tokens": 9999})
-
-    assert "max_tokens" not in captured

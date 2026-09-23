@@ -10,6 +10,7 @@ middleware) is covered by ``TestModeGating`` at the bottom.
 import json
 from types import SimpleNamespace
 
+from deerflow.agents.memory import MemoryManager
 from deerflow.agents.memory.tools import (
     get_memory_tools,
     memory_add_tool,
@@ -17,6 +18,31 @@ from deerflow.agents.memory.tools import (
     memory_search_tool,
     memory_update_tool,
 )
+
+
+class _ServerExtractionBackend(MemoryManager):
+    """A search-only backend whose facts are extracted server-side.
+
+    Mirrors the capability shape of the remote memory adapters this batch removed:
+    it can search, but it exposes no fact-CRUD surface, so tool mode must keep the
+    passive per-turn write path that feeds its server-side extraction.
+    """
+
+    supports_search = True
+    requires_passive_writes_in_tool_mode = True
+
+    def add(self, thread_id, messages, *, agent_name=None, user_id=None, trace_id=None) -> None:
+        return None
+
+    def get_context(self, user_id, *, agent_name=None, thread_id=None) -> str:
+        return ""
+
+    def search(self, query, *, user_id=None, agent_name=None, limit=None):
+        return []
+
+    @classmethod
+    def from_config(cls, backend_config, *, mode="middleware", **host_hooks):
+        return cls(backend_config=backend_config or {}, mode=mode)
 
 
 class _NamedTool:
@@ -416,15 +442,15 @@ class TestModeGating:
         assert MemoryMiddleware not in middleware_types
         assert "memory_add" in tool_names
 
-    def test_mem0_tool_mode_keeps_passive_write_middleware(self):
-        """mem0 has search tools but no fact CRUD, so tool mode must retain
-        the per-turn middleware write path that feeds server-side extraction."""
+    def test_server_extraction_tool_mode_keeps_passive_write_middleware(self):
+        """A search-only backend with server-side extraction has no fact CRUD, so
+        tool mode must retain the per-turn middleware write path that feeds it."""
         from deerflow.agents.factory import _assemble_from_features
         from deerflow.agents.features import RuntimeFeatures
         from deerflow.agents.middlewares.memory_middleware import MemoryMiddleware
         from deerflow.config.memory_config import MemoryConfig
 
-        config = MemoryConfig(enabled=True, mode="tool", manager_class="mem0")
+        config = MemoryConfig(enabled=True, mode="tool", manager_class=f"{__name__}:_ServerExtractionBackend")
         chain, extra_tools = _assemble_from_features(RuntimeFeatures(memory=True, memory_config=config), name="test-agent")
 
         assert MemoryMiddleware in [type(m) for m in chain]

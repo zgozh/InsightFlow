@@ -1,11 +1,11 @@
 ## Service Startup Contracts
 
-Optional browser dependency detection reads the top-level `tools:` sequence
-without requiring `name` to be its first mapping key. Both indented and
-indentless lists are supported; nested option names and block-scalar text
-must not enable the browser extra. Keep the detector standard-library-only
-because it runs before dependency synchronization. Read UTF-8 config files
-with or without a leading BOM so the first section remains detectable.
+Optional dependency detection reads the top-level `tools:` sequence without
+requiring `name` to be its first mapping key. Both indented and indentless
+lists are supported; nested option names and block-scalar text must not enable
+an optional extra. Keep the detector standard-library-only because it runs
+before dependency synchronization. Read UTF-8 config files with or without a
+leading BOM so the first section remains detectable.
 `setup-sandbox.sh` also strips the leading BOM and normalizes CRLF before selecting the image;
 keep its shell filter compatible with GNU and BSD sed.
 
@@ -185,13 +185,6 @@ untouched sync helper in the same file is still reported) — used by the
 deterministic scope step before routing each candidate to a fix and/or a
 `tests/blocking_io/` runtime anchor.
 
-Regression tests related to Docker/provisioner behavior:
-- `tests/test_docker_sandbox_mode_detection.py` (mode detection from `config.yaml`)
-- `tests/test_provisioner_kubeconfig.py` (kubeconfig file/directory handling)
-- `tests/test_provisioner_request_threading.py` (keeps provisioner sandbox CRUD
-  endpoints as sync FastAPI handlers so synchronous K8s client calls run in the
-  Starlette worker pool instead of on the ASGI event loop)
-
 Blocking-IO runtime gate (`tests/blocking_io/`):
 - Wraps every item under `tests/blocking_io/` with a strict Blockbuster
   context scoped to `app.*` and `deerflow.*` (see
@@ -206,22 +199,11 @@ Blocking-IO runtime gate (`tests/blocking_io/`):
   API — including idempotent singleton-event writes — offloading its file IO
   via `asyncio.to_thread`); `test_run_journal_callbacks.py` (locks
   `RunJournal.run_inline` tool callbacks to in-memory/event-loop-safe work);
-  `test_integrations_router.py` (locks Lark integration install and auth
-  completion route handlers offloading archive filesystem work and `lark-cli`
-  subprocesses);
   `test_uploads_middleware.py` (locks `UploadsMiddleware.abefore_agent`
   offloading the uploads-directory scan off the event loop);
   `test_uploads_router.py` (locks Gateway upload/list/delete endpoints
   offloading upload directory creation, staged writes, chmod/cleanup,
   directory scans/deletes, and remote sandbox sync off the event loop);
-  `test_feishu_receive_file.py` (locks Feishu attachment path preparation and
-  persistence plus remote sandbox acquisition/sync off the event loop, and
-  skips redundant sandbox sync when thread data is already mounted);
-  `test_channel_outbound_files.py` (locks Feishu, Telegram, and WeCom outbound
-  attachment open/read/hash work off the event loop);
-  `test_openviking_memory_backend.py` (locks the official OpenViking backend's
-  async add/context/search entrypoints offloading synchronous SDK and cursor
-  filesystem IO); and
   `test_workspace_changes_recorder.py` (locks the offload around the snapshot
   text cache lifecycle — roots resolution, `mkdtemp`, and the `shutil.rmtree`
   on both the capture-failure branch and `record_workspace_changes`' `finally`).
@@ -240,9 +222,6 @@ Boundary check (harness → app import firewall):
 Memory backend async boundary:
 - `MemoryMiddleware.aafter_agent` calls `MemoryManager.aadd`; network-backed
   managers must override their `a*` methods to offload or use native async I/O.
-- The mem0 backend requires an HTTPS `base_url` by default because requests
-  carry an API token. Plain HTTP requires the explicit
-  `backend_config.allow_insecure_http: true` local-development opt-in.
 - Gateway memory routes offload the synchronous management contract with
   `asyncio.to_thread`, so backend file or HTTP I/O does not run on the ASGI
   event loop. Gateway startup and shutdown also resolve the manager off-loop,
@@ -255,15 +234,3 @@ Memory backend async boundary:
   log-and-empty-context behavior.
 
 CI runs these regression tests for every pull request via [.github/workflows/backend-unit-tests.yml](../.github/workflows/backend-unit-tests.yml).
-
-Agentic browser sessions are process-local. The Gateway startup safety gate rejects
-`GATEWAY_WORKERS > 1` when `browser_navigate` is configured, because ordinary
-uvicorn worker dispatch does not provide thread affinity for browser tools, REST
-navigation, and the Live WebSocket.
-
-Browser Live screenshots remain JPEG bytes inside the harness and the Gateway's
-bounded, drop-oldest frame queue. WebSocket clients that request
-`frame_format=binary` receive binary messages; control metadata remains JSON.
-The legacy no-parameter protocol still base64-encodes frames into JSON at the
-Gateway boundary for backward compatibility. Unknown `frame_format` values
-receive a JSON error and close code 1008.

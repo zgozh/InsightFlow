@@ -520,6 +520,7 @@ class TestThreadMetaRepository:
         # membership is set in Task 4; the raw column must never leak top-level
         assert "project_id" not in record
 
+
 class TestJsonMatchCompilation:
     """Verify compiled SQL for both SQLite and PostgreSQL dialects."""
 

@@ -50,7 +50,7 @@ def make_sync_tool_wrapper(coro: Callable[..., Any], tool_name: str) -> Callable
         exposes ``config: RunnableConfig`` so LangChain can inject runtime
         config and then forwards it to the coroutine's detected config
         parameter. This covers DeerFlow's current config-sensitive tools, such
-        as ``invoke_acp_agent``.
+        as the MCP and skill-management tools.
 
         This wrapper intentionally does not synthesize a dynamic function
         signature. A future async tool with a normal user-facing argument named

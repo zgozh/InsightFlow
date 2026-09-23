@@ -120,7 +120,7 @@ require_compose_version() {
 }
 
 # Compose interpolates ${DEER_FLOW_ROOT} into host-side paths
-# (DEER_FLOW_HOST_BASE_DIR, THREADS_HOST_PATH) that AIO/provisioner sandbox
+# (DEER_FLOW_HOST_BASE_DIR, THREADS_HOST_PATH) that AIO sandbox
 # modes bind-mount. Unset, those render as /backend/.deer-flow — a plausible
 # looking absolute path on the wrong root, so mounts silently miss the checkout.
 ensure_deer_flow_root() {
@@ -173,7 +173,6 @@ load_proxy_env_from_dotenv() {
 detect_sandbox_mode() {
     local config_file="$PROJECT_ROOT/config.yaml"
     local sandbox_use=""
-    local provisioner_url=""
 
     if [ ! -f "$config_file" ]; then
         echo "local"
@@ -191,25 +190,10 @@ detect_sandbox_mode() {
         }
     ' "$config_file")
 
-    provisioner_url=$(awk '
-        /^[[:space:]]*sandbox:[[:space:]]*$/ { in_sandbox=1; next }
-        in_sandbox && /^[^[:space:]#]/ { in_sandbox=0 }
-        in_sandbox && /^[[:space:]]*provisioner_url:[[:space:]]*/ {
-            line=$0
-            sub(/^[[:space:]]*provisioner_url:[[:space:]]*/, "", line)
-            print line
-            exit
-        }
-    ' "$config_file")
-
     if [[ "$sandbox_use" == *"deerflow.sandbox.local:LocalSandboxProvider"* ]]; then
         echo "local"
     elif [[ "$sandbox_use" == *"deerflow.community.aio_sandbox:AioSandboxProvider"* ]]; then
-        if [ -n "$provisioner_url" ]; then
-            echo "provisioner"
-        else
-            echo "aio"
-        fi
+        echo "aio"
     else
         echo "local"
     fi
@@ -324,13 +308,10 @@ start() {
     sandbox_mode="$(detect_sandbox_mode)"
 
     services="redis frontend gateway nginx"
-    if [ "$sandbox_mode" = "provisioner" ]; then
-        services="redis frontend gateway provisioner nginx"
-    fi
 
-    # Only aio mode (AioSandboxProvider without provisioner_url) needs the host
+    # Only aio mode (AioSandboxProvider) needs the host
     # Docker socket. Mount it via the opt-in docker-compose.dood.yaml overlay so
-    # the default (local) and provisioner modes never expose the host daemon.
+    # the default (local) mode never exposes the host daemon.
     # Mounting the socket = root-equivalent host control; see SECURITY.md.
     if [ "$sandbox_mode" = "aio" ]; then
         local docker_socket="${DEER_FLOW_DOCKER_SOCKET:-/var/run/docker.sock}"
@@ -350,14 +331,9 @@ start() {
 
     echo -e "${BLUE}Runtime: Gateway embedded agent runtime${NC}"
     echo -e "${BLUE}Detected sandbox mode: $sandbox_mode${NC}"
-    if [ "$sandbox_mode" = "provisioner" ]; then
-        echo -e "${BLUE}Provisioner enabled (Kubernetes mode).${NC}"
-    else
-        echo -e "${BLUE}Provisioner disabled (not required for this sandbox mode).${NC}"
-    fi
     echo ""
     
-    # Set by compose_preflight above; shown because the provisioner turns it into
+    # Set by compose_preflight above; shown because the containers turn it into
     # host-side bind-mount paths.
     echo -e "${BLUE}Using DEER_FLOW_ROOT=$DEER_FLOW_ROOT${NC}"
     echo ""
@@ -439,16 +415,12 @@ logs() {
             service="redis"
             echo -e "${BLUE}Viewing redis logs...${NC}"
             ;;
-        --provisioner)
-            service="provisioner"
-            echo -e "${BLUE}Viewing provisioner logs...${NC}"
-            ;;
         "")
             echo -e "${BLUE}Viewing all logs...${NC}"
             ;;
         *)
             echo -e "${YELLOW}Unknown option: $1${NC}"
-            echo "Usage: $0 logs [--frontend|--gateway|--nginx|--redis|--provisioner]"
+            echo "Usage: $0 logs [--frontend|--gateway|--nginx|--redis]"
             exit 1
             ;;
     esac
@@ -498,7 +470,6 @@ help() {
     echo "                  --gateway    View gateway logs only"
     echo "                  --nginx      View nginx logs only"
     echo "                  --redis      View redis logs only"
-    echo "                  --provisioner View provisioner logs only"
     echo "  stop          - Stop Docker development services"
     echo "  help          - Show this help message"
     echo ""
