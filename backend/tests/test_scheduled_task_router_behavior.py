@@ -1,7 +1,7 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 from _router_auth_helpers import call_unwrapped
@@ -1188,24 +1188,22 @@ async def test_create_lead_agent_is_accepted_case_insensitively():
 
 
 @pytest.mark.asyncio
-async def test_create_custom_assistant_id_is_normalized_and_persisted():
-    with patch(
-        "app.gateway.routers.scheduled_tasks.load_agent_config",
-        return_value=object(),
-    ) as loader:
-        created = await _call_create(_create_request(assistant_id="Research_Bot"))
-    assert created["assistant_id"] == "research-bot"
-    loader.assert_called_once_with("research-bot", user_id="user-1")
+async def test_create_unknown_assistant_id_is_rejected():
+    with pytest.raises(HTTPException) as exc_info:
+        await _call_create(_create_request(assistant_id="missing-bot"))
+    assert exc_info.value.status_code == 422
+    assert "Unknown assistant_id" in exc_info.value.detail
 
 
 @pytest.mark.asyncio
-async def test_create_unknown_assistant_id_is_rejected():
-    with patch(
-        "app.gateway.routers.scheduled_tasks.load_agent_config",
-        side_effect=FileNotFoundError("missing"),
-    ):
-        with pytest.raises(HTTPException) as exc_info:
-            await _call_create(_create_request(assistant_id="missing-bot"))
+async def test_create_custom_assistant_id_is_rejected():
+    """Phase 5 removed Custom/Managed Agents: only the default lead agent exists.
+
+    A well-formed custom name is still rejected loudly rather than silently
+    pinned to the default, so an operator sees the change.
+    """
+    with pytest.raises(HTTPException) as exc_info:
+        await _call_create(_create_request(assistant_id="Research_Bot"))
     assert exc_info.value.status_code == 422
     assert "Unknown assistant_id" in exc_info.value.detail
 
@@ -1219,59 +1217,31 @@ async def test_create_invalid_assistant_id_is_rejected():
 
 
 @pytest.mark.asyncio
-async def test_update_custom_assistant_id_is_persisted():
-    repo = _Repo()
-    task = await repo.create(
-        task_id="task-1",
-        user_id="user-1",
-        thread_id=None,
-        context_mode="fresh_thread_per_run",
-        assistant_id="lead_agent",
-        title="Daily summary",
-        prompt="Summarize thread",
-        schedule_type="cron",
-        schedule_spec={"cron": "0 9 * * *"},
-        timezone="UTC",
-        next_run_at=None,
-    )
-    old_repo = scheduled_tasks.get_scheduled_task_repo
-    old_config = scheduled_tasks.get_config
-    old_user = scheduled_tasks.get_optional_user_from_request
-    try:
-        scheduled_tasks.get_scheduled_task_repo = lambda _request: repo
-        scheduled_tasks.get_config = lambda: _Config()
-        scheduled_tasks.get_optional_user_from_request = AsyncMock(return_value=SimpleNamespace(id="user-1"))
-        with patch(
-            "app.gateway.routers.scheduled_tasks.load_agent_config",
-            return_value=object(),
-        ):
-            updated = await call_unwrapped(
-                scheduled_tasks.update_scheduled_task,
-                task_id=task["id"],
-                request=SimpleNamespace(),
-                body=scheduled_tasks.ScheduledTaskUpdateRequest(assistant_id="triage-bot"),
-            )
-    finally:
-        scheduled_tasks.get_scheduled_task_repo = old_repo
-        scheduled_tasks.get_config = old_config
-        scheduled_tasks.get_optional_user_from_request = old_user
-    assert updated["assistant_id"] == "triage-bot"
-
-
-@pytest.mark.asyncio
 async def test_update_unknown_assistant_id_is_rejected():
     repo = _Repo()
     task = await _seed_task(repo)
-    with patch(
-        "app.gateway.routers.scheduled_tasks.load_agent_config",
-        side_effect=FileNotFoundError("missing"),
-    ):
-        with pytest.raises(HTTPException) as exc_info:
-            await _call_update(
-                repo,
-                task["id"],
-                scheduled_tasks.ScheduledTaskUpdateRequest(assistant_id="missing-bot"),
-            )
+    with pytest.raises(HTTPException) as exc_info:
+        await _call_update(
+            repo,
+            task["id"],
+            scheduled_tasks.ScheduledTaskUpdateRequest(assistant_id="missing-bot"),
+        )
+    assert exc_info.value.status_code == 422
+    assert "Unknown assistant_id" in exc_info.value.detail
+    assert repo.items[task["id"]]["assistant_id"] == "lead_agent"
+
+
+@pytest.mark.asyncio
+async def test_update_custom_assistant_id_is_rejected():
+    """No custom agent may be persisted on a scheduled task any more."""
+    repo = _Repo()
+    task = await _seed_task(repo)
+    with pytest.raises(HTTPException) as exc_info:
+        await _call_update(
+            repo,
+            task["id"],
+            scheduled_tasks.ScheduledTaskUpdateRequest(assistant_id="triage-bot"),
+        )
     assert exc_info.value.status_code == 422
     assert "Unknown assistant_id" in exc_info.value.detail
     assert repo.items[task["id"]]["assistant_id"] == "lead_agent"
@@ -1292,20 +1262,16 @@ async def test_update_invalid_assistant_id_is_rejected():
 
 
 @pytest.mark.asyncio
-async def test_update_omitting_assistant_id_keeps_existing_even_if_agent_is_gone():
+async def test_update_omitting_assistant_id_keeps_existing_record():
     # Unrelated PATCH (rename, reschedule) must not re-resolve assistant_id.
-    # Otherwise a since-deleted custom agent makes the task uneditable.
+    # Otherwise an unrelated edit would fail on a legacy row that still names
+    # an assistant the deployment no longer serves.
     repo = _Repo()
     task = await _seed_task(repo, assistant_id="research-bot")
-    with patch(
-        "app.gateway.routers.scheduled_tasks.load_agent_config",
-        side_effect=FileNotFoundError("missing"),
-    ) as loader:
-        updated = await _call_update(
-            repo,
-            task["id"],
-            scheduled_tasks.ScheduledTaskUpdateRequest(title="Renamed"),
-        )
-    loader.assert_not_called()
+    updated = await _call_update(
+        repo,
+        task["id"],
+        scheduled_tasks.ScheduledTaskUpdateRequest(title="Renamed"),
+    )
     assert updated["title"] == "Renamed"
     assert updated["assistant_id"] == "research-bot"

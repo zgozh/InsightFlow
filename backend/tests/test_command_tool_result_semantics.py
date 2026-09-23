@@ -342,24 +342,6 @@ def test_receipt_stamps_only_matching_command_message():
 # ---------------------------------------------------------------------------
 
 
-def test_setup_agent_empty_soul_receipt_is_error():
-    from deerflow.tools.builtins.setup_agent_tool import setup_agent
-
-    runtime = _runtime()
-    request = _request(tool_name="setup_agent", runtime=runtime)
-
-    def call_setup_agent(current):
-        return setup_agent.func(soul="   ", description="demo", runtime=current.runtime)
-
-    result = _chain_error_then_receipt(request, call_setup_agent)
-    message = result.update["messages"][0]
-
-    assert "soul content is empty" in message.content
-    assert message.status == "success"
-    assert _meta(message)["status"] == "error"
-    assert message.additional_kwargs[TOOL_RECEIPT_KEY]["status"] == "error"
-
-
 def test_view_image_disallowed_path_receipt_is_error():
     from deerflow.tools.builtins.view_image_tool import view_image_tool
 

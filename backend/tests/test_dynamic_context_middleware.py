@@ -284,8 +284,6 @@ def test_first_run_records_exact_effective_memory():
 
     journal.record_memory_context.assert_called_once_with(
         content_sha256=hashlib.sha256(memory_message.content.encode("utf-8")).hexdigest(),
-        project_context_revision=None,
-        project_shelf_revision=None,
     )
 
 
@@ -325,8 +323,6 @@ def test_checkpointed_memory_is_recorded_for_a_later_run_or_branch_without_reloa
     _drive_first_model_call(mw, state["messages"], runtime)
     journal.record_memory_context.assert_called_once_with(
         content_sha256=hashlib.sha256(memory_content.encode("utf-8")).hexdigest(),
-        project_context_revision=None,
-        project_shelf_revision=None,
     )
 
 
@@ -1009,18 +1005,12 @@ def _declared_date_timezone_policies():
 
 
 def _expected_policies(tz_name: str):
-    """The DynamicContext declaration also carries the shelf index's effective
-    rendering caps (no app config here ⇒ ProjectsConfig defaults); the
-    SubagentDateContext declaration is the timezone alone."""
-    from deerflow.config.projects_config import ProjectsConfig
-
-    defaults = ProjectsConfig()
+    """The DynamicContext declaration carries the date zone plus the memory
+    opt-out switch; the SubagentDateContext declaration is the timezone alone."""
     return [
         {
             "current_date_timezone": tz_name,
             "memory_enabled": True,
-            "shelf_index_max_entries": defaults.shelf_index_max_entries,
-            "shelf_index_max_bytes": defaults.shelf_index_max_bytes,
         },
         {"current_date_timezone": tz_name},
     ]
@@ -1042,14 +1032,9 @@ def test_dynamic_context_release_policy_includes_memory_opt_out(monkeypatch):
 
     monkeypatch.setenv("DEER_FLOW_DATE_TIMEZONE", "UTC")
 
-    from deerflow.config.projects_config import ProjectsConfig
-
-    defaults = ProjectsConfig()
     assert DynamicContextMiddleware(memory_enabled=False).release_policy_parameters() == {
         "current_date_timezone": "UTC",
         "memory_enabled": False,
-        "shelf_index_max_entries": defaults.shelf_index_max_entries,
-        "shelf_index_max_bytes": defaults.shelf_index_max_bytes,
     }
 
 

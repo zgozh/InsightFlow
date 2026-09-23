@@ -2056,9 +2056,8 @@ def _github_env_from_runtime(runtime: Runtime) -> dict[str, str] | None:
       by older code paths that don't need refresh; or
     * a zero-arg sync callable returning ``str`` — a provider that re-mints
       transparently when the underlying installation token's 1h TTL is
-      nearing expiry. The provider's cache logic lives app-side (see
-      ``app.gateway.github.app_auth.mint_installation_token`` for the
-      cache + leeway semantics); the harness just calls it.
+      nearing expiry. The provider's cache + leeway logic lives app-side; the
+      harness just calls it.
 
     The callable path is what lets long autonomous runs survive past the
     60-minute installation-token life: every bash invocation re-asks the
@@ -2083,35 +2082,6 @@ def _github_env_from_runtime(runtime: Runtime) -> dict[str, str] | None:
     if not isinstance(token, str) or not token:
         return None
     return {"GH_TOKEN": token, "GITHUB_TOKEN": token}
-
-
-_LARK_CLI_COMMAND_RE = re.compile(r"(?<![A-Za-z0-9_.-])lark-cli(?![A-Za-z0-9_.-])")
-
-
-def _lark_cli_env_from_runtime(runtime: Runtime, command: str, *, sandbox_paths: bool) -> dict[str, str] | None:
-    """Expose Settings-page Lark auth to sandbox ``lark-cli`` commands.
-
-    Settings authorizes ``lark-cli`` under DeerFlow's per-user integration
-    config/data directories. Agent conversations invoke ``lark-cli`` through the
-    sandbox, so lark commands must receive those same directories or they see an
-    unrelated unauthenticated profile. Keep this scoped to commands that
-    actually call ``lark-cli`` so ordinary bash calls do not switch AIO into the
-    env-bearing execution path.
-
-    In broker mode (Pattern B, issue #4338) a sidecar owns the credentials, so
-    the overlay carries only the broker URL + runtime PATH — the config/data
-    directories are never injected into the sandbox.
-    """
-    if not _LARK_CLI_COMMAND_RE.search(command):
-        return None
-    try:
-        from deerflow.integrations.lark_cli import lark_cli_env_overlay, sandbox_lark_broker_active
-
-        broker = sandbox_paths and sandbox_lark_broker_active()
-        return lark_cli_env_overlay(resolve_runtime_user_id(runtime), sandbox_paths=sandbox_paths, broker=broker)
-    except Exception:
-        logger.warning("Could not build Lark CLI env overlay; running command without managed auth", exc_info=True)
-        return None
 
 
 @tool("bash", parse_docstring=True)
@@ -2146,11 +2116,8 @@ def bash_tool(runtime: Runtime, command: str, description: str = "") -> str:
         injected_env = read_active_secrets(getattr(runtime, "context", None)) or None
         identity_prefix = _channel_identity_prefix(runtime)
         github_env = _github_env_from_runtime(runtime)
-        lark_cli_env = _lark_cli_env_from_runtime(runtime, command, sandbox_paths=not is_local_sandbox(runtime))
         if github_env:
             injected_env = {**(injected_env or {}), **github_env}
-        if lark_cli_env:
-            injected_env = {**(injected_env or {}), **lark_cli_env}
         if is_local_sandbox(runtime):
             if not is_host_bash_allowed():
                 return f"Error: {LOCAL_HOST_BASH_DISABLED_MESSAGE}"

@@ -131,16 +131,15 @@ def test_make_lead_agent_signature_matches_langgraph_server_factory_abi():
 
 
 @pytest.mark.parametrize(
-    ("reader", "is_subagent", "is_bootstrap", "expected"),
+    ("reader", "is_subagent", "expected"),
     [
-        (None, False, False, False),
-        ({"allowed_ids": ["other-thread"]}, False, False, False),
-        (lambda: None, False, False, True),
-        (lambda: None, True, False, False),
-        (lambda: None, False, True, False),
+        (None, False, False),
+        ({"allowed_ids": ["other-thread"]}, False, False),
+        (lambda: None, False, True),
+        (lambda: None, True, False),
     ],
 )
-def test_lead_conversation_tool_requires_callable_host_reader(monkeypatch, reader, is_subagent, is_bootstrap, expected):
+def test_lead_conversation_tool_requires_callable_host_reader(monkeypatch, reader, is_subagent, expected):
     import deerflow.tools as tools_module
 
     app_config = _make_app_config([_make_model("safe-model", supports_thinking=False)])
@@ -154,15 +153,11 @@ def test_lead_conversation_tool_requires_callable_host_reader(monkeypatch, reade
     monkeypatch.setattr(lead_agent_module, "build_tracing_callbacks", lambda: [])
 
     lead_agent_module._make_lead_agent(
-        {"context": {"__conversation_reader": reader, "is_subagent": is_subagent, "is_bootstrap": is_bootstrap}},
+        {"context": {"__conversation_reader": reader, "is_subagent": is_subagent}},
         app_config=app_config,
     )
 
-    kwargs = get_available_tools.call_args.kwargs
-    if is_bootstrap:
-        assert "include_conversation_reader" not in kwargs
-    else:
-        assert kwargs["include_conversation_reader"] is expected
+    assert get_available_tools.call_args.kwargs["include_conversation_reader"] is expected
 
 
 def test_make_lead_agent_uses_server_auth_identity_for_all_user_scoped_inputs(monkeypatch):
@@ -261,33 +256,6 @@ def test_make_lead_agent_applies_custom_agent_memory_opt_out(monkeypatch):
         "middleware_memory_enabled": False,
         "prompt_memory_enabled": False,
     }
-
-
-def test_make_lead_agent_scopes_bootstrap_middlewares_to_custom_agent(monkeypatch):
-    app_config = _make_app_config([_make_model("safe-model", supports_thinking=False)])
-    middleware_calls: list[dict[str, object]] = []
-    prompt_calls: list[dict[str, object]] = []
-
-    import deerflow.tools as tools_module
-
-    monkeypatch.setattr(lead_agent_module, "_load_enabled_available_skills", lambda *args, **kwargs: [])
-    monkeypatch.setattr(lead_agent_module, "build_middlewares", lambda *args, **kwargs: middleware_calls.append(kwargs) or [])
-    monkeypatch.setattr(lead_agent_module, "apply_prompt_template", lambda **kwargs: prompt_calls.append(kwargs) or "system prompt")
-    monkeypatch.setattr(lead_agent_module, "create_chat_model", lambda **kwargs: object())
-    monkeypatch.setattr(lead_agent_module, "create_agent", lambda **kwargs: kwargs)
-    monkeypatch.setattr(lead_agent_module, "build_tracing_callbacks", lambda: [])
-    monkeypatch.setattr(tools_module, "get_available_tools", lambda **kwargs: [])
-
-    lead_agent_module._make_lead_agent(
-        {"configurable": {"agent_name": "game", "is_bootstrap": True}},
-        app_config=app_config,
-    )
-
-    assert len(middleware_calls) == 1
-    assert middleware_calls[0]["agent_name"] == "game"
-    assert middleware_calls[0]["available_skills"] == {"bootstrap"}
-    assert middleware_calls[0]["owns_agent_skill_projection"] is False
-    assert len(prompt_calls) == 1
 
 
 def test_make_lead_agent_attaches_tracing_callbacks_at_graph_root(monkeypatch):

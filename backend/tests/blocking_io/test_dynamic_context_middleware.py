@@ -402,8 +402,6 @@ async def test_abefore_agent_records_checkpointed_memory_on_timeout() -> None:
     assert started.is_set()
     assert recorded_call == mock.call(
         content_sha256=hashlib.sha256(memory_content.encode("utf-8")).hexdigest(),
-        project_context_revision=None,
-        project_shelf_revision=None,
     )
     journal.record_memory_context.assert_called_once()
 

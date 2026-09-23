@@ -47,7 +47,6 @@ STARTUP_ONLY_FIELDS: dict[str, str] = {
     "database": ("init_engine_from_config() runs once during langgraph_runtime() startup; the SQLAlchemy engine holds the connection pool and is not rebuilt on config.yaml edits."),
     "checkpointer": ("make_checkpointer() binds the persistent checkpointer once at startup, including SQLite WAL / busy_timeout settings."),
     "run_events": ("make_run_event_store() picks the memory- vs SQL-backed implementation at startup and is frozen onto app.state.run_events_config to stay paired with the underlying event store."),
-    "agent_storage": ("langgraph_runtime() validates agent_storage.backend against database.backend once at startup, and the db backend's synchronous SQLAlchemy engine is process-cached on first use; switching backend needs a restart."),
     "stream_bridge": ("make_stream_bridge() constructs the stream-bridge singleton once during startup."),
     "sandbox": ("get_sandbox_provider() caches the provider singleton (``_default_sandbox_provider``); a different ``sandbox.use`` class path only takes effect on next process start."),
     "skills.container_path": (
@@ -61,14 +60,6 @@ STARTUP_ONLY_FIELDS: dict[str, str] = {
         "configure_logging() runs only during app.py startup; it installs/removes the trace-context filter and the enhanced formatter on root handlers, "
         "and a freshly reloaded AppConfig does not retrigger it, so a runtime edit to logging.enhance.* needs a Gateway restart. Only log output is "
         "affected: trace ids are issued unconditionally and always returned in the X-Trace-Id response header, whatever this setting says."
-    ),
-    # Not part of the AppConfig Pydantic schema — channel credentials are
-    # consumed directly by ``start_channel_service()`` once at lifespan
-    # startup and the live channel clients are not rebuilt on
-    # config.yaml edits.
-    "channels": ("start_channel_service() is invoked once during startup; the live IM channel clients (Feishu, Slack, Telegram, DingTalk) are not rebuilt when channels.* changes."),
-    "channel_connections": (
-        "start_channel_service() wires the connection repository and channel workers once at startup, and the channel-connections router caches the merged provider config on app.state; channel_connections.* edits need a restart."
     ),
     "scheduler": (
         "ScheduledTaskService is constructed and started once during Gateway lifespan startup; enabled, poll_interval_seconds, lease_seconds, "
@@ -85,10 +76,6 @@ STARTUP_ONLY_FIELDS: dict[str, str] = {
     "run_ownership": (
         "RunOwnershipConfig is captured once into RunManager at langgraph_runtime() startup; the lease heartbeat background task is created and "
         "started there, and heartbeat_enabled / lease_seconds / grace_seconds are not re-read on config.yaml edits."
-    ),
-    "dedupe_storage": (
-        "make_inbound_dedupe_store() resolves the inbound dedupe store once when ChannelService is constructed at startup; the store "
-        "(in-process memory or shared Postgres) is captured onto ChannelManager and is not rebuilt on config.yaml edits."
     ),
 }
 

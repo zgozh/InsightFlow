@@ -58,7 +58,6 @@ from langchain.agents.middleware.types import ModelCallResult, ModelRequest, Mod
 from langchain_core.messages import HumanMessage, RemoveMessage, SystemMessage
 from langgraph.runtime import Runtime
 
-from deerflow.projects.context import build_project_context_message, is_project_context_message, pinned_project_snapshot, project_context_insertion_index, render_documents_block, render_project_block
 from deerflow.runtime.context_keys import CURRENT_RUN_PRE_EXISTING_MESSAGE_IDS_KEY
 from deerflow.runtime.user_context import resolve_runtime_user_id
 from deerflow.utils.messages import INJECTED_USER_MESSAGE_ID_SUFFIX, strip_injected_user_message_id_suffix
@@ -368,21 +367,16 @@ class DynamicContextMiddleware(AgentMiddleware):
         self._injected_memory_message_id: str | None = None
 
     def release_policy_parameters(self) -> dict[str, object]:
-        """Declare memory/date behavior and the shelf index's rendering caps.
+        """Declare the memory/date behaviour this instance renders.
 
-        ``memory_enabled`` gates the memory half of the injected context;
-        ``shelf_index_max_entries`` / ``shelf_index_max_bytes`` change the
-        model-visible ``<documents>`` block this middleware renders. All three
-        are model-visible policy, so the effective (post-config-resolution)
-        values are part of the assembly identity — runs under different
-        policies must not share a fingerprint.
+        ``memory_enabled`` gates the memory half of the injected context; the
+        effective (post-config-resolution) value is model-visible policy, so it
+        is part of the assembly identity — runs under different policies must
+        not share a fingerprint.
         """
-        max_entries, max_bytes = self._shelf_index_limits()
         return {
             "current_date_timezone": _effective_date_timezone_name(),
             "memory_enabled": self._memory_enabled,
-            "shelf_index_max_entries": max_entries,
-            "shelf_index_max_bytes": max_bytes,
         }
 
     def _build_full_reminder(self, runtime: Runtime | None = None) -> tuple[str, str | None]:
@@ -667,62 +661,13 @@ class DynamicContextMiddleware(AgentMiddleware):
                 return message
         return None
 
-    def _shelf_index_limits(self) -> tuple[int, int]:
-        """Shelf index caps without I/O: the assembly config, else defaults."""
-        if self._app_config is not None:
-            projects = self._app_config.projects
-            return projects.shelf_index_max_entries, projects.shelf_index_max_bytes
-        from deerflow.config.projects_config import ProjectsConfig
-
-        defaults = ProjectsConfig()
-        return defaults.shelf_index_max_entries, defaults.shelf_index_max_bytes
-
-    def _assemble_project_request(self, request: ModelRequest) -> tuple[ModelRequest, str | None, str | None]:
-        """Insert at most one transient ``<project>`` message into the request.
-
-        Pure rendering over the admission-pinned snapshot (no I/O): this
-        injector's own recognized transient messages are removed from the
-        request copy first, so re-assembling an already decorated request
-        stays idempotent and instructions never accumulate across calls. The
-        message carries the ``<project>`` block plus, for a nonempty shelf,
-        the bounded ``<documents>`` index appended after ``</project>`` — both
-        rendered fresh from the pinned snapshot on every model call (§7.2).
-        The message is placed immediately before the genuine current-run user
-        message and is never returned as a state update, so checkpoints and
-        ``state["messages"]`` never contain it. Returns the rendered block
-        texts (``None`` when absent) for the audit fingerprints.
-        """
-        runtime = getattr(request, "runtime", None)
-        original = list(getattr(request, "messages", None) or [])
-        messages = [message for message in original if not is_project_context_message(message)]
-        snapshot = pinned_project_snapshot(runtime)
-        project_block = render_project_block(snapshot)
-        if project_block is None:
-            if len(messages) == len(original):
-                return request, None, None
-            return request.override(messages=messages), None, None
-        max_entries, max_bytes = self._shelf_index_limits()
-        documents_block = render_documents_block(snapshot, max_entries=max_entries, max_bytes=max_bytes)
-        block = project_block if documents_block is None else f"{project_block}\n{documents_block}"
-        index = project_context_insertion_index(messages, runtime)
-        run_id = None
-        context = getattr(runtime, "context", None)
-        if isinstance(context, dict) and isinstance(context.get("run_id"), str):
-            run_id = context["run_id"]
-        message = build_project_context_message(block, run_id)
-        return request.override(messages=[*messages[:index], message, *messages[index:]]), project_block, documents_block
-
-    def _record_context_event(self, messages: list, runtime: Runtime | None, project_block: str | None, documents_block: str | None) -> None:
+    def _record_context_event(self, messages: list, runtime: Runtime | None) -> None:
         """Emit the run's single ``context:memory`` audit event, when due.
 
         Fires once per run (the journal dedupes) at the first successful
-        model-request assembly, whenever a memory block, the project block or
-        the shelf index was actually supplied. ``content_sha256`` covers only
-        the selected persisted ``__memory`` message (``None`` when none exists
-        — e.g. a project-only run); ``project_context_revision`` /
-        ``project_shelf_revision`` are the sha256 fingerprints of the rendered
-        ``<project>`` / ``<documents>`` text (``None`` when no such block was
-        delivered). All are audit fingerprints: never compared, never stored
+        model-request assembly, whenever a memory block was actually supplied.
+        ``content_sha256`` covers only the selected persisted ``__memory``
+        message. It is an audit fingerprint: never compared, never stored
         in additional_kwargs, and unable to reconstruct the underlying text.
         Runs supplying no such context keep the historical no-event behavior.
         """
@@ -733,33 +678,25 @@ class DynamicContextMiddleware(AgentMiddleware):
 
         message = self._effective_memory_message_for_request(messages, runtime)
         content_sha256 = hashlib.sha256(message.content.encode("utf-8")).hexdigest() if message is not None else None
-        project_context_revision = hashlib.sha256(project_block.encode("utf-8")).hexdigest() if project_block is not None else None
-        project_shelf_revision = hashlib.sha256(documents_block.encode("utf-8")).hexdigest() if documents_block is not None else None
-        if content_sha256 is None and project_context_revision is None and project_shelf_revision is None:
+        if content_sha256 is None:
             return
 
         try:
-            journal.record_memory_context(
-                content_sha256=content_sha256,
-                project_context_revision=project_context_revision,
-                project_shelf_revision=project_shelf_revision,
-            )
+            journal.record_memory_context(content_sha256=content_sha256)
         except Exception:
             logger.debug("Failed to record effective memory context", exc_info=True)
 
     @override
     def wrap_model_call(self, request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]) -> ModelCallResult:
-        request, project_block, documents_block = self._assemble_project_request(request)
         response = handler(request)
         # Record only after the call succeeded: a failed assembly must not
         # claim the context was delivered.
-        self._record_context_event(request.messages, getattr(request, "runtime", None), project_block, documents_block)
+        self._record_context_event(request.messages, getattr(request, "runtime", None))
         return response
 
     @override
     async def awrap_model_call(self, request: ModelRequest, handler: Callable[[ModelRequest], Awaitable[ModelResponse]]) -> ModelCallResult:
         # Pure in-memory rendering: no I/O, so it stays on the event loop.
-        request, project_block, documents_block = self._assemble_project_request(request)
         response = await handler(request)
-        self._record_context_event(request.messages, getattr(request, "runtime", None), project_block, documents_block)
+        self._record_context_event(request.messages, getattr(request, "runtime", None))
         return response

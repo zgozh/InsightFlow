@@ -46,7 +46,7 @@ from app.gateway.utils import sanitize_log_param
 from deerflow.agents.thread_state import THREAD_STATE_REDUCER_FIELDS
 from deerflow.config.paths import Paths, get_paths
 from deerflow.config.summarization_config import ContextSize
-from deerflow.persistence.thread_meta import PROJECT_FILTER_UNSET, THREAD_ARCHIVED_METADATA_KEY, THREAD_PINNED_METADATA_KEY, THREAD_PROJECT_METADATA_KEY, ThreadOwnershipConflictError
+from deerflow.persistence.thread_meta import THREAD_ARCHIVED_METADATA_KEY, THREAD_PINNED_METADATA_KEY, THREAD_PROJECT_METADATA_KEY, ThreadOwnershipConflictError
 from deerflow.runtime import ThreadOperationKind, serialize_channel_values_for_api
 from deerflow.runtime.checkpoint_mode import CheckpointModeMismatchError, CheckpointModeReconfigurationError
 from deerflow.runtime.checkpoint_state import graph_reducer_channels, graph_state_schema, graph_writable_channels
@@ -451,7 +451,6 @@ class ThreadCreateRequest(BaseModel):
     thread_id: ThreadId | None = Field(default=None, description="Optional thread ID (auto-generated if omitted)")
     assistant_id: str | None = Field(default=None, description="Associate thread with an assistant")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Initial metadata")
-    project_id: str | None = Field(default=None, description="Assign the new thread to this project (validated server-side)")
 
     _strip_reserved = field_validator("metadata")(classmethod(lambda cls, v: _strip_reserved_metadata(v)))
 
@@ -461,7 +460,6 @@ class ThreadSearchRequest(BaseModel):
 
     archived: bool | None = Field(default=None, strict=True, description="Archive filter; omitted includes all, false includes legacy unarchived threads")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Metadata filter (exact match)")
-    project_id: str | None = Field(default=None, description="Filter by project; explicit null = unassigned threads; omit key for all")
     limit: int = Field(default=100, ge=1, le=1000, description="Maximum results")
     offset: int = Field(default=0, ge=0, description="Pagination offset")
     status: str | None = Field(default=None, description="Filter by thread status")
@@ -761,18 +759,6 @@ async def _delete_thread_data_with_reservation(thread_id: str, request: Request)
     except Exception:
         logger.debug("Could not delete thread_meta for %s (not critical)", sanitize_log_param(thread_id))
 
-    # Tear down any live browser session (best-effort). Sessions are keyed only
-    # by thread_id, so leaving one alive after the owner deletes the thread lets
-    # a later caller who guesses the id reuse the retained page/cookies.
-    try:
-        from deerflow.community.browser_automation import get_browser_session_manager
-
-        await get_browser_session_manager().close_session(thread_id)
-    except ImportError:
-        pass  # Playwright is an optional dependency.
-    except Exception:
-        logger.debug("Could not close browser session for %s (not critical)", sanitize_log_param(thread_id))
-
     return response
 
 
@@ -832,20 +818,13 @@ async def create_thread(body: ThreadCreateRequest, request: Request) -> ThreadRe
         return _existing_thread_response(thread_id, existing_record)
 
     # Write thread_meta so the thread appears in /threads/search immediately
-    from deerflow.persistence.projects import ProjectNotAssignableError
-
     try:
         created_record = await thread_store.create(
             thread_id,
             assistant_id=getattr(body, "assistant_id", None),
             **thread_owner_kwargs,
             metadata=body.metadata,
-            project_id=body.project_id,
         )
-    except ProjectNotAssignableError:
-        # Fail closed: missing, foreign, or archived projects are
-        # indistinguishable at the API surface.
-        raise HTTPException(status_code=404, detail="Project not found") from None
     except ThreadOwnershipConflictError:
         # Do not reveal that a caller-chosen id belongs to another user.
         raise HTTPException(status_code=404, detail="Thread not found") from None
@@ -886,10 +865,8 @@ async def create_thread(body: ThreadCreateRequest, request: Request) -> ThreadRe
         raise HTTPException(status_code=500, detail="Failed to create thread")
 
     logger.info("Thread created: %s", sanitize_log_param(thread_id))
-    # Respond from the persisted record — the store stamps
-    # ``metadata.deerflow_project_id`` from the assigned project_id column, so
-    # echoing ``body.metadata`` here would omit the membership the retry path
-    # (``_existing_thread_response``) reports.
+    # Respond from the persisted record so the response reflects the store's
+    # server-owned stamps rather than echoing the request body.
     return _existing_thread_response(thread_id, created_record)
 
 
@@ -967,16 +944,6 @@ async def _branch_thread_with_reservation(
         "branch_parent_message_id": body.message_id,
         "branch_created_at": now,
     }
-    # A branch extends its source conversation, so the new row inherits the
-    # source thread's project membership — an unassigned branch would surface
-    # under Recent chats instead of the source thread's project group. The
-    # store re-validates the project inside the insert (same fail-closed path
-    # as create/move), and the inherited id may be stale only when the project
-    # was archived or deleted after the source read.
-    from deerflow.persistence.projects import ProjectNotAssignableError
-
-    source_project_id = (source_metadata or {}).get(THREAD_PROJECT_METADATA_KEY)
-
     if body.title:
         display_name = body.title
     else:
@@ -1051,30 +1018,20 @@ async def _branch_thread_with_reservation(
         logger.exception("Failed to write branch checkpoint for thread %s", sanitize_log_param(new_thread_id))
         raise HTTPException(status_code=500, detail="Failed to create branch") from None
 
-    async def _write_branch_row(project_id: str | None) -> None:
+    async def _write_branch_row() -> None:
         try:
             await thread_store.create(
                 new_thread_id,
                 assistant_id=source_record.get("assistant_id"),
                 display_name=display_name,
                 metadata=branch_metadata,
-                project_id=project_id,
                 **thread_owner_kwargs,
             )
-        except ProjectNotAssignableError:
-            raise
         except Exception:
             logger.exception("Failed to write branch thread_meta for %s", sanitize_log_param(new_thread_id))
             raise HTTPException(status_code=500, detail="Failed to create branch") from None
 
-    try:
-        await _write_branch_row(source_project_id)
-    except ProjectNotAssignableError:
-        # The source project became unassignable (archived, or deleted in a
-        # race that cleared the source row's membership after our read): keep
-        # the branch usable as an unassigned thread — the pre-inheritance
-        # behavior for sources without an active project.
-        await _write_branch_row(None)
+    await _write_branch_row()
 
     # The thread feed (GET /messages, /messages/page) reads the run-event
     # store, not checkpoints, and a fresh branch has no run_events — so the
@@ -1125,15 +1082,11 @@ async def search_threads(body: ThreadSearchRequest, request: Request) -> list[Th
     from deerflow.persistence.thread_meta import InvalidMetadataFilterError
 
     repo = get_thread_store(request)
-    # Three-state project filter: key absent → no filter; explicit null →
-    # unassigned threads only; string → members of that project.
-    project_filter = body.project_id if "project_id" in body.model_fields_set else PROJECT_FILTER_UNSET
     try:
         rows = await repo.search(
             metadata=body.metadata or None,
             status=body.status,
             **({"archived": body.archived} if body.archived is not None else {}),
-            project_id=project_filter,
             limit=body.limit,
             offset=body.offset,
         )
@@ -1180,33 +1133,6 @@ async def patch_thread(thread_id: ThreadId, body: ThreadPatchRequest, request: R
 
     # Re-read to get the merged metadata and the store's timestamp decision.
     record = await thread_store.get(thread_id) or record
-    return ThreadResponse(
-        thread_id=thread_id,
-        status=record.get("status", "idle"),
-        created_at=coerce_iso(record.get("created_at", "")),
-        updated_at=coerce_iso(record.get("updated_at", "")),
-        metadata=record.get("metadata", {}),
-    )
-
-
-class ThreadMoveRequest(BaseModel):
-    """Request body for moving a thread into/out of a project."""
-
-    project_id: str | None = Field(..., description="Target project id, or null to unassign")
-
-
-@router.post("/{thread_id}/move", response_model=ThreadResponse)
-@require_permission("threads", "write", owner_check=True, require_existing=True)
-async def move_thread(thread_id: ThreadId, body: ThreadMoveRequest, request: Request) -> ThreadResponse:
-    """Move a thread between projects (or out). Organizational only: history,
-    run state, and per-thread files are untouched (RFC v2 §6)."""
-    from app.gateway.deps import get_thread_store
-
-    thread_store = get_thread_store(request)
-    moved = await thread_store.set_project(thread_id, body.project_id)
-    if not moved:
-        raise HTTPException(status_code=404, detail="Thread or project not found")
-    record = await thread_store.get(thread_id)
     return ThreadResponse(
         thread_id=thread_id,
         status=record.get("status", "idle"),

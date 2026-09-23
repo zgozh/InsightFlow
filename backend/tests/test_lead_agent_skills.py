@@ -373,7 +373,7 @@ def test_make_lead_agent_all_legacy_skills_preserve_all_tools(monkeypatch):
 
     # No skill is active yet, so the configured lead tools remain available.
     tool_names = [tool.name for tool in agent_kwargs["tools"]]
-    assert tool_names == ["bash", "read_file", "update_agent", "describe_skill"]
+    assert tool_names == ["bash", "read_file", "describe_skill"]
 
 
 def test_make_lead_agent_passive_empty_skill_policy_preserves_mcp_and_other_tools_when_cache_is_cold(monkeypatch):
@@ -518,21 +518,14 @@ def test_make_lead_agent_fails_closed_when_skill_policy_load_fails(monkeypatch):
     create_agent_mock.assert_not_called()
 
 
-def test_make_lead_agent_drops_update_agent_on_github_channel(monkeypatch):
-    """Webhook-channel runs MUST NOT see ``update_agent``.
+def test_make_lead_agent_never_exposes_a_self_mutation_tool(monkeypatch):
+    """No run may see a tool that durably rewrites the agent's own definition.
 
-    The lead-agent prompt actively encourages the model to call
-    ``update_agent`` when the user asks it to change its own skills /
-    tool_groups / SOUL.md. On the GitHub channel, the "user" is whichever
-    external commenter posted the triggering ``@<bot>`` mention — anyone
-    with comment access on the configured repo. Exposing the tool there
-    would let that commenter durably mutate the agent's tool whitelist
-    or persona for every subsequent run. The factory therefore omits the
-    tool from the toolset whenever the run's channel is webhook-shaped.
-
-    This test guards against a future contributor reintroducing the tool
-    unconditionally — that regression would silently re-open the
-    privilege-escalation path.
+    ``update_agent`` was removed with the Custom/Managed Agent surface in
+    Phase 5. This guards the invariant that mattered about it: an untrusted,
+    non-operator caller (today: any channel-shaped run context) must not be
+    able to mutate the agent's skills / tool_groups / SOUL.md for every
+    subsequent run.
     """
     from unittest.mock import MagicMock
 
@@ -554,49 +547,14 @@ def test_make_lead_agent_drops_update_agent_on_github_channel(monkeypatch):
     mock_app_config.get_model_config.return_value = SimpleNamespace(supports_thinking=False, supports_vision=False)
     monkeypatch.setattr(lead_agent_module, "get_app_config", lambda: mock_app_config)
 
-    # ``channel_name`` is plumbed onto run_context by ChannelManager and
-    # surfaced via _get_runtime_config alongside the other configurable keys.
-    agent_kwargs = lead_agent_module.make_lead_agent({"configurable": {"agent_name": "test"}, "context": {"channel_name": "github"}})
-    tool_names = [tool.name for tool in agent_kwargs["tools"]]
-    assert "update_agent" not in tool_names
-    # Sanity: regular tools still flow through.
-    assert "bash" in tool_names
-    assert "read_file" in tool_names
-
-
-def test_make_lead_agent_keeps_update_agent_on_non_webhook_channels(monkeypatch):
-    """Direct invocation and non-webhook channels still get ``update_agent``.
-
-    Sanity check for the inverse of
-    ``test_make_lead_agent_drops_update_agent_on_github_channel``: a chat-UI
-    or default-channel run (or any run with no channel context at all)
-    must keep the tool, otherwise the operator-trusted "change your own
-    skills" workflow would break.
-    """
-    from unittest.mock import MagicMock
-
-    from deerflow.agents.lead_agent import agent as lead_agent_module
-
-    monkeypatch.setattr(lead_agent_module, "_resolve_model_name", lambda x=None, **kwargs: "default-model")
-    monkeypatch.setattr(lead_agent_module, "create_chat_model", lambda **kwargs: "model")
-    monkeypatch.setattr(lead_agent_module, "build_middlewares", lambda *args, **kwargs: [])
-    monkeypatch.setattr(lead_agent_module, "apply_prompt_template", lambda **kwargs: "mock_prompt")
-    monkeypatch.setattr(lead_agent_module, "create_agent", lambda **kwargs: kwargs)
-    monkeypatch.setattr(lead_agent_module, "load_agent_config", lambda x, *, user_id=None: AgentConfig(name="test", skills=None))
-    monkeypatch.setattr(lead_agent_module, "_load_enabled_available_skills", lambda available_skills, *, app_config, user_id=None: [_make_skill("legacy", None)])
-    monkeypatch.setattr("deerflow.tools.get_available_tools", lambda **kwargs: [NamedTool("bash")])
-
-    mock_app_config = MagicMock()
-    # make_lead_agent freezes the delta snapshot frequency from the app config;
-    # a bare MagicMock attribute cannot survive the freeze's positivity check.
-    mock_app_config.database.checkpoint_delta.snapshot_frequency = 10
-    mock_app_config.get_model_config.return_value = SimpleNamespace(supports_thinking=False, supports_vision=False)
-    monkeypatch.setattr(lead_agent_module, "get_app_config", lambda: mock_app_config)
-
-    # No channel set — equivalent to a chat-UI or direct invocation.
-    kwargs_default = lead_agent_module.make_lead_agent({"configurable": {"agent_name": "test"}})
-    assert "update_agent" in [t.name for t in kwargs_default["tools"]]
-
-    # Explicit non-webhook channel — telegram is interactive/trusted-by-operator.
-    kwargs_tg = lead_agent_module.make_lead_agent({"configurable": {"agent_name": "test"}, "context": {"channel_name": "telegram"}})
-    assert "update_agent" in [t.name for t in kwargs_tg["tools"]]
+    for runtime_config in (
+        {"configurable": {"agent_name": "test"}, "context": {"channel_name": "github"}},
+        {"configurable": {"agent_name": "test"}},
+        {"configurable": {"agent_name": "test"}, "context": {"channel_name": "telegram"}},
+    ):
+        agent_kwargs = lead_agent_module.make_lead_agent(runtime_config)
+        tool_names = [tool.name for tool in agent_kwargs["tools"]]
+        assert "update_agent" not in tool_names
+        assert "setup_agent" not in tool_names
+        # Sanity: regular tools still flow through.
+        assert "bash" in tool_names

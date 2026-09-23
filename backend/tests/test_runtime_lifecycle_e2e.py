@@ -21,7 +21,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-from _agent_e2e_helpers import FakeToolCallingModel, build_single_tool_call_model
+from _agent_e2e_helpers import FakeToolCallingModel
 from langchain_core.messages import AIMessage, HumanMessage
 
 from deerflow.runtime.checkpoint_state import build_state_mutation_graph
@@ -165,28 +165,6 @@ def _make_agent_factory(controller: _RunController, **agent_kwargs):
     return factory
 
 
-def _build_fake_setup_agent_model(agent_name: str):
-    """Patch target for lead_agent.agent.create_chat_model.
-
-    The graph, tool registry, ToolNode dispatch, and setup_agent implementation
-    remain production code; this fake only replaces the external LLM call.
-    """
-
-    def fake_create_chat_model(*args: Any, **kwargs: Any) -> FakeToolCallingModel:
-        del args, kwargs
-        return build_single_tool_call_model(
-            tool_name="setup_agent",
-            tool_args={
-                "soul": f"# Runtime Business E2E\n\nAgent name: {agent_name}",
-                "description": "runtime lifecycle business path",
-            },
-            tool_call_id="call_runtime_business_1",
-            final_text=f"Created {agent_name} through the real setup_agent tool.",
-        )
-
-    return fake_create_chat_model
-
-
 @pytest.fixture
 def isolated_deer_flow_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     home = tmp_path / "deer-flow-home"
@@ -257,7 +235,6 @@ def _preserve_process_config_singletons(monkeypatch: pytest.MonkeyPatch) -> None
 
     from deerflow.config import (
         acp_config,
-        agents_api_config,
         checkpointer_config,
         guardrails_config,
         memory_config,
@@ -272,7 +249,6 @@ def _preserve_process_config_singletons(monkeypatch: pytest.MonkeyPatch) -> None
         (title_config, "_title_config"),
         (summarization_config, "_summarization_config"),
         (memory_config, "_memory_config"),
-        (agents_api_config, "_agents_api_config"),
         (subagents_config, "_subagents_config"),
         (tool_search_config, "_tool_search_config"),
         (guardrails_config, "_guardrails_config"),
@@ -565,66 +541,6 @@ def test_stream_run_completes_and_persists_runtime_state(isolated_app):
         assert "llm.ai.response" in event_types
         assert any(row["content"]["content"] == "Run lifecycle E2E prompt" for row in message_events if row["event_type"] == "llm.human.input")
         assert any(row["content"]["content"] == "Lifecycle complete." for row in message_events if row["event_type"] == "llm.ai.response")
-
-
-def test_stream_run_executes_real_lead_agent_setup_agent_business_path(isolated_app, isolated_deer_flow_home: Path):
-    """A runtime stream should execute real lead-agent business code and tools."""
-    from starlette.testclient import TestClient
-
-    agent_name = "runtime-business-agent"
-
-    with (
-        patch(
-            "deerflow.agents.lead_agent.agent.create_chat_model",
-            new=_build_fake_setup_agent_model(agent_name),
-        ),
-        TestClient(isolated_app) as client,
-    ):
-        csrf_token = _register_user(client, email="business-e2e@example.com")
-        auth_user_id = client.get("/api/v1/auth/me").json()["id"]
-        thread_id = _create_thread(client, csrf_token)
-
-        body = _run_body(
-            input={
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": f"Create a custom agent named {agent_name}.",
-                    }
-                ]
-            },
-            context={
-                "agent_name": agent_name,
-                "is_bootstrap": True,
-                "thinking_enabled": False,
-                "is_plan_mode": False,
-                "subagent_enabled": False,
-            },
-        )
-
-        with client.stream(
-            "POST",
-            f"/api/threads/{thread_id}/runs/stream",
-            json=body,
-            headers={"X-CSRF-Token": csrf_token},
-        ) as response:
-            assert response.status_code == 200, response.read().decode()
-            run_id = _run_id_from_response(response)
-            transcript = _drain_stream(response, timeout=20.0)
-
-        events = _parse_sse(transcript)
-        event_names = [event["event"] for event in events]
-        assert "metadata" in event_names
-        assert "error" not in event_names, transcript
-        assert event_names[-1] == "end"
-
-        run = _wait_for_status(client, thread_id, run_id, "success", timeout=10.0)
-        assert run["assistant_id"] == "lead_agent"
-
-        expected_soul = isolated_deer_flow_home / "users" / auth_user_id / "agents" / agent_name / "SOUL.md"
-        assert expected_soul.exists(), f"setup_agent did not write SOUL.md. tmp tree: {sorted(str(p.relative_to(isolated_deer_flow_home)) for p in isolated_deer_flow_home.rglob('SOUL.md'))}"
-        assert f"Agent name: {agent_name}" in expected_soul.read_text(encoding="utf-8")
-        assert not (isolated_deer_flow_home / "users" / "default" / "agents" / agent_name).exists()
 
 
 def test_cancel_interrupt_stops_running_background_run(isolated_app):

@@ -10,7 +10,6 @@ started.
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
-from app.gateway.browser_capability import browser_capability
 from app.gateway.conversation_access import conversation_references_enabled
 from app.gateway.deps import get_config
 from app.gateway.run_models import MAX_CONVERSATION_REFERENCES
@@ -21,15 +20,14 @@ router = APIRouter(prefix="/api", tags=["features"])
 
 
 class AgentsApiFeature(BaseModel):
-    """Availability of the custom-agent management API."""
+    """Availability of the custom-agent management API.
 
-    enabled: bool = Field(..., description="Whether the agents_api routes are exposed over HTTP")
+    The agents_api surface was removed in Phase 5; the key stays in the
+    response as a constant ``false`` so the frontend feature type still
+    resolves without a client-side migration.
+    """
 
-
-class BrowserControlFeature(BaseModel):
-    """Availability of live agentic browser control."""
-
-    enabled: bool = Field(..., description="Whether the live browser routes and UI are available")
+    enabled: bool = Field(default=False, description="Whether the agents_api routes are exposed over HTTP")
 
 
 class McpTasksFeature(BaseModel):
@@ -58,7 +56,6 @@ class FeaturesResponse(BaseModel):
     """Frontend-facing feature availability flags."""
 
     agents_api: AgentsApiFeature
-    browser_control: BrowserControlFeature
     mcp_tasks: McpTasksFeature
     subagent_batches: SubagentBatchesFeature
     conversation_references: ConversationReferencesFeature
@@ -72,11 +69,11 @@ class FeaturesResponse(BaseModel):
 )
 async def list_features(request: Request, config: AppConfig = Depends(get_config)) -> FeaturesResponse:
     """Return availability of optional frontend features."""
-    browser = browser_capability(config)
     subagent_batch_worker_running = bool(getattr(request.app.state, "subagent_batches_available", False))
     return FeaturesResponse(
-        agents_api=AgentsApiFeature(enabled=config.agents_api.enabled),
-        browser_control=BrowserControlFeature(enabled=browser.available),
+        # Constant false: the custom-agent management API was removed. The key
+        # is retained so the frontend feature type keeps resolving.
+        agents_api=AgentsApiFeature(enabled=False),
         # MCP task bindings and the submitter are startup-scoped. Report the
         # capability that actually started rather than a hot-reloaded config
         # value that would require a Gateway restart to take effect.

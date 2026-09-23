@@ -1379,21 +1379,6 @@ read_before_write:
 # the same pinned snapshot. Oversized instructions are rejected at write time
 # (422) and never truncated.
 
-projects:
-  # Hard UTF-8 byte cap for project instructions (range: 256-262144). Multi-
-  # byte characters count as their UTF-8 byte length, not as characters.
-  instructions_max_bytes: 8192
-  # Maximum shelf entries rendered into the <documents> index per run
-  # (range: 1-500).
-  shelf_index_max_entries: 50
-  # UTF-8 byte cap for the rendered <documents> index, counting IDs, escaped
-  # names, wrappers, separators and the overflow note (range: 512-65536).
-  # Usually binds before the entry cap for CJK document names.
-  shelf_index_max_bytes: 4096
-  # Days a trashed project document stays recoverable before the retention
-  # sweep may purge it permanently (range: 1-3650).
-  trash_retention_days: 30
-
 # ============================================================================
 # Provider Safety Termination Configuration
 # ============================================================================
@@ -2230,13 +2215,6 @@ memory:
 # ============================================================================
 # Controls whether the HTTP gateway exposes custom-agent SOUL/USER.md management.
 # Keep this disabled unless the gateway is behind a trusted authenticated admin boundary.
-agents_api:
-  enabled: false
-
-# ============================================================================
-# Skill Self-Evolution Configuration
-# ============================================================================
-# Allow the agent to autonomously create and improve skills in skills/custom/.
 skill_evolution:
   enabled: false # Set to true to allow agent-managed writes under skills/custom
   moderation_model_name: null # Model for LLM-based security scanning (null = use default model)
@@ -2436,55 +2414,6 @@ run_events:
   max_trace_content: 10240
   track_token_usage: true
 
-# ============================================================================
-# Agent Storage Configuration
-# ============================================================================
-# Where custom agent DEFINITIONS (config.yaml + SOUL.md) and deployment-level
-# managed subagent definitions are stored. This is separate from `database`
-# (run/thread/event data) and from agent memory.
-# Restart-required (the backend is captured at Gateway lifespan startup).
-#
-# backend: file  -- Custom Agents use per-user files; managed subagents use one
-#                   JSON file each under {base_dir}/managed-subagents/ (default).
-#                   Node-local without a shared mount.
-# backend: db    -- Both definition types use the shared SQL persistence layer,
-#                   so every node sees them. Requires database.backend to be
-#                   'sqlite' or 'postgres' (rejected at startup on 'memory').
-#
-# Switching an existing install to 'db'? Import the on-disk Custom Agents and
-# managed subagents once with:
-#     python backend/scripts/migrate_agents_to_db.py   # --dry-run to preview
-# The source files are left in place, so reverting to 'file' is a clean rollback.
-#
-# agent_storage:
-#   backend: file
-agent_storage:
-  backend: file
-
-# ============================================================================
-# Scheduled Tasks Configuration
-# ============================================================================
-# Background scheduler for one-time, cron, and interval agent runs.
-# Poller fields (enabled, multi_instance, poll_interval_seconds, lease_seconds,
-# max_concurrent_runs, min_once_delay_seconds) are restart-required.
-# recursion_limit is read at dispatch and applies to the next scheduled run
-# without a Gateway restart. The default (1000) matches the web UI's
-# interactive budget so scheduled and interactive runs behave identically out
-# of the box. Values above max_recursion_limit are clamped.
-#
-# The scheduler is single-instance by default. Set multi_instance: true only
-# when every Gateway instance shares Postgres, run ownership heartbeats, and
-# database-backed run events; startup recovery then preserves live peer runs.
-#
-# scheduler:
-#   enabled: false               # Master switch for the background poller
-#   multi_instance: false        # Opt into lease-aware recovery across Gateway instances
-#   poll_interval_seconds: 5     # How often to scan for due tasks
-#   lease_seconds: 120           # Claim lease; a crashed process's task becomes reclaimable after this
-#   max_concurrent_runs: 3       # Global cap on launching/running scheduled runs across multi-instance Pods
-#   queue_timeout_seconds: 3600  # Maximum durable queue wait before an occurrence fails
-#   min_once_delay_seconds: 60   # Floor for one-time run_at offset and interval every_seconds
-#   recursion_limit: 1000        # LangGraph super-step cap for scheduled runs (matches the web UI)
 scheduler:
   enabled: false
   multi_instance: false       # Opt into lease-aware recovery across Gateway instances

@@ -76,16 +76,7 @@ from deerflow.tracing import build_tracing_callbacks
 
 logger = logging.getLogger(__name__)
 
-_BOOTSTRAP_SKILL_NAMES = {"bootstrap"}
 _NON_INTERACTIVE_DISABLED_TOOL_NAMES = frozenset({"ask_clarification"})
-
-# Channels whose inbound messages originate from untrusted external
-# commenters (anyone on a GitHub repo, etc.) and whose run context is
-# therefore unsafe for admin-shaped tools like ``update_agent``. The
-# corresponding gate lives in :func:`_make_lead_agent`; the channel name
-# itself is plumbed into ``run_context`` by
-# ``ChannelManager._resolve_run_params``.
-_WEBHOOK_CHANNELS: frozenset[str] = frozenset({"github"})
 
 
 @dataclass(frozen=True)
@@ -196,24 +187,6 @@ def _append_memory_tools_without_name_conflicts(tools: list) -> None:
     from deerflow.agents.memory.tools import get_memory_tools
 
     _append_named_tools_without_conflicts(tools, get_memory_tools(), kind="Memory")
-
-
-def _append_project_document_tools_if_pinned(tools: list, cfg: dict) -> None:
-    """Append the project shelf tools only for runs with a pinned project context.
-
-    Registration follows the admission-pinned ``PROJECT_CONTEXT_KEY`` and
-    nothing else (§10.11): a non-project run never pays the tools' schema
-    tokens and never sees them, while a project run keeps them even when
-    instructions and shelf are both empty. The tools themselves read the same
-    pinned key at call time and fail closed without it.
-    """
-    from deerflow.runtime.context_keys import PROJECT_CONTEXT_KEY
-
-    if PROJECT_CONTEXT_KEY not in cfg:
-        return
-    from deerflow.projects.tools import get_project_document_tools
-
-    _append_named_tools_without_conflicts(tools, get_project_document_tools(), kind="Project document")
 
 
 def _get_runtime_config(config: RunnableConfig) -> dict:
@@ -771,9 +744,7 @@ def build_middlewares(
     )
 
 
-def _available_skill_names(agent_config, is_bootstrap: bool) -> set[str] | None:
-    if is_bootstrap:
-        return set(_BOOTSTRAP_SKILL_NAMES)
+def _available_skill_names(agent_config) -> set[str] | None:
     if agent_config and agent_config.skills is not None:
         return set(agent_config.skills)
     return None
@@ -916,7 +887,6 @@ def _complete_assembly(
 def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> LeadAgentAssembly:
     # Lazy import to avoid circular dependency
     from deerflow.tools import get_available_tools
-    from deerflow.tools.builtins import setup_agent, update_agent
     from deerflow.tools.builtins.tool_search import assemble_deferred_tools, build_mcp_routing_middleware, get_mcp_routing_hints_prompt_section
     from deerflow.tools.conversation import CONVERSATION_READER_CONTEXT_KEY
 
@@ -944,11 +914,10 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
         execution_capacity=subagent_execution_capacity,
     )
     max_total_subagents = cfg.get("max_total_subagents", _default_max_total_subagents(resolved_app_config))
-    is_bootstrap = cfg.get("is_bootstrap", False)
     non_interactive = bool(cfg.get("non_interactive", False))
     agent_name = validate_agent_name(cfg.get("agent_name"))
 
-    agent_config = load_agent_config(agent_name, user_id=resolved_user_id) if not is_bootstrap else None
+    agent_config = load_agent_config(agent_name, user_id=resolved_user_id)
     memory_enabled = getattr(agent_config, "memory_enabled", True) is not False
     # Keep compatibility with lightweight AgentConfig-shaped objects used by
     # integrations that predate caller-level subagent restrictions.
@@ -959,7 +928,7 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
     config.setdefault("configurable", {})["subagent_enabled"] = subagent_enabled
     if isinstance(config.get("context"), dict):
         config["context"]["subagent_enabled"] = subagent_enabled
-    available_skills = _available_skill_names(agent_config, is_bootstrap)
+    available_skills = _available_skill_names(agent_config)
     # Custom agent model from agent config (if any), or None to let _resolve_model_name pick the default
     agent_model_name = agent_config.model if agent_config and agent_config.model else None
 
@@ -1044,112 +1013,6 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
     skill_search_enabled = resolved_app_config.skills.deferred_discovery
     container_base_path = resolved_app_config.skills.container_path
 
-    if is_bootstrap:
-        # Special bootstrap agent with minimal prompt for initial custom agent creation flow
-        # Keep the bootstrap skill set intentionally narrow so agent creation
-        # remains deterministic before the custom agent's own config exists.
-        bootstrap_skills = [s for s in enabled_skills if s.name in _BOOTSTRAP_SKILL_NAMES]
-        skill_setup = build_skill_search_setup(
-            bootstrap_skills,
-            enabled=skill_search_enabled,
-            container_base_path=container_base_path,
-        )
-        raw_tools = get_available_tools(model_name=model_name, subagent_enabled=subagent_enabled, app_config=resolved_app_config) + [setup_agent]
-        configured_tools = raw_tools
-        if non_interactive:
-            configured_tools = [tool for tool in configured_tools if tool.name not in _NON_INTERACTIVE_DISABLED_TOOL_NAMES]
-        authorization_candidates = [*configured_tools]
-        if skill_setup.describe_skill_tool:
-            authorization_candidates.append(skill_setup.describe_skill_tool)
-        if memory_enabled and should_use_memory_tools(resolved_app_config.memory):
-            _append_memory_tools_without_name_conflicts(authorization_candidates)
-        _append_project_document_tools_if_pinned(authorization_candidates, cfg)
-        append_task_continuity_tools(authorization_candidates, resolved_app_config)
-        configured_tool_ids = {id(tool) for tool in configured_tools}
-        authorized_tools, _authz_provider = apply_tool_authorization(
-            authorization_candidates,
-            context=cfg,
-            app_config=resolved_app_config,
-        )
-        configured_tools = [tool for tool in authorized_tools if id(tool) in configured_tool_ids]
-        late_tools = [tool for tool in authorized_tools if id(tool) not in configured_tool_ids]
-        final_tools, setup = assemble_deferred_tools(configured_tools, enabled=resolved_app_config.tool_search.enabled)
-        final_tools.extend(late_tools)
-        mcp_routing_middleware = build_mcp_routing_middleware(
-            final_tools,
-            setup,
-            top_k=resolved_app_config.tool_search.auto_promote_top_k,
-        )
-        middlewares = build_middlewares(
-            config,
-            model_name=model_name,
-            agent_name=agent_name,
-            available_skills=set(_BOOTSTRAP_SKILL_NAMES),
-            memory_enabled=memory_enabled,
-            owns_agent_skill_projection=False,
-            app_config=resolved_app_config,
-            deferred_setup=setup,
-            mcp_routing_middleware=mcp_routing_middleware,
-            user_id=resolved_user_id,
-            authorization_provider=_authz_provider,
-            subagent_execution_capacity=subagent_execution_capacity,
-        )
-        system_prompt = apply_prompt_template(
-            subagent_enabled=subagent_enabled,
-            max_concurrent_subagents=max_concurrent_subagents,
-            max_total_subagents=max_total_subagents,
-            available_skills=set(_BOOTSTRAP_SKILL_NAMES),
-            app_config=resolved_app_config,
-            deferred_names=setup.deferred_names,
-            user_id=resolved_user_id,
-            skill_names=skill_setup.skill_names or None,
-            allowed_subagents=allowed_subagents,
-            subagent_execution_capacity=subagent_execution_capacity,
-            memory_enabled=memory_enabled,
-        )
-        graph = create_agent(
-            model=create_chat_model(name=model_name, thinking_enabled=thinking_enabled, app_config=resolved_app_config, attach_tracing=False),
-            tools=final_tools,
-            middleware=normalize_middleware_state_schemas(middlewares, mode),
-            system_prompt=system_prompt,
-            state_schema=get_thread_state_schema(mode),
-        )
-        return _complete_assembly(
-            config=config,
-            graph=graph,
-            namespace="deerflow",
-            agent_name="bootstrap",
-            requested_model=requested_model_name or agent_model_name,
-            effective_model=model_name,
-            model_config=model_config,
-            thinking_enabled=thinking_enabled,
-            reasoning_effort=None,
-            rendered_base_prompt=system_prompt,
-            tools=final_tools,
-            middlewares=middlewares,
-            deferred_names=setup.deferred_names,
-            enabled_skills=bootstrap_skills,
-            effective_policies={
-                "bootstrap": True,
-                "non_interactive": non_interactive,
-                "plan_mode": is_plan_mode,
-                "subagents": _subagent_release_policy(
-                    resolved_app_config,
-                    enabled=subagent_enabled,
-                    max_concurrent=max_concurrent_subagents,
-                    max_total=max_total_subagents,
-                    allowed_subagents=allowed_subagents,
-                ),
-                "deferred_tools": {
-                    "enabled": resolved_app_config.tool_search.enabled,
-                    "catalog_hash": setup.catalog_hash,
-                },
-                "deferred_skills": skill_search_enabled,
-            },
-        )
-
-    # Custom agents can update their own SOUL.md / config via update_agent.
-    # The default agent (no agent_name) does not see this tool.
     # Build skill search setup from the agent-available skills. The same
     # allowlist is enforced by the runtime policy resolver, so describe_skill
     # cannot expose a skill this custom agent is not allowed to activate.
@@ -1158,22 +1021,6 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
         enabled=skill_search_enabled,
         container_base_path=container_base_path,
     )
-    #
-    # Withhold ``update_agent`` from runs triggered by webhook channels
-    # (currently only ``github``). Webhook prompts come from arbitrary
-    # external commenters — anyone who can post on a configured repo and
-    # types ``@<bot>`` clears the trigger gate. Exposing the tool there
-    # gives that commenter a path to mutate the agent's ``tool_groups``
-    # / ``SOUL.md`` / ``model``, and the change persists for every
-    # subsequent run. Self-mutation belongs in operator-trusted surfaces
-    # (the chat UI, the HTTP API), not in webhook fan-out.
-    #
-    # The channel name is plumbed into ``run_context`` by
-    # ``ChannelManager._resolve_run_params``; bootstrap and direct invocations
-    # leave it unset, so ``update_agent`` remains available there.
-    channel_name = cfg.get("channel_name")
-    is_webhook_channel = channel_name in _WEBHOOK_CHANNELS
-    extra_tools = [update_agent] if agent_name and not is_webhook_channel else []
     # Default lead agent (unchanged behavior)
     raw_tools = get_available_tools(
         model_name=model_name,
@@ -1182,7 +1029,7 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
         include_conversation_reader=callable(cfg.get(CONVERSATION_READER_CONTEXT_KEY)) and not bool(cfg.get("is_subagent")),
         app_config=resolved_app_config,
     )
-    configured_tools = raw_tools + extra_tools
+    configured_tools = list(raw_tools)
     if non_interactive:
         configured_tools = [tool for tool in configured_tools if tool.name not in _NON_INTERACTIVE_DISABLED_TOOL_NAMES]
     authorization_candidates = [*configured_tools]
@@ -1190,7 +1037,6 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
         authorization_candidates.append(skill_setup.describe_skill_tool)
     if memory_enabled and should_use_memory_tools(resolved_app_config.memory):
         _append_memory_tools_without_name_conflicts(authorization_candidates)
-    _append_project_document_tools_if_pinned(authorization_candidates, cfg)
     append_task_continuity_tools(authorization_candidates, resolved_app_config)
     configured_tool_ids = {id(tool) for tool in configured_tools}
     authorized_tools, _authz_provider = apply_tool_authorization(

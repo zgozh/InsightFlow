@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -18,7 +19,6 @@ from app.gateway.deps import (
     get_scheduled_task_service,
     get_thread_store,
 )
-from deerflow.config.agents_config import AGENT_NAME_PATTERN, load_agent_config
 from deerflow.persistence.scheduled_tasks import ActiveScheduledTaskMutationConflict
 from deerflow.persistence.scheduled_tasks.model import ScheduledTaskRunStatus
 from deerflow.scheduler.schedules import (
@@ -35,6 +35,9 @@ from deerflow.utils.thread_id import ThreadId
 router = APIRouter(prefix="/api", tags=["scheduled-tasks"])
 
 _DEFAULT_ASSISTANT_ID = "lead_agent"
+# Same shape the custom-agent name validator used (``AGENT_NAME_PATTERN``), kept
+# here so the two rejection messages stay distinguishable.
+_ASSISTANT_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]+$")
 
 
 def _active_occurrence_conflict_detail(status: str) -> str:
@@ -59,11 +62,14 @@ def _validate_interval_seconds(schedule_spec: dict[str, Any], min_seconds: int) 
     return every_seconds
 
 
-async def resolve_scheduled_task_assistant_id(raw: str | None, *, user_id: str) -> str:
-    """Return a stored assistant id, defaulting to lead_agent.
+async def resolve_scheduled_task_assistant_id(raw: str | None) -> str:
+    """Return the assistant id for a scheduled task.
 
-    Custom names are normalized the same way IM/run creation already does
-    (lowercase, underscore to hyphen) and must exist for this owner.
+    Phase 5 removed Custom/Managed Agents, so the default lead agent is the
+    only runtime a scheduled task may target. A well-formed non-default value
+    is still rejected loudly ("Unknown assistant_id") rather than silently
+    pinned to the default: an operator whose config still names a custom agent
+    must see the change instead of getting a task that runs something else.
     """
     if raw is None:
         return _DEFAULT_ASSISTANT_ID
@@ -73,20 +79,12 @@ async def resolve_scheduled_task_assistant_id(raw: str | None, *, user_id: str) 
     normalized = value.lower().replace("_", "-")
     if normalized == _DEFAULT_ASSISTANT_ID.replace("_", "-"):
         return _DEFAULT_ASSISTANT_ID
-    if not AGENT_NAME_PATTERN.fullmatch(normalized):
+    if not _ASSISTANT_ID_PATTERN.fullmatch(normalized):
         raise HTTPException(
             status_code=422,
-            detail=(f"Invalid assistant_id {raw!r}. Use 'lead_agent' or a custom agent name containing only letters, digits, and hyphens."),
+            detail=(f"Invalid assistant_id {raw!r}. Use 'lead_agent'."),
         )
-    try:
-        config = await asyncio.to_thread(load_agent_config, normalized, user_id=user_id)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=422, detail=f"Unknown assistant_id {raw!r}") from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    if config is None:
-        raise HTTPException(status_code=422, detail=f"Unknown assistant_id {raw!r}")
-    return normalized
+    raise HTTPException(status_code=422, detail=f"Unknown assistant_id {raw!r}")
 
 
 async def _ensure_task_mutable(task: dict[str, Any], repo) -> None:
@@ -230,10 +228,7 @@ async def create_scheduled_task(request: Request, body: ScheduledTaskCreateReque
             detail=(f"once schedule must be at least {config.scheduler.min_once_delay_seconds} seconds in the future"),
         )
 
-    assistant_id = await resolve_scheduled_task_assistant_id(
-        body.assistant_id,
-        user_id=str(user.id),
-    )
+    assistant_id = await resolve_scheduled_task_assistant_id(body.assistant_id)
     return await repo.create(
         task_id=f"task-{uuid.uuid4().hex}",
         user_id=str(user.id),
@@ -278,10 +273,7 @@ async def update_scheduled_task(task_id: str, request: Request, body: ScheduledT
 
     updates = body.model_dump(exclude_none=True)
     if "assistant_id" in updates:
-        updates["assistant_id"] = await resolve_scheduled_task_assistant_id(
-            updates["assistant_id"],
-            user_id=str(user.id),
-        )
+        updates["assistant_id"] = await resolve_scheduled_task_assistant_id(updates["assistant_id"])
     if "context_mode" in updates:
         if updates["context_mode"] not in {"fresh_thread_per_run", "reuse_thread"}:
             raise HTTPException(status_code=422, detail="Unsupported context_mode")

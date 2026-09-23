@@ -12,13 +12,9 @@ from deerflow.client import DeerFlowClient
 from deerflow.config.extensions_config import ExtensionsConfig
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-MIDDLEWARE_GUIDES = (
-    Path("backend/CONTRIBUTING.md"),
-    Path("frontend/src/content/en/harness/customization.mdx"),
-    Path("frontend/src/content/en/harness/middlewares.mdx"),
-    Path("frontend/src/content/zh/harness/customization.mdx"),
-    Path("frontend/src/content/zh/harness/middlewares.mdx"),
-)
+# Phase 5 删除了 nextra 文档站（`frontend/src/content/**`），因此这里只剩仓库内
+# 仍然存在的中间件指南；被删的四份 MDX 不再作为断言来源。
+MIDDLEWARE_GUIDES = (Path("backend/CONTRIBUTING.md"),)
 
 
 def _middleware_examples(path: Path) -> list[str]:
@@ -95,35 +91,6 @@ def test_middleware_placement_scope_is_explicit(path: Path) -> None:
     assert marker in " ".join(content.split())
 
 
-@pytest.mark.parametrize(
-    "path",
-    (
-        Path("frontend/src/content/en/harness/middlewares.mdx"),
-        Path("frontend/src/content/zh/harness/middlewares.mdx"),
-    ),
-    ids=str,
-)
-def test_middleware_order_includes_configured_extension_tail(path: Path) -> None:
-    content = " ".join((REPO_ROOT / path).read_text(encoding="utf-8").split())
-    markers = (
-        (
-            "`SkillToolPolicyMiddleware`",
-            "Configured extension middlewares (if any)",
-            "`TerminalResponseMiddleware`",
-            "`ModelLengthFinishReasonMiddleware`",
-        )
-        if "/en/" in path.as_posix()
-        else (
-            "`SkillToolPolicyMiddleware`",
-            "配置的扩展中间件（如有）",
-            "`TerminalResponseMiddleware`",
-            "`ModelLengthFinishReasonMiddleware`",
-        )
-    )
-    positions = [content.index(marker) for marker in markers]
-    assert positions == sorted(positions)
-
-
 @pytest.mark.parametrize("path", MIDDLEWARE_GUIDES, ids=str)
 def test_subagent_summarization_optionality_is_explicit(path: Path) -> None:
     content = " ".join((REPO_ROOT / path).read_text(encoding="utf-8").split())
@@ -132,63 +99,4 @@ def test_subagent_summarization_optionality_is_explicit(path: Path) -> None:
         if "/zh/" in path.as_posix()
         else "so configured middleware is followed by the optional safety guard, `DurableContextMiddleware`, optional `SummarizationMiddleware`, then `SubagentDateContextMiddleware` and `SystemMessageCoalescingMiddleware`."
     )
-    assert marker in content
-
-
-@pytest.mark.parametrize(
-    "path",
-    (
-        Path("frontend/src/content/en/harness/middlewares.mdx"),
-        Path("frontend/src/content/zh/harness/middlewares.mdx"),
-    ),
-    ids=str,
-)
-def test_runtime_middleware_summary_includes_current_guards(path: Path) -> None:
-    content = " ".join((REPO_ROOT / path).read_text(encoding="utf-8").split())
-    marker = (
-        "运行时中间件（`InputSanitizationMiddleware` 输入清理 → `ToolOutputBudgetMiddleware` 输出预算截断 → "
-        "`ToolResultSanitizationMiddleware` 工具结果清理，随后是线程数据、上传、沙箱、悬空工具调用修补和 LLM 错误处理；"
-        "工具回执（如启用）、授权/guardrail（如启用）、沙箱审计、读前写后（如启用）、工具进度（如启用）和工具错误处理随后执行）"
-        if "/zh/" in path.as_posix()
-        else (
-            "Runtime middlewares (`InputSanitizationMiddleware` for input sanitization → `ToolOutputBudgetMiddleware` "
-            "for output-budget truncation → `ToolResultSanitizationMiddleware` for tool-result sanitization, then thread data, "
-            "uploads, sandbox, dangling tool-call patching, and LLM error handling; tool receipts (if enabled), "
-            "authorization/guardrail (if enabled), sandbox audit, read-before-write (if enabled), tool progress (if enabled), "
-            "and tool error handling follow)"
-        )
-    )
-    assert marker in content
-
-
-@pytest.mark.parametrize(
-    "path",
-    (
-        Path("frontend/src/content/en/harness/middlewares.mdx"),
-        Path("frontend/src/content/zh/harness/middlewares.mdx"),
-    ),
-    ids=str,
-)
-def test_runtime_sanitization_and_budget_order_is_explicit(path: Path) -> None:
-    content = " ".join((REPO_ROOT / path).read_text(encoding="utf-8").split())
-    markers = (
-        "`InputSanitizationMiddleware`",
-        "`ToolOutputBudgetMiddleware`",
-        "`ToolResultSanitizationMiddleware`",
-    )
-    positions = [content.index(marker) for marker in markers]
-    assert positions == sorted(positions)
-
-
-@pytest.mark.parametrize(
-    "path",
-    (
-        Path("frontend/src/content/en/harness/middlewares.mdx"),
-        Path("frontend/src/content/zh/harness/middlewares.mdx"),
-    ),
-    ids=str,
-)
-def test_subagent_callout_does_not_overstate_lead_only_scope(path: Path) -> None:
-    content = " ".join((REPO_ROOT / path).read_text(encoding="utf-8").split())
-    marker = "记忆、标题生成和澄清等其他 Lead Agent 专属中间件不会在子 Agent 链中运行。" if "/zh/" in path.as_posix() else "other Lead-Agent-specific middlewares such as memory, title generation, and clarification do not run there."
     assert marker in content

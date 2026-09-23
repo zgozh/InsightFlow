@@ -25,19 +25,19 @@ baseline:
   tests: 1078
   text_loc: 717429
 forecast_after_all_batches: &id001
-  tracked: 2267
+  tracked: 2266
   source: 1058
-  tests: 873
-  text_loc: 542536
+  tests: 872
+  text_loc: 542452
 target_reachable: false
-target_verdict: 五批共删除 806 tracked / 341 source / 205 tests / 174893 text-LOC；剩余 2267 tracked / 1058 source / 873 tests / 542536 text-LOC。相对 tracked 目标区间 850–1050 差 1217–1417，相对硬上限 1200 仍高 1067；生产源码比目标上限 650 高 408；测试比目标上限 350 高 523；有效文本 LOC 比目标上限 220k 高 322536。剩余部分由 KEEP 契约的不可删成本构成，见 keep_cost_breakdown。
+target_verdict: 五批共删除 807 tracked / 341 source / 206 tests / 174977 text-LOC；剩余 2266 tracked / 1058 source / 872 tests / 542452 text-LOC。相对 tracked 目标区间 850–1050 差 1216–1416，相对硬上限 1200 仍高 1066；生产源码比目标上限 650 高 408；测试比目标上限 350 高 522；有效文本 LOC 比目标上限 220k 高 322452。剩余部分由 KEEP 契约的不可删成本构成，见 keep_cost_breakdown。
 keep_cost_breakdown:
 - area: backend/tests（Phase 0–4 安全与运行期回归的唯一载体）
-  tracked: 655
+  tracked: 654
   source: 0
-  tests: 655
-  text_loc: 272052
-  why_kept: KEEP 契约内的不可删成本；655 tracked 文件
+  tests: 654
+  text_loc: 271968
+  why_kept: KEEP 契约内的不可删成本；654 tracked 文件
 - area: backend/packages/harness/deerflow/persistence（26 个 Alembic revision + ORM model 必须与 create_all 集合一致）
   tracked: 81
   source: 50
@@ -75,11 +75,11 @@ keep_cost_breakdown:
   text_loc: 49605
   why_kept: KEEP 契约内的不可删成本；410 tracked 文件
 - area: 合计（删除后仍保留的全部 tracked 文件）
-  tracked: 2267
+  tracked: 2266
   source: 1058
-  tests: 873
-  text_loc: 542536
-  why_kept: baseline tracked=3073 → 保留 2267；text-LOC 717429 → 542536。剩余部分不是「尚未删干净」，而是 KEEP 契约指定的产品面本体。
+  tests: 872
+  text_loc: 542452
+  why_kept: baseline tracked=3073 → 保留 2266；text-LOC 717429 → 542452。剩余部分不是「尚未删干净」，而是 KEEP 契约指定的产品面本体。
 batches:
 - id: B1
   objective: 删除 InsightFlow 最终产品面之外的全部前端路由、孤儿营销组件与上游品牌资产，并把共享外壳从这些路由上解耦。
@@ -466,6 +466,50 @@ batches:
     change: 删除 public/demo 夹具同步断言与 pathOfPublicDemoThread 用例
   - path: frontend/tests/unit/scripts/measure-route-assets.test.ts
     change: ROUTES 断言改为 metrics 且不含 docs/blog
+  - path: backend/tests/test_aio_sandbox_provider.py
+    change: 删除 lark-cli 挂载/凭据树断言，保留 AIO provider 覆盖
+  - path: backend/tests/test_authorization_route_permissions.py
+    change: 删除 projects:* 权限断言，保留 KEEP 路由权限覆盖
+  - path: backend/tests/test_command_tool_result_semantics.py
+    change: 删除 setup_agent 用例，保留命令工具语义覆盖
+  - path: backend/tests/test_features_router.py
+    change: 删除 browser_control/agents 能力键断言，保留 KEEP 能力键覆盖
+  - path: backend/tests/test_gateway_lifespan_shutdown.py
+    change: 删除 channels 生命周期桩与断言，保留其余 lifespan 覆盖
+  - path: backend/tests/test_lead_agent_skills.py
+    change: 删除 managed subagent 技能来源断言，保留 lead agent 技能覆盖
+  - path: backend/tests/test_memory_cancel_by_agent.py
+    change: 删除 managed subagent 取消用例，保留内存/运行期取消覆盖
+  - path: backend/tests/test_memory_thread_meta_isolation.py
+    change: 删除 projects store 依赖，保留 thread_meta 隔离覆盖
+  - path: backend/tests/test_monocle_tracing.py
+    change: 删除 channels 装配桩，保留 tracing 装配覆盖
+  - path: backend/tests/test_pat_auth.py
+    change: 删除 projects 路由 PAT 断言，保留其余 PAT 边界覆盖
+  - path: backend/tests/test_runtime_lifecycle_e2e.py
+    change: 删除 projects/channels 生命周期用例，保留 run/SSE 覆盖
+  - path: backend/tests/test_scheduled_task_router_behavior.py
+    change: 删除 custom agent 校验用例，保留调度器行为覆盖
+  - path: backend/tests/test_setup_wizard.py
+    change: 删除 channels provider 用例，保留 KEEP provider 覆盖
+  - path: backend/tests/test_thread_id_route_contract.py
+    change: 删除 projects/channels 路由契约断言，保留 KEEP 路由覆盖
+  - path: backend/tests/test_thread_meta_repo.py
+    change: 删除 projects 关联断言，保留 thread_meta 仓库覆盖
+  - path: backend/tests/test_threads_router.py
+    change: 删除 project 过滤/move 用例，保留 thread ownership 覆盖
+  - path: backend/tests/test_tool_args_schema_no_pydantic_warning.py
+    change: 删除 setup_agent 用例，保留参数 schema 覆盖
+  - path: backend/app/gateway/auth/pat.py
+    change: PAT scope 白名单删除 projects:read/write/delete 与 projects/trash/move 路由规则
+  - path: backend/packages/harness/deerflow/config/reload_boundary.py
+    change: 启动必需字段登记表删除 agent_storage/channels/channel_connections/dedupe_storage
+  - path: backend/tests/test_reload_boundary.py
+    change: 字段描述表去掉 channel_connections，保留其余 KEEP 字段断言
+  - path: backend/tests/test_agent_guidance_check.py
+    change: 指南清单删除已删的 app/channels/AGENTS.md，保留其余指南预算断言
+  - path: backend/tests/test_middleware_documentation.py
+    change: B1 遗留修复：指南来源收敛为 backend/CONTRIBUTING.md，删除只针对已删 MDX 的 4 个函数
   keep_exceptions:
   - frontend/src/components/workspace/channels/buzz-provider-icon.LICENSE.txt
   - frontend/src/components/workspace/channels/buzz-provider-icon.tsx
@@ -699,6 +743,7 @@ batches:
   - backend/tests/test_agent_store_sql.py
   - backend/tests/test_agents_router_model_settings.py
   - backend/tests/test_assistants_compat.py
+  - backend/tests/test_browser_automation.py
   - backend/tests/test_browser_close_cancellation.py
   - backend/tests/test_browser_router.py
   - backend/tests/test_buzz_channel.py
@@ -747,6 +792,7 @@ batches:
   - backend/tests/test_project_trash.py
   - backend/tests/test_projects_config.py
   - backend/tests/test_projects_context.py
+  - backend/tests/test_projects_repo.py
   - backend/tests/test_projects_router.py
   - backend/tests/test_runtime_channel_config_merge.py
   - backend/tests/test_setup_agent_e2e_user_isolation.py
@@ -899,6 +945,7 @@ batches:
   - backend/tests/test_agent_store_sql.py
   - backend/tests/test_agents_router_model_settings.py
   - backend/tests/test_assistants_compat.py
+  - backend/tests/test_browser_automation.py
   - backend/tests/test_browser_close_cancellation.py
   - backend/tests/test_browser_router.py
   - backend/tests/test_buzz_channel.py
@@ -947,6 +994,7 @@ batches:
   - backend/tests/test_project_trash.py
   - backend/tests/test_projects_config.py
   - backend/tests/test_projects_context.py
+  - backend/tests/test_projects_repo.py
   - backend/tests/test_projects_router.py
   - backend/tests/test_runtime_channel_config_merge.py
   - backend/tests/test_setup_agent_e2e_user_isolation.py
@@ -983,20 +1031,20 @@ batches:
   cumulative_gates:
   - B1+B2 之后 backend focused 与 KEEP 前端 E2E 全绿
   rollback: git revert <B2 commit>（该批一个 commit，revert 后 KEEP 主链自洽）
-  forecast_tracked_deleted: 171
+  forecast_tracked_deleted: 173
   forecast_source_deleted: 78
-  forecast_tests_deleted: 83
-  forecast_text_loc_deleted: 79507
+  forecast_tests_deleted: 85
+  forecast_text_loc_deleted: 80766
   before:
     tracked: 2787
     source: 1275
     tests: 1027
     text_loc: 682663
   forecast_after:
-    tracked: 2616
+    tracked: 2614
     source: 1197
-    tests: 944
-    text_loc: 603156
+    tests: 942
+    text_loc: 601897
 - id: B3
   objective: 删除 ACP/durable batch、远程 sandbox 与 provisioner/Helm、web search/model/memory 的备用实现，只留下默认配置真正加载的那一条主链。
   delete_roots:
@@ -1201,7 +1249,6 @@ batches:
   - backend/tests/test_bench_sandbox_provider.py
   - backend/tests/test_boxlite_provider.py
   - backend/tests/test_brave_tools.py
-  - backend/tests/test_browser_automation.py
   - backend/tests/test_browserless_client.py
   - backend/tests/test_claude_provider_oauth_billing.py
   - backend/tests/test_claude_provider_prompt_caching.py
@@ -1328,10 +1375,6 @@ batches:
     change: 把 claude_provider 模型改为 KEEP 的 OpenAI-compatible 模型
   - path: backend/tests/test_tool_result_sanitization_middleware.py
     change: 删除 browserless 工具用例，保留净化中间件覆盖
-  - path: backend/tests/test_command_tool_result_semantics.py
-    change: 删除 setup_agent_tool 用例，保留命令工具语义覆盖
-  - path: backend/tests/test_tool_args_schema_no_pydantic_warning.py
-    change: 删除 setup/update_agent_tool 用例，保留参数 schema 覆盖
   - path: backend/tests/test_doctor.py
     change: 删除 check_image_search 用例，保留其余 doctor 检查覆盖
   - path: frontend/src/core/tools/utils.ts
@@ -1400,7 +1443,6 @@ batches:
   - backend/tests/test_bench_sandbox_provider.py
   - backend/tests/test_boxlite_provider.py
   - backend/tests/test_brave_tools.py
-  - backend/tests/test_browser_automation.py
   - backend/tests/test_browserless_client.py
   - backend/tests/test_claude_provider_oauth_billing.py
   - backend/tests/test_claude_provider_prompt_caching.py
@@ -1469,20 +1511,20 @@ batches:
   cumulative_gates:
   - B1–B3 之后 backend focused + 前端 KEEP E2E 全绿
   rollback: git revert <B3 commit>（该批一个 commit，revert 后 KEEP 主链自洽）
-  forecast_tracked_deleted: 185
+  forecast_tracked_deleted: 184
   forecast_source_deleted: 87
-  forecast_tests_deleted: 59
-  forecast_text_loc_deleted: 47015
+  forecast_tests_deleted: 58
+  forecast_text_loc_deleted: 45840
   before:
-    tracked: 2616
+    tracked: 2614
     source: 1197
-    tests: 944
-    text_loc: 603156
+    tests: 942
+    text_loc: 601897
   forecast_after:
-    tracked: 2431
+    tracked: 2430
     source: 1110
-    tests: 885
-    text_loc: 556141
+    tests: 884
+    text_loc: 556057
 - id: B4
   objective: 删除 Skill 平台与媒体技能、移除随之失去最后一个 importer 的依赖与配置键、同步 CI 与文档，并把版本契约从三源收敛为两源。
   delete_roots:
@@ -1730,15 +1772,15 @@ batches:
   forecast_tests_deleted: 11
   forecast_text_loc_deleted: 11834
   before:
-    tracked: 2431
+    tracked: 2430
     source: 1110
-    tests: 885
-    text_loc: 556141
+    tests: 884
+    text_loc: 556057
   forecast_after:
-    tracked: 2328
+    tracked: 2327
     source: 1072
-    tests: 874
-    text_loc: 544307
+    tests: 873
+    text_loc: 544223
 - id: B5
   objective: 清除孤儿引用、死 i18n 键、被删主题的历史文档与实验包袱，更新 README/AGENTS/文档，并对最终规模做一次对账。
   delete_roots:
@@ -1836,10 +1878,10 @@ batches:
   forecast_tests_deleted: 1
   forecast_text_loc_deleted: 1771
   before:
-    tracked: 2328
+    tracked: 2327
     source: 1072
-    tests: 874
-    text_loc: 544307
+    tests: 873
+    text_loc: 544223
   forecast_after: *id001
 keep_whitelist:
   gateway_routers:

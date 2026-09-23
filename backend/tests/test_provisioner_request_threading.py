@@ -207,8 +207,6 @@ async def test_capacity_upgrade_preserves_peer_pod_after_discovery_error(monkeyp
     monkeypatch.setattr(provider_mod, "wait_for_sandbox_ready_async", AsyncMock(return_value=True))
     monkeypatch.setattr(provider_mod, "AioSandbox", MagicMock())
     monkeypatch.setattr(new, "_get_extra_mounts", lambda *_a, **_kw: [])
-    monkeypatch.setattr(new, "_lark_integration_active", lambda *_a: False)
-    monkeypatch.setattr(new, "_lark_broker_active", lambda *_a: False)
 
     async def acquire():
         if async_acquire:

@@ -3,24 +3,18 @@
 ``TraceMiddleware`` covers Gateway HTTP traffic (``test_trace_middleware.py``)
 and ``DeerFlowClient.stream`` covers embedded callers
 (``test_client_langfuse_metadata.py``). The remaining ways work enters DeerFlow
-hold no HTTP request at all: the scheduled-task poller, MCP task notification
-runs, and IM channels, which keep long-lived provider connections. Each must
-bind a trace id of its own, scoped to one unit of work, or everything
-downstream falls back to an unattributed id.
+hold no HTTP request at all: the scheduled-task poller and MCP task
+notification runs. Each must bind a trace id of its own, scoped to one unit of
+work, or everything downstream falls back to an unattributed id.
 """
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from app.channels.manager import ChannelManager
-from app.channels.message_bus import InboundMessage, MessageBus
-from app.channels.store import ChannelStore
 from app.scheduler.service import ScheduledTaskService
 from deerflow.config.app_config import AppConfig, reset_app_config, set_app_config
 from deerflow.trace_context import get_current_trace_id, request_trace_context
@@ -178,48 +172,8 @@ async def test_manual_trigger_keeps_the_requesting_trace():
 
 
 # --------------------------------------------------------------------------
-# IM channels
+# Run launchers
 # --------------------------------------------------------------------------
-
-
-def _inbound(index: int) -> InboundMessage:
-    return InboundMessage(
-        channel_name="slack",
-        chat_id="C1",
-        user_id="U1",
-        text=f"message-{index}",
-        metadata={},
-    )
-
-
-@pytest.mark.asyncio
-async def test_inbound_messages_are_handled_under_distinct_trace_scopes(tmp_path: Path):
-    """Channels hold long-lived provider connections, so no ASGI middleware
-    ever runs for them, and one worker task serves many messages in sequence."""
-    bus = MessageBus(inbound_queue_maxsize=4)
-    manager = ChannelManager(
-        bus=bus,
-        store=ChannelStore(path=tmp_path / "store.json"),
-        max_concurrency=1,
-    )
-    seen: list[str | None] = []
-
-    async def capture_handler(msg: InboundMessage) -> None:
-        seen.append(get_current_trace_id())
-
-    manager._handle_message = capture_handler  # type: ignore[method-assign]
-    await manager.start()
-    try:
-        await bus.publish_inbound(_inbound(0))
-        await bus.publish_inbound(_inbound(1))
-        async with asyncio.timeout(2):
-            while len(seen) < 2:
-                await asyncio.sleep(0)
-    finally:
-        await manager.stop()
-
-    assert all(seen), "an inbound message must not be handled without a trace id"
-    assert seen[0] != seen[1], "each message is its own unit of work"
     assert get_current_trace_id() is None
 
 

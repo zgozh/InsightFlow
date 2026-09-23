@@ -1,5 +1,4 @@
 from types import SimpleNamespace
-from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -10,9 +9,6 @@ from app.gateway.routers import features
 
 def _app_with_config(
     *,
-    agents_api_enabled: bool,
-    browser_enabled: bool = False,
-    browser_extra: dict | None = None,
     mcp_tasks_available: bool = False,
     subagent_batches_available: bool = False,
     subagent_batch_repo_available: bool | None = None,
@@ -26,12 +22,9 @@ def _app_with_config(
     app.state.subagent_batch_repo = object() if subagent_batch_repo_available else None
     app.include_router(features.router)
     tools = []
-    if browser_enabled:
-        tools.append(SimpleNamespace(name="browser_navigate", use="deerflow.community.browser:browser_navigate_tool", model_extra=browser_extra or {}))
     if conversation_references_enabled:
         tools.append(SimpleNamespace(name="read_conversation", use="deerflow.tools.conversation:read_conversation", model_extra={}))
     fake_config = SimpleNamespace(
-        agents_api=SimpleNamespace(enabled=agents_api_enabled),
         tools=tools,
         subagent_runtime=SimpleNamespace(max_running=3),
     )
@@ -39,31 +32,13 @@ def _app_with_config(
     return app
 
 
-def test_features_reports_agents_api_enabled() -> None:
-    with TestClient(_app_with_config(agents_api_enabled=True)) as client:
-        response = client.get("/api/features")
-    assert response.status_code == 200
-    assert response.json() == {
-        "agents_api": {"enabled": True},
-        "browser_control": {"enabled": False},
-        "mcp_tasks": {"enabled": False},
-        "subagent_batches": {
-            "enabled": False,
-            "repository_available": False,
-            "worker_running": False,
-            "max_running": 3,
-        },
-        "conversation_references": {"enabled": False, "max_references": 3},
-    }
-
-
-def test_features_reports_agents_api_disabled() -> None:
-    with TestClient(_app_with_config(agents_api_enabled=False)) as client:
+def test_features_reports_agents_api_as_a_constant_false() -> None:
+    """The custom-agent API was removed in Phase 5; the key stays for the frontend type."""
+    with TestClient(_app_with_config()) as client:
         response = client.get("/api/features")
     assert response.status_code == 200
     assert response.json() == {
         "agents_api": {"enabled": False},
-        "browser_control": {"enabled": False},
         "mcp_tasks": {"enabled": False},
         "subagent_batches": {
             "enabled": False,
@@ -73,17 +48,18 @@ def test_features_reports_agents_api_disabled() -> None:
         },
         "conversation_references": {"enabled": False, "max_references": 3},
     }
+    assert "browser_control" not in response.json()
 
 
 def test_features_reports_conversation_references_when_the_tool_is_configured() -> None:
-    with TestClient(_app_with_config(agents_api_enabled=True, conversation_references_enabled=True)) as client:
+    with TestClient(_app_with_config(conversation_references_enabled=True)) as client:
         response = client.get("/api/features")
     assert response.status_code == 200
     assert response.json()["conversation_references"] == {"enabled": True, "max_references": 3}
 
 
 def test_features_reports_mcp_tasks_startup_capability() -> None:
-    with TestClient(_app_with_config(agents_api_enabled=True, mcp_tasks_available=True)) as client:
+    with TestClient(_app_with_config(mcp_tasks_available=True)) as client:
         response = client.get("/api/features")
     assert response.status_code == 200
     assert response.json()["mcp_tasks"] == {"enabled": True}
@@ -92,7 +68,6 @@ def test_features_reports_mcp_tasks_startup_capability() -> None:
 def test_features_reports_subagent_batch_startup_capability() -> None:
     with TestClient(
         _app_with_config(
-            agents_api_enabled=True,
             subagent_batches_available=True,
         )
     ) as client:
@@ -109,7 +84,6 @@ def test_features_reports_subagent_batch_startup_capability() -> None:
 def test_features_distinguishes_batch_history_from_worker_availability() -> None:
     with TestClient(
         _app_with_config(
-            agents_api_enabled=True,
             subagent_batches_available=False,
             subagent_batch_repo_available=True,
         )
@@ -122,39 +96,3 @@ def test_features_distinguishes_batch_history_from_worker_availability() -> None
         "worker_running": False,
         "max_running": 3,
     }
-
-
-def test_features_reports_browser_control_enabled_when_configured_and_runtime_available() -> None:
-    with (
-        patch("app.gateway.browser_capability.importlib.util.find_spec", return_value=object()),
-        TestClient(_app_with_config(agents_api_enabled=True, browser_enabled=True)) as client,
-    ):
-        response = client.get("/api/features")
-    assert response.status_code == 200
-    assert response.json()["browser_control"] == {"enabled": True}
-
-
-def test_features_reports_browser_control_disabled_when_runtime_missing() -> None:
-    with (
-        patch("app.gateway.browser_capability.importlib.util.find_spec", return_value=None),
-        TestClient(_app_with_config(agents_api_enabled=True, browser_enabled=True)) as client,
-    ):
-        response = client.get("/api/features")
-    assert response.status_code == 200
-    assert response.json()["browser_control"] == {"enabled": False}
-
-
-def test_features_reports_browser_control_disabled_for_unguarded_cdp() -> None:
-    with (
-        patch("app.gateway.browser_capability.importlib.util.find_spec", return_value=object()),
-        TestClient(
-            _app_with_config(
-                agents_api_enabled=True,
-                browser_enabled=True,
-                browser_extra={"cdp_url": "http://127.0.0.1:9222"},
-            ),
-        ) as client,
-    ):
-        response = client.get("/api/features")
-    assert response.status_code == 200
-    assert response.json()["browser_control"] == {"enabled": False}

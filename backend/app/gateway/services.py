@@ -45,7 +45,6 @@ from deerflow.agents.middlewares.tool_transform_meta import TOOL_TRANSFORMS_KEY
 from deerflow.agents.middlewares.view_image_middleware import _IMAGE_CONTEXT_MESSAGE_MARKER_KEY
 from deerflow.config.app_config import get_app_config
 from deerflow.config.database_config import resolve_checkpoint_graph_cache_max
-from deerflow.projects.context import PROJECT_CONTEXT_MESSAGE_MARKER, resolve_project_context
 from deerflow.runtime import (
     END_SENTINEL,
     HEARTBEAT_SENTINEL,
@@ -134,10 +133,6 @@ _SERVER_OWNED_MESSAGE_METADATA_KEYS = (
             # A replayed message carrying it back would write a thread-scoped seq
             # into the checkpoint, which a fork then re-seeds and reassigns (#4380).
             MESSAGE_SEQ_KEY,
-            # The transient project-context request message marker (spec §12):
-            # a client-supplied copy must never survive into a run, where the
-            # renderer would treat the message as its own.
-            PROJECT_CONTEXT_MESSAGE_MARKER,
             SUBAGENT_TOOL_RECEIPTS_KEY,
             SUBAGENT_RECEIPT_VERDICT_KEY,
             SUBAGENT_ACCEPTANCE_VERDICT_KEY,
@@ -563,17 +558,16 @@ _SERVER_OWNED_RUNTIME_CONTEXT_KEYS: frozenset[str] = (
 # keeping secrets like ``github_token`` out of it avoids writing a
 # short-lived installation token into the checkpoint store.
 #
-#   ``github_token``         — App installation token minted by the GitHub
-#                              channel; the bash tool exposes it as
+#   ``github_token``         — installation token an App-backed caller mints;
+#                              the bash tool exposes it as
 #                              ``GH_TOKEN``/``GITHUB_TOKEN`` so ``gh`` and
 #                              ``git`` push as the bot, not the host user.
-#   ``disable_clarification`` — set for non-interactive channels (GitHub
-#                              webhooks) so ClarificationMiddleware proceeds
+#   ``disable_clarification`` — set for non-interactive callers (scheduled
+#                              runs) so ClarificationMiddleware proceeds
 #                              instead of dead-ending the run.
 #
-# Both are produced server-side by the channel run policies
-# (``ChannelManager._apply_channel_policy`` and ``app.gateway.github.run_policy``),
-# which reach the Gateway over the internally-authenticated request channel, so
+# Both are produced server-side by trusted internal callers, which reach the
+# Gateway over the internally-authenticated request channel, so
 # they are internal-only as well — see :data:`_INTERNAL_ONLY_CONTEXT_KEYS`.
 _CONTEXT_RUNTIME_ONLY_KEYS: frozenset[str] = frozenset({"github_token", "disable_clarification"})
 
@@ -1634,19 +1628,6 @@ async def start_run(
                         ),
                     ],
                 }
-        # Resolve and pin the thread's project context once per run (spec
-        # §7.1): middlewares and tools read only this server-owned snapshot —
-        # nothing re-resolves membership mid-run, and admission never writes
-        # membership (§10.7). Resolution failure degrades to unassigned with a
-        # warning inside the resolver; it never fails the run.
-        project_context = await resolve_project_context(
-            run_ctx.thread_store,
-            getattr(request.app.state, "project_repo", None),
-            thread_id,
-            getattr(request.app.state, "project_document_repo", None),
-        )
-        if project_context is not None:
-            config["context"][PROJECT_CONTEXT_KEY] = project_context
 
         async def run_after_metadata(record: RunRecord) -> None:
             metadata_task = asyncio.create_task(

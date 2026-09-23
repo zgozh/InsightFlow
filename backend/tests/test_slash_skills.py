@@ -7,7 +7,6 @@ import pytest
 from langchain.agents.middleware.types import ModelRequest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from app.channels.commands import KNOWN_CHANNEL_COMMANDS
 from deerflow.agents.middlewares import skill_activation_middleware as middleware_module
 from deerflow.agents.middlewares.skill_activation_middleware import SkillActivationMiddleware, is_slash_skill_activation_reminder
 from deerflow.config.extensions_config import ExtensionsConfig
@@ -95,8 +94,13 @@ def test_resolve_slash_skill_ignores_reserved_control_commands(tmp_path):
         assert resolve_slash_skill(f"/{command} create an agent", [skill]) is None
 
 
-def test_reserved_slash_skill_names_match_channel_commands():
-    assert RESERVED_SLASH_SKILL_NAMES == {command.removeprefix("/") for command in KNOWN_CHANNEL_COMMANDS}
+def test_reserved_slash_skill_names_are_control_commands():
+    """The reserved set is the framework control-command vocabulary.
+
+    The IM channel command source was removed in Phase 5, so the set is now
+    asserted directly: these names must never resolve to a skill.
+    """
+    assert RESERVED_SLASH_SKILL_NAMES == {"agent", "bootstrap", "goal", "help", "memory", "models", "new", "status"}
 
 
 def test_resolve_slash_skill_respects_available_skill_whitelist(tmp_path):
