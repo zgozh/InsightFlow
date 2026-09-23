@@ -121,10 +121,9 @@ def _bind_address(mapping: str) -> str | None:
 
 
 def test_dev_compose_env_files_are_optional():
-    """Missing .env files must not fail `docker compose -f docker/docker-compose-dev.yaml`."""
+    """开发 Compose 中现存 Gateway 与 Frontend 的 .env 均可缺省。"""
     compose = yaml.safe_load(COMPOSE_PATHS["dev"].read_text(encoding="utf-8"))
     expected = {
-        "provisioner": "../.env",
         "frontend": "../frontend/.env",
         "gateway": "../.env",
     }

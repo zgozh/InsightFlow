@@ -70,25 +70,49 @@ sandbox:
 
 
 def test_detect_mode_provisioner_with_url():
-    """AIO sandbox with provisioner_url should map to provisioner mode."""
+    """外部 provisioner URL 应在检测结果中与本地 AIO/DooD 区分。"""
     config = """
 sandbox:
   use: deerflow.community.aio_sandbox:AioSandboxProvider
-  provisioner_url: http://provisioner:8002
+  provisioner_url: https://provisioner.example.com
 """.strip()
 
     assert _detect_mode_with_config(config) == "provisioner"
 
 
 def test_detect_mode_ignores_commented_provisioner_url():
-    """Commented provisioner_url should not activate provisioner mode."""
+    """注释中的 provisioner_url 不应切换到外部模式。"""
     config = """
 sandbox:
   use: deerflow.community.aio_sandbox:AioSandboxProvider
-  # provisioner_url: http://provisioner:8002
+  # provisioner_url: https://provisioner.example.com
 """.strip()
 
     assert _detect_mode_with_config(config) == "aio"
+
+
+def test_detect_mode_ignores_provisioner_url_outside_sandbox():
+    """仅 sandbox 配置块中的 provisioner_url 会选择外部模式。"""
+    config = """
+sandbox:
+  use: deerflow.community.aio_sandbox:AioSandboxProvider
+other_service:
+  provisioner_url: https://provisioner.example.com
+""".strip()
+
+    assert _detect_mode_with_config(config) == "aio"
+
+
+def test_detect_mode_ignores_nested_sandbox_key():
+    """只识别根级 sandbox 配置，忽略其它配置节中的同名键。"""
+    config = """
+other_service:
+  sandbox:
+    use: deerflow.community.aio_sandbox:AioSandboxProvider
+    provisioner_url: https://provisioner.example.com
+""".strip()
+
+    assert _detect_mode_with_config(config) == "local"
 
 
 def test_detect_mode_unknown_provider_falls_back_to_local():
@@ -471,6 +495,75 @@ def _setup_deploy_worktree(tmp_path: Path) -> Path:
     (worktree / "extensions_config.json").write_text("{}\n", encoding="utf-8")
     (worktree / ".env").write_text("TEST=1\n", encoding="utf-8")
     return worktree
+
+
+def test_external_provisioner_docker_start_skips_host_socket_and_removed_service(tmp_path):
+    """外部 provisioner 启动应跳过宿主 socket 与仓库内已删服务。"""
+    tmp_root = Path(tmp_path)
+    _seed_compose_file(tmp_root)
+    _seed_env_examples(tmp_root)
+    (tmp_root / "config.yaml").write_text(
+        "sandbox:\n  use: deerflow.community.aio_sandbox:AioSandboxProvider\n  provisioner_url: https://provisioner.example.com\n",
+        encoding="utf-8",
+    )
+    capture_args = tmp_root / "compose_args.txt"
+
+    _run_docker_sh(
+        tmp_root,
+        f"""
+DEER_FLOW_DOCKER_SOCKET='{tmp_root / "missing.sock"}'
+COMPOSE_CMD=capture_compose
+capture_compose() {{ printf '%s\\n' "$*" > '{capture_args}'; }}
+start
+""",
+    )
+
+    compose_args = capture_args.read_text(encoding="utf-8")
+    assert "up --build" in compose_args
+    assert "docker-compose.dood.yaml" not in compose_args
+    assert "provisioner" not in compose_args.split()
+
+
+def test_external_provisioner_deploy_start_skips_host_socket_and_removed_service(tmp_path):
+    """生产启动的外部 provisioner 路径不应挂载 socket 或启动已删服务。"""
+    worktree = _setup_deploy_worktree(tmp_path)
+    (worktree / "config.yaml").write_text(
+        "sandbox:\n  use: deerflow.community.aio_sandbox:AioSandboxProvider\n  provisioner_url: https://provisioner.example.com\n",
+        encoding="utf-8",
+    )
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    capture_args = tmp_path / "docker_args.txt"
+    docker = bin_dir / "docker"
+    docker.write_text(
+        f'#!/usr/bin/env sh\nif [ "$1" = "info" ]; then exit 0; fi\nfor arg in "$@"; do printf "%s\\n" "$arg"; done > "{capture_args}"\nexit 0\n',
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+
+    bash_env = tmp_path / "env.sh"
+    bash_env.write_text("uname() { echo 'Linux'; }\n", encoding="utf-8")
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    env["BASH_ENV"] = str(bash_env)
+    env["DEER_FLOW_DOCKER_SOCKET"] = str(tmp_path / "missing.sock")
+    env["BETTER_AUTH_SECRET"] = "test-secret"
+    env["DEER_FLOW_INTERNAL_AUTH_TOKEN"] = "test-token"
+    env["UV_EXTRAS"] = "redis"
+
+    result = subprocess.run(
+        [BASH_EXECUTABLE, str(worktree / "scripts" / "deploy.sh"), "start"],
+        cwd=worktree,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    compose_args = capture_args.read_text(encoding="utf-8")
+    assert "up" in compose_args.split()
+    assert "docker-compose.dood.yaml" not in compose_args
+    assert "provisioner" not in compose_args.split()
 
 
 def test_aio_deploy_socket_preflight_allows_windows_when_docker_reachable(tmp_path):

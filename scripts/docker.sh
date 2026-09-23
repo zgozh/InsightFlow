@@ -172,31 +172,47 @@ load_proxy_env_from_dotenv() {
 
 detect_sandbox_mode() {
     local config_file="$PROJECT_ROOT/config.yaml"
-    local sandbox_use=""
+    local sandbox_mode=""
 
     if [ ! -f "$config_file" ]; then
         echo "local"
         return
     fi
 
-    sandbox_use=$(awk '
-        /^[[:space:]]*sandbox:[[:space:]]*$/ { in_sandbox=1; next }
+    sandbox_mode=$(awk '
+        /^sandbox:[[:space:]]*(#.*)?[[:space:]]*$/ { in_sandbox=1; next }
         in_sandbox && /^[^[:space:]#]/ { in_sandbox=0 }
         in_sandbox && /^[[:space:]]*use:[[:space:]]*/ {
             line=$0
             sub(/^[[:space:]]*use:[[:space:]]*/, "", line)
-            print line
-            exit
+            sub(/[[:space:]]+#.*$/, "", line)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+            sub(/^["\047]/, "", line)
+            sub(/["\047]$/, "", line)
+            sandbox_use=line
+            next
+        }
+        in_sandbox && /^[[:space:]]*provisioner_url:[[:space:]]*/ {
+            line=$0
+            sub(/^[[:space:]]*provisioner_url:[[:space:]]*/, "", line)
+            sub(/[[:space:]]+#.*$/, "", line)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+            sub(/^["\047]/, "", line)
+            sub(/["\047]$/, "", line)
+            if (line != "" && line != "null" && line != "~") has_provisioner_url=1
+        }
+        END {
+            if (sandbox_use ~ /deerflow.sandbox.local:LocalSandboxProvider/) {
+                print "local"
+            } else if (sandbox_use ~ /deerflow.community.aio_sandbox:AioSandboxProvider/) {
+                print has_provisioner_url ? "provisioner" : "aio"
+            } else {
+                print "local"
+            }
         }
     ' "$config_file")
 
-    if [[ "$sandbox_use" == *"deerflow.sandbox.local:LocalSandboxProvider"* ]]; then
-        echo "local"
-    elif [[ "$sandbox_use" == *"deerflow.community.aio_sandbox:AioSandboxProvider"* ]]; then
-        echo "aio"
-    else
-        echo "local"
-    fi
+    echo "$sandbox_mode"
 }
 
 # Cleanup function for Ctrl+C
@@ -309,10 +325,8 @@ start() {
 
     services="redis frontend gateway nginx"
 
-    # Only aio mode (AioSandboxProvider) needs the host
-    # Docker socket. Mount it via the opt-in docker-compose.dood.yaml overlay so
-    # the default (local) mode never exposes the host daemon.
-    # Mounting the socket = root-equivalent host control; see SECURITY.md.
+    # 只有未配置外部 provisioner_url 的本地 AIO/DooD 才挂载宿主 Docker socket。
+    # socket 等同于宿主高权限控制；安全边界见 SECURITY.md。
     if [ "$sandbox_mode" = "aio" ]; then
         local docker_socket="${DEER_FLOW_DOCKER_SOCKET:-/var/run/docker.sock}"
         if [ ! -S "$docker_socket" ]; then

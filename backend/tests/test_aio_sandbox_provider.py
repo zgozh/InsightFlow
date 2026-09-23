@@ -316,6 +316,8 @@ def test_get_user_skill_mounts_mounts_only_global_integrations(tmp_path, monkeyp
 
 def test_get_extra_mounts_payload_has_unique_container_paths(tmp_path, monkeypatch):
     """Full AIO mount composition must not emit duplicate container paths."""
+    # 该用例只核对客户端 payload 形状、五个 mount 路径集合与唯一性；服务端校验器已删除，
+    # 因此它不证明服务端验证或与任意外部 provisioner 的端到端兼容性。
     aio_mod = importlib.import_module("deerflow.community.aio_sandbox.aio_sandbox_provider")
     remote_backend = importlib.import_module("deerflow.community.aio_sandbox.remote_backend")
     skills_root = tmp_path / "skills"

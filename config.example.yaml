@@ -893,13 +893,11 @@ sandbox:
 #     temporary_grant_ttl: 300          # 30-3600 seconds
 #     proxy_image: ghcr.io/bytedance/deer-flow-sandbox-network-proxy:latest
 #
-#   # Optional: Override whether the sandbox already sees the gateway's
-#   # thread workspace/uploads/outputs through shared mounts.
-#   # Omit this field to auto-detect from the backend (local containers: true;
-#   # remote/provisioner backends: false). Set true only when the deployment
-#   # guarantees both sides use the same thread user-data directories, such as
-#   # a correctly aligned shared PVC, NFS volume, hostPath, or bind mount.
-#   # true skips per-upload sandbox acquire/sync; false forces explicit sync.
+#   # 可选：声明沙箱是否已通过共享挂载看到 Gateway 的线程数据目录。
+#   # 省略时由后端自动检测；远程 provisioner 默认显式同步文件。
+#   # 只有双方确实共享同一份按用户和线程隔离的数据目录时才能设为 true，
+#   # 例如已正确对齐的共享 PVC、NFS、hostPath 或 bind mount。
+#   # true 会跳过逐次上传同步；false 会强制显式同步。
 #   # thread_data_mounts: true
 #
 #   # Optional: Additional mount directories from host to container
@@ -981,18 +979,16 @@ sandbox:
 #   # window out of reach).
 
 #
-# Option 3: AIO Sandbox 对接外部 provisioner（不再随仓库提供 provisioner 服务）
-# 每个 sandbox_id 由**外部自建**的 provisioner 服务管理（例如运维自建的 k3s/K8s
-# 沙箱服务）。Phase 5 删除了仓库自带的 provisioner（docker/provisioner 与 compose
-# 服务），因此这里只保留客户端契约说明；没有自建 provisioner 时请用 Option 1/2。
+# Option 3: AIO Sandbox 对接外部 provisioner
+# 使用方必须自行部署兼容现有 HTTP 协议的服务。本仓库只保留客户端，不包含服务端；
+# 也未验证此客户端与任意外部服务的端到端兼容性。请将下例地址替换为实际外部地址；
+# 经不可信网络访问时使用 HTTPS，绝不能通过明文公网 HTTP 发送 API key。无兼容服务时用 Option 1/2。
 # sandbox:
 #   use: deerflow.community.aio_sandbox:AioSandboxProvider
-#   provisioner_url: http://provisioner:8002
-#   # provisioner 认证用的 API key，必须与外部 provisioner 侧配置的值一致；
-#   # 未设置时对方会拒绝全部 /api/* 请求。生成强密钥：openssl rand -hex 32
+#   provisioner_url: https://provisioner.example.com
+#   # 若外部服务启用 API key 认证，可由环境变量注入。
 #   # provisioner_api_key: $PROVISIONER_API_KEY
-#   # 注意：provisioner 创建的沙箱使用它自己的 SANDBOX_IMAGE 环境变量，
-#   # 而不是本文件里的 sandbox.image。
+#   # 外部服务创建沙箱时使用的镜像和运行参数由该服务自行管理。
 
 
 # ============================================================================

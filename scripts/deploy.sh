@@ -8,7 +8,7 @@
 #   deploy.sh start              — start from pre-built images
 #   deploy.sh down               — stop and remove containers
 #
-# Sandbox mode (local / aio) is auto-detected from config.yaml.
+# Sandbox mode (local / aio / external provisioner) is auto-detected from config.yaml.
 #
 # Examples:
 #   deploy.sh                    # build + start
@@ -272,23 +272,41 @@ fi
 # ── detect_sandbox_mode ───────────────────────────────────────────────────────
 
 detect_sandbox_mode() {
-    local sandbox_use=""
+    local sandbox_mode=""
 
     [ -f "$DEER_FLOW_CONFIG_PATH" ] || { echo "local"; return; }
 
-    sandbox_use=$(awk '
-        /^[[:space:]]*sandbox:[[:space:]]*$/ { in_sandbox=1; next }
+    sandbox_mode=$(awk '
+        /^sandbox:[[:space:]]*(#.*)?[[:space:]]*$/ { in_sandbox=1; next }
         in_sandbox && /^[^[:space:]#]/ { in_sandbox=0 }
         in_sandbox && /^[[:space:]]*use:[[:space:]]*/ {
-            line=$0; sub(/^[[:space:]]*use:[[:space:]]*/, "", line); print line; exit
+            line=$0
+            sub(/^[[:space:]]*use:[[:space:]]*/, "", line)
+            sub(/[[:space:]]+#.*$/, "", line)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+            sub(/^["\047]/, "", line)
+            sub(/["\047]$/, "", line)
+            sandbox_use=line
+            next
+        }
+        in_sandbox && /^[[:space:]]*provisioner_url:[[:space:]]*/ {
+            line=$0
+            sub(/^[[:space:]]*provisioner_url:[[:space:]]*/, "", line)
+            sub(/[[:space:]]+#.*$/, "", line)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+            sub(/^["\047]/, "", line)
+            sub(/["\047]$/, "", line)
+            if (line != "" && line != "null" && line != "~") has_provisioner_url=1
+        }
+        END {
+            if (sandbox_use ~ /deerflow.community.aio_sandbox:AioSandboxProvider/) {
+                print has_provisioner_url ? "provisioner" : "aio"
+            } else {
+                print "local"
+            }
         }
     ' "$DEER_FLOW_CONFIG_PATH")
-
-    if [[ "$sandbox_use" == *"deerflow.community.aio_sandbox:AioSandboxProvider"* ]]; then
-        echo "aio"
-    else
-        echo "local"
-    fi
+    echo "$sandbox_mode"
 }
 
 # ── down ──────────────────────────────────────────────────────────────────────
@@ -346,10 +364,8 @@ services="redis frontend gateway nginx"
 
 
 # ── DEER_FLOW_DOCKER_SOCKET (aio / pure-DooD mode only) ──────────────────────
-# Only aio mode (AioSandboxProvider) needs the host
-# Docker socket. It is mounted via the opt-in docker-compose.dood.yaml overlay,
-# appended here, so the default (local) mode never exposes the
-# host daemon. Mounting the socket = root-equivalent host control; see SECURITY.md.
+# 只有未配置外部 provisioner_url 的本地 AIO/DooD 才挂载宿主 Docker socket。
+# socket 等同于宿主高权限控制；安全边界见 SECURITY.md。
 
 docker_socket="$(read_dotenv_value DEER_FLOW_DOCKER_SOCKET)"
 docker_socket="${docker_socket:-/var/run/docker.sock}"

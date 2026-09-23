@@ -625,38 +625,38 @@ reclaim its warm VM on the next acquire; different threads cannot share a VM.
 evicted; active VMs continue and the provider may temporarily exceed the cap if
 all boxes are active.
 
-**Docker Execution with Kubernetes** (runs sandbox code in Kubernetes pods via provisioner service):
+**AIO 外部 provisioner 客户端**：
 
-This mode runs each sandbox in an isolated Kubernetes Pod on your **host machine's cluster**. Requires Docker Desktop K8s, OrbStack, or similar local K8s setup.
-
-```yaml
-sandbox:
-   use: deerflow.community.aio_sandbox:AioSandboxProvider
-   provisioner_url: http://provisioner:8002
-```
-
-When using Docker development (`make docker-start`), DeerFlow starts the `provisioner` service only if this provisioner mode is configured. In local or plain Docker sandbox modes, `provisioner` is skipped.
-
-Remote/provisioner backends default to explicit file synchronization because
-DeerFlow cannot infer whether their `/mnt/user-data` mount points reference the
-same storage as the Gateway. When the deployment guarantees that both sides use
-the same thread user-data directories, opt out of that extra transfer:
+仓库保留 `community/aio_sandbox/remote_backend.py` 中的 AIO 客户端，但不再
+包含或启动 provisioner 服务端。使用方必须自行部署兼容现有 HTTP 协议的服务。
+当前测试只检查客户端 payload 形状和 mount 路径；已删除的服务端
+`_validated_extra_mounts` 校验没有覆盖，也没有证明客户端与任意外部服务端到端兼容。
+请将下例地址替换为实际部署的外部服务地址；经过不可信网络访问时使用 HTTPS，
+不得通过明文公网 HTTP 发送 API key。
 
 ```yaml
 sandbox:
   use: deerflow.community.aio_sandbox:AioSandboxProvider
-  provisioner_url: http://provisioner:8002
+  provisioner_url: https://provisioner.example.com
+  provisioner_api_key: $PROVISIONER_API_KEY
+```
+
+远程 AIO 默认显式同步文件，因为 Gateway 无法判断外部沙箱的 `/mnt/user-data`
+是否指向同一存储。仅当 Gateway 与沙箱确实共享同一份按用户和线程隔离的数据目录时，
+才设置 `thread_data_mounts: true`：
+
+```yaml
+sandbox:
+  use: deerflow.community.aio_sandbox:AioSandboxProvider
+  provisioner_url: https://provisioner.example.com
+  provisioner_api_key: $PROVISIONER_API_KEY
   thread_data_mounts: true
 ```
 
-Leave `thread_data_mounts` unset to retain backend auto-detection. Set it to
-`false` to force explicit synchronization even for a local container backend.
-Only set it to `true` after verifying the Gateway's
-`users/{user_id}/threads/{thread_id}/user-data` directory and the sandbox's
-`/mnt/user-data` are the same storage; a false positive skips synchronization
-and makes newly uploaded files unavailable inside the sandbox.
-
-See [Provisioner Setup Guide](../../docker/provisioner/README.md) for detailed configuration, prerequisites, and troubleshooting.
+省略 `thread_data_mounts` 时由后端自动检测；远程 provisioner 默认采用显式文件同步。
+设为 `false` 也会强制显式同步。只有确认 Gateway 的
+`users/{user_id}/threads/{thread_id}/user-data` 与沙箱的 `/mnt/user-data` 确实是同一份
+按用户、线程隔离的存储时，才能设为 `true`。误判会跳过同步，使新上传文件无法在沙箱中使用。
 
 **E2B Cloud Sandbox** (runs sandbox code in [E2B](https://e2b.dev) cloud micro-VMs):
 
@@ -1218,7 +1218,7 @@ before exposing an instance to untrusted input.
 |------|---------------|--------------------|-----------|
 | `local` (default) | `deerflow.sandbox.local:LocalSandboxProvider` | Not mounted | Commands run **inside the gateway container** on its filesystem. Not a strong boundary — `allow_host_bash` is `false` by default and should stay off for untrusted workloads. |
 | `aio` (pure DooD) | `deerflow.community.aio_sandbox:AioSandboxProvider` (no `provisioner_url`) | **Mounted** (opt-in overlay) | Sandbox containers are started via the host Docker daemon. |
-| `provisioner` (Kubernetes) | `AioSandboxProvider` + `provisioner_url` | Not mounted | Sandbox pods are created through the provisioner's K8s API over HTTP. Strongest isolation. |
+| `provisioner`（外部服务） | `AioSandboxProvider` + `provisioner_url` | 仓库 Compose 脚本不挂载 | 隔离与传输安全由服务运营方负责；本仓库未验证任意外部服务的端到端兼容性。 |
 
 #### The Docker socket is host root
 
@@ -1231,13 +1231,11 @@ host through the socket.
 
 To keep this off the default attack surface:
 
-- The host Docker socket is **not** mounted by the default Compose stack. It is
-  added only for `aio` mode through the opt-in `docker/docker-compose.dood.yaml`
-  overlay, which `scripts/deploy.sh` and `scripts/docker.sh` append
-  automatically when `detect_sandbox_mode()` returns `aio`.
-- Prefer **provisioner/Kubernetes mode** for multi-tenant or internet-exposed
-  deployments — it isolates sandboxes without handing the gateway the host
-  daemon.
+- 默认 Compose 配置不挂载宿主 Docker socket。只有本地 `aio`/DooD 模式才会
+  使用 `docker/docker-compose.dood.yaml`；配置外部 `provisioner_url` 时，
+  `scripts/deploy.sh` 与 `scripts/docker.sh` 都会跳过该 overlay。
+- 外部 provisioner 不会获得 Gateway 的宿主 Docker socket；其隔离和网络防护
+  仍须由使用方单独审核，本仓库未验证任意 provisioner 实现。
 - If you must use `aio`/DooD, treat the host as part of the gateway's trust
   boundary: run it on a dedicated host, and consider a scoped Docker API proxy
   instead of the raw socket.

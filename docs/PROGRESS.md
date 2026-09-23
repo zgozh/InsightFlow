@@ -11,7 +11,7 @@ Baseline: DeerFlow `v2.1.0-rc0` (`769589e8daee14c2587a634b6b43bd96471a41a1`), im
 | 2 Safe data access | Complete | 2A `8a11d0e`, `f2d35d3`; 2B1 `44f62c3` + Fix 01; 2B2 `3a65865` + Fix 01; 2C1 `eda8878` + Fix 01 `0fc32bd`; 2C2 `568a3d6` + Fix 01 `c450c8c`，各切片均已复验 | Phase 3 implementation |
 | 3 Agent workflow | Complete | `7bd21d7`：受控查询 Agent 工具、确定性 evidence、经营分析 skill、operator-owned 加法式 subagent denylist；schema 层排除多余参数的 V1 裁决已记录 | Phase 4 implementation |
 | 4 Product UI | Complete | `ae89805` + Fix 01 `65b499d7`：报告索引、Analytics 管理页、安全 trace 投影、InsightFlow 产品工作台与最终保留界面品牌闭环 | Phase 5 removal audit |
-| 5 Capability removal | In progress | Phase 5A `5af2a68` 完成首轮删除清单：已证明可删 783 tracked files；目标预算待删除后复核 | Phase 5B GPT review |
+| 5 Capability removal | In progress | Phase 5A `5af2a68` 完成首轮删除清单；B1–B3 已完成。P0 Fix 01 聚焦门禁 223 passed；全量离线有 14 个失败，node ID 均落在未变更的 B2 残差组内、无新增失败。Helm 专属测试的清单外删除记为 deviation #12；manifest forecast 仍为 2262。修复提示词新增 1 个 tracked 文件、删除 Helm 测试 1 个，tracked 净变化为 0 | GPT review of P0 Fix 01 |
 | 6 Deployment and acceptance | Not started | — | Full acceptance evidence |
 
 Phase 2 is delivered in four independently reviewed slices: **2A** deterministic SQL policy core, **2B1** semantic authorization core, **2B2** governed datasource execution, and **2C** persistence and delivery. A slice is not complete until its own gates and review pass.

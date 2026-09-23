@@ -2057,6 +2057,12 @@ execution_deviations:
   kind: 基线既有，不修
   detail: '仓库的 ruff 钩子与 Makefile 只覆盖 ^backend/（.pre-commit-config.yaml files: ^backend/、backend/Makefile `ruff check .`）。这 9 个文件在 B3 HEAD 时已同样不满足格式化，属基线既有；批量重排会引入与删除无关的噪声 diff。'
   evidence: git show HEAD:scripts/wizard/writer.py 落盘后 ruff format --check 仍报 Would reformat
+- id: 12
+  batch: P0
+  item: backend/tests/test_helm_extensions_config_writable.py
+  kind: 清单外删除（已删除 Helm 能力的专属测试）
+  detail: 该文件的三条用例只验证已随 B3 删除的 deploy/helm chart；确认没有 KEEP 用例后在 P0 遗留修复中删除。此项单独记录，不回写 B3/B5 删除预测，也不改 forecast_after_all_batches。
+  evidence: 定点 pytest 复现缺失 gateway-deployment.yaml；文件内其余两条参数用例同样只调用 Helm chart 渲染；deploy/helm/deer-flow 不存在。
 blocked:
 - item: frontend/next.config.js 的 nextra 包装、src/mdx-components.ts、src/typings/md.d.ts 是否可在零 MDX 路由后删除
   missing_evidence: 需要真实 `pnpm build`；Phase 5A 保持只读，未运行构建。本清单按 BLOCKED→KEEP 处理，B5 若要删必须先跑通构建。

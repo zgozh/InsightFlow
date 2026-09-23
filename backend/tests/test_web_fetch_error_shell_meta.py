@@ -16,9 +16,15 @@ Every assertion checks the whole metadata tuple, not just ``status``.
 
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 from langchain_core.messages import ToolMessage
 
+from deerflow.agents.middlewares.tool_error_handling_middleware import ToolErrorHandlingMiddleware
+from deerflow.agents.middlewares.tool_progress_middleware import ToolProgressMiddleware
 from deerflow.agents.middlewares.tool_result_meta import (
     _ATTRS_BY_ERROR_TYPE,
     _ERROR_SHELL_PHRASES,
@@ -199,3 +205,101 @@ def test_unnamed_tool_message_is_unchanged():
     msg = ToolMessage(content="# 404 Not Found", tool_call_id="tc-1", additional_kwargs={})
 
     assert _meta(normalize_tool_message(msg)) == _SUCCESS
+
+
+# 这些夹具覆盖服务端错误页和正常文章；分类依据是 Readability 提取后的正文。
+_NGINX_404 = "<html>\r\n<head><title>404 Not Found</title></head>\r\n<body>\r\n<center><h1>404 Not Found</h1></center>\r\n<hr><center>nginx/1.24.0</center>\r\n</body>\r\n</html>\r\n"
+_NGINX_503 = "<html>\r\n<head><title>503 Service Temporarily Unavailable</title></head>\r\n<body>\r\n<center><h1>503 Service Temporarily Unavailable</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n"
+_APACHE_403 = "<html><head>\n<title>403 Forbidden</title>\n</head><body>\n<h1>Forbidden</h1>\n<p>You don't have permission to access this resource.</p>\n<hr>\n<address>Apache/2.4.58 Server at example.org</address>\n</body></html>\n"
+_IIS_404 = "<!DOCTYPE html>\n<html>\n<head><title>404 - File or directory not found.</title></head>\n<body>\n<h2>404 - File or directory not found.</h2>\n<h3>The resource may have been removed.</h3>\n</body>\n</html>\n"
+_CLOUDFLARE_429 = "<!DOCTYPE html><html><head><title>429 Too Many Requests</title></head><body><center><h1>429 Too Many Requests</h1></center><hr><center>cloudflare</center></body></html>"
+_SPA_404 = "<!DOCTYPE html><html><head><title>Page not found</title></head><body><div id=root><h1>Page not found</h1><p>Sorry, we couldn't find that page.</p></div></body></html>"
+_LEGIT_ARTICLE = "<html><head><title>404 Ways to Cook Rice</title></head><body><article><h1>404 Ways to Cook Rice</h1><p>Rice is a staple for most of the planet, and great rice is technique.</p></article></body></html>"
+_LEGIT_ESSAY = "<html><head><title>Not Found: a short history of the 404</title></head><body><article><h1>Not Found: a short history of the 404</h1><p>The code was introduced at CERN.</p></article></body></html>"
+
+
+class _StubAppConfig:
+    def get_tool_config(self, _name: str) -> None:
+        return None
+
+
+def _render(html: str) -> str:
+    """运行真实 Jina 工具与 Readability；仅伪造抓取响应并隔离配置读取。"""
+    from deerflow.community.jina_ai import tools as jina_tools
+
+    client = MagicMock()
+    client.crawl = AsyncMock(return_value=html)
+    with (
+        patch.object(jina_tools, "JinaClient", return_value=client),
+        patch.object(jina_tools, "get_app_config", return_value=_StubAppConfig()),
+    ):
+        return asyncio.run(jina_tools.web_fetch_tool.ainvoke("https://example.org/x"))
+
+
+def _through_chain(
+    content: str,
+    *,
+    tool_name: str = "web_fetch",
+    progress: ToolProgressMiddleware | None = None,
+) -> ToolMessage:
+    """按生产顺序运行真实 ToolProgress 与 ToolErrorHandling 中间件。"""
+    progress = progress if progress is not None else ToolProgressMiddleware()
+    errors = ToolErrorHandlingMiddleware()
+    runtime = MagicMock()
+    runtime.context = {"thread_id": "t1", "run_id": "r1"}
+    request = SimpleNamespace(tool_call={"name": tool_name, "id": "tc-1"}, runtime=runtime)
+
+    def tool(_request):
+        return ToolMessage(content=content, tool_call_id="tc-1", name=tool_name, additional_kwargs={})
+
+    return progress.wrap_tool_call(request, lambda req: errors.wrap_tool_call(req, tool))
+
+
+class TestRenderedByRealProducer:
+    """验证 Jina 与 Readability 内容经工具中间件和 tool_result_meta 的处理链。"""
+
+    @pytest.mark.parametrize(
+        "html,error_type,recoverable,next_action",
+        [
+            (_NGINX_404, "not_found", True, "rewrite_query"),
+            (_APACHE_403, "permission", True, "try_alternative"),
+            (_IIS_404, "not_found", True, "rewrite_query"),
+            (_CLOUDFLARE_429, "rate_limited", False, "summarize"),
+            (_NGINX_503, "transient", False, "try_alternative"),
+            (_SPA_404, "not_found", True, "rewrite_query"),
+        ],
+    )
+    def test_error_pages_are_classified(self, html: str, error_type: str, recoverable: bool, next_action: str):
+        rendered = _render(html)
+
+        assert _meta(_through_chain(rendered)) == _tuple("error", error_type, recoverable, next_action)
+
+    @pytest.mark.parametrize("html", [_LEGIT_ARTICLE, _LEGIT_ESSAY])
+    def test_legitimate_pages_stay_successful(self, html: str):
+        rendered = _render(html)
+
+        assert _meta(_through_chain(rendered)) == _SUCCESS
+
+    def test_jina_content_only_classification(self):
+        """Browserless 专属 X-Response-* 目标状态头随其生产者删除，Jina 仅按正文分类。"""
+        rendered = _render(_NGINX_404)
+
+        assert rendered.startswith("# 404 Not Found\n\n404 Not Found")
+        assert _meta(_through_chain(rendered)) == _tuple("error", "not_found", True, "rewrite_query")
+
+    def test_chain_negative_control_unrelated_tool(self):
+        rendered = _render(_NGINX_404)
+
+        assert _meta(_through_chain(rendered, tool_name="read_file")) == _SUCCESS
+
+    def test_gateway_error_page_warns_and_escalates_instead_of_blocking_on_sight(self):
+        """503 前五次保留瞬态提示，第六次由进度护栏升级为阻断。"""
+        rendered = _render(_NGINX_503)
+        progress = ToolProgressMiddleware()
+
+        results = [_through_chain(rendered, progress=progress) for _ in range(6)]
+
+        for executed in results[:5]:
+            assert _meta(executed)["error_type"] == "transient"
+        assert _meta(results[5])["error_type"] == "blocked_by_progress_guard"
+        assert results[5].content.startswith("[TOOL_BLOCKED]")
