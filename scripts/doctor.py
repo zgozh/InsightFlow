@@ -59,7 +59,8 @@ def bold(t: str) -> str:
 
 
 def _icon(status: Status) -> str:
-    icons = {"ok": green("✓"), "warn": yellow("!"), "fail": red("✗"), "skip": "—"}
+    # ASCII labels remain printable in legacy Windows PowerShell code pages.
+    icons = {"ok": green("[OK]"), "warn": yellow("[WARN]"), "fail": red("[FAIL]"), "skip": "[SKIP]"}
     return icons[status]
 
 
@@ -125,7 +126,7 @@ class CheckResult:
         print(f"  {icon} {self.label}{detail_str}")
         if self.fix:
             for line in self.fix.splitlines():
-                print(f"      {cyan('→')} {line}")
+                print(f"      {cyan('->')} {line}")
 
 
 # ---------------------------------------------------------------------------
@@ -646,7 +647,7 @@ def main() -> int:
 
     print()
     print(bold("DeerFlow Health Check"))
-    print("═" * 40)
+    print("=" * 40)
 
     sections: list[tuple[str, list[CheckResult]]] = []
 
@@ -706,7 +707,7 @@ def main() -> int:
 
     # ── Summary ───────────────────────────────────────────────────────────────
     print()
-    print("═" * 40)
+    print("=" * 40)
     if total_fails == 0 and total_warns == 0:
         print(f"Status: {green('Ready')}")
         print(f"Run {cyan('make dev')} to start DeerFlow")

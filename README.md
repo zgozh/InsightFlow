@@ -14,23 +14,21 @@ The web workbench includes analysis, chats, data sources, metrics, reports, hist
 
 ## Quick start
 
-Requirements: Docker Compose, Python 3.12+, Node.js 22+, uv, and pnpm 10.26.2+.
+Docker trial requirements: Docker Desktop/Compose, `make`, Python 3.12+, and `uv`. Local development also needs Node.js 22+ and pnpm 10.26.2+.
 
-1. Create local configuration and install dependencies:
-
-   ~~~sh
-   make config
-   make install
-   ~~~
-
-2. Edit the gitignored config.yaml and set at least one model in models. Keep provider keys in environment variables, for example OPENAI_API_KEY or DEEPSEEK_API_KEY.
-3. Start the development stack:
+1. In an interactive terminal, run the setup wizard to choose a model and enter an API key if the provider requires one. Local Ollama needs no key; for Docker, point its `base_url` at `http://host.docker.internal:11434`:
 
    ~~~sh
-   make dev
+   make setup
    ~~~
 
-Open http://localhost:2026. The published Nginx port binds to loopback by default. For the optimized local stack use make start; for the production Docker stack use make up. Run make stop or make down to stop the corresponding stack.
+2. Start the Docker trial stack:
+
+   ~~~sh
+   make up
+   ~~~
+
+Open http://localhost:2026 and create the first administrator account at `/setup`. The published Nginx port binds to loopback by default. Run `make down` to stop the Docker stack. For source development, run `make install` followed by `make dev`. See the [local trial guide](docs/LOCAL_TRIAL.md) for PowerShell steps, model configuration, and Analytics prerequisites.
 
 Never commit config.yaml, extensions_config.json, .env, or provider credentials. See [configuration](backend/docs/CONFIGURATION.md) and [deployment](Install.md) for setup details.
 

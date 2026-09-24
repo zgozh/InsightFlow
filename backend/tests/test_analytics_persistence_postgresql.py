@@ -266,9 +266,10 @@ class TestPostgreSQLPersistenceControlPlane:
             revision = (await conn.execute(text("SELECT version_num FROM analytics_alembic_version"))).scalar_one()
             tables = set((await conn.execute(text("SELECT table_name FROM information_schema.tables WHERE table_schema = :schema"), {"schema": environment.schema})).scalars())
 
-        assert revision == "0001_analytics_control_plane"
+        assert revision == "0002_analytics_analysis_reports"
         assert tables == {
             "analytics_alembic_version",
+            "analytics_analysis_reports",
             "analytics_access_policies",
             "analytics_datasources",
             "analytics_execution_plans",

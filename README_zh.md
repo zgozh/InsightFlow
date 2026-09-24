@@ -14,23 +14,21 @@ InsightFlow 是受控的经营分析工作台，基于 DeerFlow v2.1.0-rc0 的 A
 
 ## 快速开始
 
-需要 Docker Compose、Python 3.12+、Node.js 22+、uv 和 pnpm 10.26.2+。
+Docker 本机试用需要 Docker Desktop/Compose、`make`、Python 3.12+ 和 `uv`。本地开发还需要 Node.js 22+ 与 pnpm 10.26.2+。
 
-1. 生成本地配置并安装依赖：
-
-   ~~~sh
-   make config
-   make install
-   ~~~
-
-2. 编辑被 Git 忽略的 config.yaml，在 models 中至少配置一个模型。将 OPENAI_API_KEY 或 DEEPSEEK_API_KEY 等凭证保存在环境变量中。
-3. 启动开发环境：
+1. 在交互式终端运行配置向导，选择模型；仅当所选提供方需要时才输入 API key。本地 Ollama 不需要 key；Docker 中运行的 Gateway 连接宿主机 Ollama 时，需将 `base_url` 设为 `http://host.docker.internal:11434`：
 
    ~~~sh
-   make dev
+   make setup
    ~~~
 
-打开 http://localhost:2026。Nginx 发布端口默认只绑定本机回环地址。优化后的本地环境使用 make start；生产 Docker 环境使用 make up。分别使用 make stop 或 make down 停止。
+2. 启动 Docker 试用环境：
+
+   ~~~sh
+   make up
+   ~~~
+
+打开 http://localhost:2026，并在首次访问时通过 `/setup` 创建管理员账号。Nginx 发布端口默认只绑定本机回环地址。使用 `make down` 停止 Docker 服务；源码开发可先运行 `make install`，再使用 `make dev`。PowerShell 本机试用、模型配置和 Analytics 前置条件见[本机试用指南](docs/LOCAL_TRIAL.md)。
 
 不要提交 config.yaml、extensions_config.json、.env 或模型凭证。配置说明见 [CONFIGURATION](backend/docs/CONFIGURATION.md)，部署说明见 [Install](Install.md)。
 

@@ -18,11 +18,14 @@ success; failures print Compose status and recent Gateway logs.
 ## Shell Script Invocation Contract
 
 Root Makefile recipes must invoke repository `.sh` files through
-`RUN_SHELL_SCRIPT`. On POSIX this expands to `$(BASH)`; on Windows it uses the
-Git Bash wrapper. Shell scripts that invoke sibling repository scripts must
-likewise prefix the target with `bash`. This keeps documented `make` commands
-working when a source archive, `core.fileMode=false`, or a non-POSIX filesystem
-does not preserve executable bits.
+`RUN_SHELL_SCRIPT`. On POSIX it expands to `$(BASH)`; MSYS GNU Make uses the
+MSYS `/usr/bin/bash` explicitly because PowerShell may resolve `bash` to WSL;
+native Windows Make uses the Git Bash wrapper. MSYS GNU Make must keep its
+POSIX shell because GNU Make passes POSIX `-c` flags to the recipe shell.
+Shell scripts that invoke sibling repository scripts must likewise prefix the
+target with `bash`. This keeps documented `make` commands working when a
+source archive, `core.fileMode=false`, or a non-POSIX filesystem does not
+preserve executable bits.
 
 Host-side pnpm calls must go through `scripts/pnpm.py`. With native Windows
 Python (`os.name == "nt"`), it checks `pnpm.cmd` before the generic `pnpm`

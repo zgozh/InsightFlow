@@ -7,6 +7,7 @@ Run from repo root:
 from __future__ import annotations
 
 import importlib.util
+import io
 import sys
 from pathlib import Path
 
@@ -419,3 +420,54 @@ class TestMainExitCode:
         assert output
         assert "config.yaml" in output
         assert ".env" in output
+
+    def test_output_is_compatible_with_legacy_windows_code_pages(self, tmp_path, monkeypatch):
+        repo_root = tmp_path / "repo"
+        scripts_dir = repo_root / "scripts"
+        scripts_dir.mkdir(parents=True)
+        fake_doctor = scripts_dir / "doctor.py"
+        fake_doctor.write_text("# test-only shim for __file__ resolution\n")
+        monkeypatch.chdir(repo_root)
+        monkeypatch.setattr(doctor, "__file__", str(fake_doctor))
+
+        def ok():
+            return doctor.CheckResult("check", "ok")
+
+        def warn_with_fix():
+            return doctor.CheckResult("runtime available", "warn", fix="Install runtime")
+
+        def fail_with_fix():
+            return doctor.CheckResult("config valid", "fail", fix="Run make setup")
+
+        monkeypatch.setattr(doctor, "check_python", ok)
+        monkeypatch.setattr(doctor, "check_node", warn_with_fix)
+        monkeypatch.setattr(doctor, "check_pnpm", ok)
+        monkeypatch.setattr(doctor, "check_uv", fail_with_fix)
+        monkeypatch.setattr(doctor, "check_nginx", ok)
+        for check_name in (
+            "check_env_file",
+            "check_frontend_env",
+            "check_config_exists",
+            "check_config_version",
+            "check_config_loadable",
+            "check_models_configured",
+            "check_web_search",
+            "check_web_fetch",
+        ):
+            monkeypatch.setattr(doctor, check_name, lambda *_args: doctor.CheckResult("check", "ok"))
+        monkeypatch.setattr(doctor, "check_config_version", lambda *_args: doctor.CheckResult("check", "skip"))
+        for check_name in ("check_llm_api_key", "check_llm_auth", "check_llm_package", "check_sandbox"):
+            monkeypatch.setattr(doctor, check_name, lambda *_args: [])
+
+        buffer = io.BytesIO()
+        stream = io.TextIOWrapper(buffer, encoding="gbk")
+        monkeypatch.setattr(doctor.sys, "stdout", stream)
+
+        assert doctor.main() == 1
+        stream.flush()
+        output = buffer.getvalue().decode("gbk")
+        assert "[OK]" in output
+        assert "[WARN]" in output
+        assert "[FAIL]" in output
+        assert "[SKIP]" in output
+        assert "-> Run make setup" in output

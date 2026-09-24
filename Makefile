@@ -7,10 +7,21 @@ BACKEND_UV_RUN = cd backend && uv run
 
 # Detect OS for Windows compatibility
 ifeq ($(OS),Windows_NT)
-    SHELL := cmd.exe
     PYTHON ?= python
-    # Run repo shell scripts through Git Bash when Make is launched from cmd.exe / PowerShell.
-    RUN_SHELL_SCRIPT = call scripts\run-with-git-bash.cmd
+    ifneq (,$(findstring MSYS,$(shell uname -s 2>/dev/null)))
+        # MSYS GNU Make can run recipes directly in its POSIX shell. Forcing
+        # cmd.exe here is incompatible with GNU Make's POSIX `-c` shell flag.
+        SHELL := sh.exe
+        # PowerShell may also expose WSL's `bash.exe`; pin repository scripts
+        # to the Bash installed beside this MSYS shell.
+        BASH := /usr/bin/bash
+        RUN_SHELL_SCRIPT = $(BASH)
+    else
+        SHELL := cmd.exe
+        # Run repo shell scripts through Git Bash when native Windows Make is
+        # launched from cmd.exe / PowerShell.
+        RUN_SHELL_SCRIPT = call scripts\run-with-git-bash.cmd
+    endif
 else
     PYTHON ?= python3
     # Invoke repo shell scripts through an explicit interpreter, so recipes keep
