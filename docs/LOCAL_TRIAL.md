@@ -26,12 +26,12 @@
 
 ## 配置文件与能力边界
 
-| 文件 | 用途 |
-| --- | --- |
-| `config.yaml` | 必须有至少一个模型条目；沙箱、工具、Analytics 等 Gateway 配置也在这里 |
-| `.env` | 模型 key、可选 Jina key、数据库 secret JSON 等运行时环境变量 |
-| `extensions_config.json` | MCP 服务和技能启用状态；本机模板生成会创建空配置 |
-| `frontend/.env` | 前端本机开发配置；Docker 试用一般沿用 Compose 的服务地址 |
+| 文件                     | 用途                                                                  |
+| ------------------------ | --------------------------------------------------------------------- |
+| `config.yaml`            | 必须有至少一个模型条目；沙箱、工具、Analytics 等 Gateway 配置也在这里 |
+| `.env`                   | 模型 key、可选 Jina key、数据库 secret JSON 等运行时环境变量          |
+| `extensions_config.json` | MCP 服务和技能启用状态；本机模板生成会创建空配置                      |
+| `frontend/.env`          | 前端本机开发配置；Docker 试用一般沿用 Compose 的服务地址              |
 
 上述文件均为 Git 忽略文件。不要提交真实 key、密码、数据库连接材料或管理员凭证。Jina key 是可选项；未配置时仍可使用 `web_fetch`，但可能受到上游匿名请求限额影响。AIO external provisioner 只是 Gateway 调用的外部兼容端点，本仓库不包含或启动其服务端。
 
@@ -45,17 +45,25 @@ Analytics 的应用控制面默认使用本机持久 SQLite。要分析业务数
 
 ## 本机实测记录（2026-09-24）
 
-| 项目 | 结果 |
-| --- | --- |
-| 运行环境 | Windows PowerShell、MSYS GNU Make 4.4.1、Docker Desktop Engine 29.1.2、Compose v2.40.3、Python 3.12.4、uv 0.11.28、Node.js 24.14.0、pnpm 10.26.2 |
-| Python 包索引 | 本机锁文件检查和同步通过；运行时临时设置 `$env:UV_DEFAULT_INDEX='https://pypi.org/simple'` 以避开默认索引解析失败，没有修改锁文件 |
-| 配置生成路径 | PowerShell 调用 Make 的模板生成、MSYS shell 脚本路由及 GBK 代码页输出回归通过；`backend/tests/test_configure.py` 和 `backend/tests/test_doctor.py` 共 44 项通过 |
-| 冷启动 | `make up` 退出码 0；Gateway 和 Redis 的 Docker healthcheck 通过，Nginx `/health` 返回 `healthy`，首页、`/setup`、`/login` 返回 200；未登录访问 `/workspace/chats` 返回 307 并转到 `/setup` |
-| 首次认证状态 | `/api/v1/auth/setup-status` 返回 `needs_setup: true`；本地 `.better-auth-secret` 与 `.internal-auth-token` 已生成，仅确认文件存在，没有读取其内容 |
-| 停机与持久卷 | `make down` 退出码 0；试用容器和网络已移除，`deer-flow_redis-data` 卷保留，创建时间未改变 |
+| 项目                 | 结果                                                                                                                                                                                                                              |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 运行环境             | Windows PowerShell、MSYS GNU Make 4.4.1、Docker Desktop Engine 29.1.2、Compose v2.40.3、Python 3.12.4、uv 0.11.28、Node.js 24.14.0、pnpm 10.26.2                                                                                  |
+| Python 包索引        | 本机锁文件检查和同步通过；运行时临时设置 `$env:UV_DEFAULT_INDEX='https://pypi.org/simple'` 以避开默认索引解析失败，没有修改锁文件                                                                                                 |
+| 配置生成路径         | PowerShell 调用 Make 的模板生成、MSYS shell 脚本路由及 GBK 代码页输出回归通过；`backend/tests/test_configure.py` 和 `backend/tests/test_doctor.py` 共 44 项通过                                                                   |
+| 冷启动               | `make up` 退出码 0；Gateway 和 Redis 的 Docker healthcheck 通过，Nginx `/health` 返回 `healthy`，首页、`/setup`、`/login` 返回 200；未登录访问 `/workspace/chats` 返回 307 并转到 `/setup`                                        |
+| 首次认证状态         | `/api/v1/auth/setup-status` 返回 `needs_setup: true`；本地 `.better-auth-secret` 与 `.internal-auth-token` 已生成，仅确认文件存在，没有读取其内容                                                                                 |
+| 停机与持久卷         | `make down` 退出码 0；试用容器和网络已移除，`deer-flow_redis-data` 卷保留，创建时间未改变                                                                                                                                         |
 | Analytics 数据库门禁 | PostgreSQL 16.15（`postgres:16`）、MySQL 8.4.11（`mysql:8.4`）：82 passed，2 个 MySQL timeout/只读用例的 `MySQLResult._finish_unbuffered_query` 未 await warning；两个临时服务均 healthy，脚本自动 teardown，未留下测试容器或网络 |
-| 未完成的人工验收 | 未提供真实模型 key，未执行模型对话；未登记持久业务数据源，未执行业务 Analytics 查询；管理员账号由试用者创建 |
+| 未完成的人工验收     | 未提供真实模型 key，未执行模型对话；未登记持久业务数据源，未执行业务 Analytics 查询；管理员账号由试用者创建                                                                                                                       |
 
 本机 `make check` 因宿主机没有 Nginx 返回 1；`make doctor` 会显示宿主机 Nginx 和未配置模型两项失败以及 Local sandbox 提示。Docker 试用的服务路径已通过独立 Compose 冷启动和 HTTP 检查。
 
 本机此前有一组已停止、名称与本项目冲突的旧容器。验证期间将它们临时改名以保留原容器和数据卷，测试结束后已恢复原名与原 ID。若同一环境再次运行 `make up` 遇到 `container name ... is already in use`，先确认对应的是哪一组旧容器，再按需改名或通过其原 Compose 项目清理；不要用 `docker volume prune` 或 `make down -v`。
+
+## Phase 6C 复核补记（2026-09-24）
+
+- 再次运行 `make up` 退出码 0；Compose 等待 Nginx、Frontend、Gateway、Redis 就绪后报告运行成功。HTTP 检查中 `/health`、首页、`/setup`、`/login` 均为 200；未登录访问 `/workspace/chats` 返回 307 并转到 `/setup`；`/api/v1/auth/setup-status` 返回 `needs_setup: true`。没有创建管理员账号，也没有发起模型请求。
+- 启动前确认冲突的四个已停止容器来自另一 checkout（Compose project `docker`，目录为 `D:\develop\workspace\deer-flow\docker`）。仅临时改名以保留容器和卷；本次 `make down` 退出码 0 后，四个容器均恢复原名和原 ID，没有清除卷。
+- 当前根配置的 `models` 列表为空，因此模型对话未验证。没有通过持久业务数据库、只读账号、schema snapshot 和用户 policy 完成 Analytics 查询；**经营分析未端到端验证**。按指南填写模型与业务数据源配置后，再由使用者进行人工试用。
+- 静态演示未提供可复现的 Agent→沙箱 HTML 写入→artifact 登记→浏览器预览全链路证据；现有 artifact 预览 E2E 使用模拟写入与响应。保留四个可编辑欢迎示例，不增加第五个网页示例。
+- `D:\develop\workspace\InsightFlow-6A-baseline-20260924` 仍需保留；它不属于已登记 worktree，可能包含未跟踪文件。不得递归删除或移动，如需清理应先由使用者检查并另行授权。

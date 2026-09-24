@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, rs } from "@rstest/core";
 
+import { GET as getMockSkills } from "@/app/mock/api/skills/route";
 import { fetch as apiFetch } from "@/core/api/fetcher";
 import { fetchFeatures } from "@/core/features/api";
 import { loadMemory } from "@/core/memory/api";
@@ -42,6 +43,12 @@ afterEach(() => {
 });
 
 describe("static website API requests", () => {
+  it("serves an empty skill catalog in the static demo fixture", async () => {
+    const response = getMockSkills();
+
+    await expect(response.json()).resolves.toEqual({ skills: [] });
+  });
+
   it("loads optional capabilities and empty catalogs without the Gateway", async () => {
     await expect(fetchFeatures()).resolves.toMatchObject({
       mcp_tasks: { enabled: false },
@@ -152,9 +159,7 @@ describe("static website API requests", () => {
 
   it("preserves normal backend requests unless the flag is exactly true", async () => {
     env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY = "false";
-    network.mockResolvedValue(
-      Response.json({ mcp_tasks: { enabled: true } }),
-    );
+    network.mockResolvedValue(Response.json({ mcp_tasks: { enabled: true } }));
     await expect(fetchFeatures()).resolves.toMatchObject({
       mcp_tasks: { enabled: true },
     });

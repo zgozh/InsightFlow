@@ -91,6 +91,7 @@ export const VirtualMessageList = forwardRef<
   const lastVirtualIndex = virtualItems.at(-1)?.index ?? -1;
   const positionedInitialVirtualWindowRef = useRef(false);
   const previousCountRef = useRef(groups.length);
+  const previousIsAtBottomRef = useRef(isAtBottom);
   const previousFirstKeyRef = useRef<Key | undefined>(undefined);
   const previousActiveGroupRef = useRef(-1);
   const anchorRef = useRef<{ key: Key; viewportOffset: number } | undefined>(
@@ -242,13 +243,17 @@ export const VirtualMessageList = forwardRef<
     } else if (!shouldVirtualize) {
       positionedInitialVirtualWindowRef.current = false;
     }
-    if (groups.length > previousCountRef.current && isAtBottom) {
+    // 历史页扩张可能先改变滚动高度、再让滚动上下文报告离开底部；保留上一帧的状态，避免新消息留在视口外。
+    if (
+      groups.length > previousCountRef.current &&
+      (isAtBottom || previousIsAtBottomRef.current)
+    ) {
       void scrollToBottom({
         animation: "instant",
-        preserveScrollPosition: true,
       });
     }
     previousCountRef.current = groups.length;
+    previousIsAtBottomRef.current = isAtBottom;
     return () => {
       if (settleFrame !== undefined) cancelAnimationFrame(settleFrame);
     };
