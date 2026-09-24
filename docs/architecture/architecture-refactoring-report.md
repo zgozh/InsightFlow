@@ -22,8 +22,8 @@ InsightFlow 是面向企业经营分析的 Autonomous Data Analyst，不是通�
 | 生产源码文件 | 约 1300 | 450–650 | 不含测试、迁移、生成物和 lockfile |
 | 测试文件 | 约 1020 | 250–350 | 重点保留运行时、SQL 安全和关键 E2E |
 | 有效文本代码行 | 约 82 万 | 14–22 万 | 排除 lockfile、生成物和大型 fixture |
-| 默认容器 | 4+可选组件 | 4 | nginx、frontend、gateway、postgres |
-| 可选容器 | 多类 Provider/Provisioner | 2 | redis、AIO sandbox |
+| 默认容器 | 4+可选组件 | 4 | nginx、frontend、gateway、redis |
+| 可选 Compose 服务/overlay | 多类 Provider/Provisioner | 默认 0 | AIO sandbox 通过显式 DooD overlay；应用 PostgreSQL 由运维提供，不属于默认 Compose |
 
 低于约 650 个 tracked files 的“极简版”需要进一步移除 Scheduler、MCP、Memory 或大量运行时测试，不符合当前企业级目标。推荐以 850–1050 个文件为收敛区间，以模块职责、默认部署复杂度和安全证据作为更高优先级指标。
 
@@ -41,7 +41,7 @@ InsightFlow 是面向企业经营分析的 Autonomous Data Analyst，不是通�
 | `deploy/` + `docker/` | 47 | 收敛为 Compose 主路径 |
 | `.github/` | 23 | 改造成 InsightFlow 的精简 CI |
 
-当前 Gateway 内嵌 LangGraph runtime，主执行路径是 `RunManager + run_agent() + StreamBridge`，不是两个独立后端服务。生产 Compose 当前没有 PostgreSQL 服务，这是目标部署必须补齐的缺口。
+当前 Gateway 内嵌 LangGraph runtime，主执行路径是 `RunManager + run_agent() + StreamBridge`，不是两个独立后端服务。生产与开发 Compose 默认包含 Nginx、Frontend、Gateway、Redis 四个服务；应用数据库默认是 SQLite（`backend/.deer-flow/data/deerflow.db`），可显式配置外部 PostgreSQL。业务 PostgreSQL/MySQL 是独立外部数据源，不是默认栈服务。
 
 ## 3. 产品边界
 
@@ -73,7 +73,7 @@ InsightFlow 是面向企业经营分析的 Autonomous Data Analyst，不是通�
 
 - LangGraph Lead Agent、graph runtime 和现有流式运行模型。
 - Gateway 的 Auth、Thread、Run、SSE、Artifact、Upload 主链。
-- PostgreSQL persistence/checkpoint 和 SQLite 测试适配。
+- SQLite 单机默认持久化，以及可显式配置的 PostgreSQL persistence/checkpoint。
 - Subagent executor、隔离 event loop、超时、取消、token 汇总和 receipt。
 - Local Sandbox 与 AIO Docker Sandbox。
 - Skill loader、activation、projection 和 policy。
@@ -90,8 +90,8 @@ InsightFlow 是面向企业经营分析的 Autonomous Data Analyst，不是通�
 - Skills：只保留数据分析、咨询分析、图表和报告相关能力。
 - Gateway：增加 datasource、metric、report、query audit API。
 - Frontend：改造成 InsightFlow 分析工作台和结构化执行轨迹。
-- Compose：PostgreSQL 成为必选，Redis/AIO sandbox 变为 profile。
-- MCP：作为外部系统扩展入口，不能绕过统一查询安全层。
+- Compose：默认服务为 Nginx、Frontend、Gateway、Redis；SQLite 是默认应用存储，应用 PostgreSQL 由运维显式配置，AIO sandbox 使用 opt-in DooD overlay。
+- MCP：目标架构要求业务数据访问 adapter 共用 Query Policy；现行任意第三方 MCP 工具尚未被强制接入该策略，AS-14 仍为发布阻塞。
 
 ### DELETE
 
@@ -178,6 +178,8 @@ App 通过 composition root 向 Harness 注册领域 tools 和不可变的 subag
 
 每个阶段发出结构化 run event，前端只展示计划、工具状态、SQL 风险、耗时、数据行数、artifact 和审查结论，不展示 chain-of-thought。
 
+这是目标数据流，不是对当前运行状态的描述。当前 `business-analysis` skill 由 Lead 按提示词委派内置 `general-purpose` subagent 扮演分析/复核角色；没有专职 SQL Analyst、Reviewer 或 Report Writer 定义。完整 Agent→受控查询→artifact→复核链尚未完成真实端到端验收，详见 [Phase 6D1 证据矩阵](../acceptance/phase-06d-contract-reconciliation.md)。
+
 ## 8. Agent 架构
 
 | Agent | 责任 | 允许能力 | 禁止能力 |
@@ -187,6 +189,8 @@ App 通过 composition root 向 Harness 注册领域 tools 和不可变的 subag
 | Data Analyst | 统计、异常、图表 | 已导出文件、Python sandbox、分析 skills | 直接访问业务数据库 |
 | Reviewer | 数字/口径/证据复核 | evidence bundle、receipt、只读元数据 | 默认不重新查询数据库 |
 | Report Writer | 结构化报告 | 已批准 findings、artifact write | 数据库和外部网络 |
+
+以上角色表是目标设计。现行实现没有这些专职 Agent 定义；skill 只指导 Lead 以通用 `general-purpose` 子 Agent 扮演 Data Analyst 与 Reviewer，Report Writer 也未实现。
 
 约束：
 
@@ -212,7 +216,7 @@ App 通过 composition root 向 Harness 注册领域 tools 和不可变的 subag
 
 `prepare_query` 在内部完成解析、权限、LIMIT 和 EXPLAIN；`execute_readonly_query` 只能接收前一步签发的短期 query plan ID，不能直接接收任意 SQL。数据库凭据只存在于服务端 secret provider。
 
-MCP 保留为扩展机制，可提供外部指标目录或企业系统 connector。MCP datasource adapter 也必须调用相同的 Query Policy 契约，核心数据访问不能只实现为 MCP，以免绕过本地审计与权限。
+MCP 保留为扩展机制，可提供外部指标目录或企业系统 connector。目标中的 MCP datasource adapter 必须调用相同的 Query Policy 契约，核心数据访问不能只实现为 MCP。现行任意第三方 MCP 工具可自行执行其提供的操作，平台没有统一强制其经 Query Policy 的机制；AS-14 在该机制和绕过测试具备前仍是发布阻塞。
 
 ## 10. Text2SQL 安全设计
 
@@ -228,7 +232,7 @@ MCP 保留为扩展机制，可提供外部指标目录或企业系统 connector
   → EXPLAIN 成本和扫描量判断
   → 数据库只读事务执行
   → statement timeout / row cap / byte cap
-  → 结果脱敏
+  → 结果安全规范化（不代表已实现动态 PII 脱敏）
   → audit + evidence receipt
 ```
 
@@ -238,10 +242,12 @@ SQLGlot 只承担 parser/AST/transpiler，不被当作安全验证器。任何�
 
 - `LOW`：白名单表列、低成本、有界 SELECT。
 - `MEDIUM`：复杂 JOIN、较大时间范围或较高但可接受成本；使用更低超时和结果上限。
-- `HIGH`：敏感列、跨 schema、笛卡尔风险或高成本；V1 默认要求批准或拒绝。
+- `HIGH`：敏感/PII 列、跨 schema、笛卡尔风险或高成本；V1 当前一律以 `APPROVAL_REQUIRED` fail closed 拒绝，没有人工批准路径，不签发可执行计划且不执行查询。
 - `BLOCKED`：写操作、DDL、事务控制、多语句、权限越界、解析歧义、文件/网络导出。
 
 防御纵深包括独立只读数据库用户、只读事务、连接池上限、服务端超时、结果截断和审计，不能只依赖 AST。
+
+当前 V1 的敏感/PII 边界是 HIGH fail-closed 拒绝与不返回结果行，不能描述为“动态脱敏后允许查询”。
 
 ## 11. 数据模型
 
@@ -348,7 +354,7 @@ SQLGlot 只承担 parser/AST/transpiler，不被当作安全验证器。任何�
 - DDL/DML、多语句、注释绕过、`Command` fallback。
 - 越权 datasource/schema/table/column。
 - 凭据和 PII 不进入日志、SSE、receipt、artifact。
-- MCP 不得绕过统一查询策略。
+- 任意提供业务数据访问的 MCP 不得绕过统一查询策略；现行系统尚未对任意第三方 MCP 强制执行这项约束，AS-14 是未解决的发布阻塞。
 
 ### E2E
 
@@ -357,26 +363,30 @@ SQLGlot 只承担 parser/AST/transpiler，不被当作安全验证器。任何�
 - PostgreSQL 持久化后重启恢复 thread/run。
 
 每个阶段必须提交测试命令、退出码和关键输出，不接受只写“测试通过”。
+本节列出目标门禁，并非整套工作流已运行通过。现行默认使用 SQLite；可选 PostgreSQL 应用后端的重启恢复尚无完整实测，真实自然语言业务分析 artifact 链也未验收。各场景的实现事实、自动测试和端到端边界见 [Phase 6D1 证据矩阵](../acceptance/phase-06d-contract-reconciliation.md)。
 
 ## 15. Docker 与运行环境
 
-默认 Compose：
+默认 Compose（生产与 Docker 开发）：
 
 ```text
 nginx
 frontend
 gateway
-postgres
+redis
 ```
 
-可选 profiles：
+默认服务正好四个：`nginx`、`frontend`、`gateway`、`redis`。Redis 是默认必需服务，承载 Redis Streams bridge；它不发布宿主机端口。本地 `make dev` 的单进程默认可以使用 memory StreamBridge。
 
-- `redis`：多 Gateway worker、跨进程 SSE/event bridge。
-- `sandbox`：AIO Docker sandbox，需要明确挂载 Docker socket。
+可选部署能力：
+
+- 应用 PostgreSQL：在 `config.yaml -> database.backend: postgres` 显式配置，并由运维提供外部 PostgreSQL 实例；默认 Compose 不启动该实例。
+- 业务 PostgreSQL/MySQL：管理员登记的外部业务数据源，不属于应用运行时数据库。
+- AIO Docker sandbox：使用显式 DooD overlay，并按配置挂载 Docker socket。
 
 约束：
 
-- PostgreSQL 不暴露公网端口，开发环境可绑定 localhost。
+- 默认 Compose 不包含 PostgreSQL，因此不会替运维发布应用数据库端口。配置外部 PostgreSQL 或业务数据源时，监听地址、TLS 与防火墙由运维明确设置。
 - 业务 MySQL/PostgreSQL 不是 Compose 运行时数据库。
 - datasource secret 通过环境变量或 secret file/provider 注入。
 - image 使用固定 tag、非 root 用户、健康检查和结构化日志。
@@ -435,12 +445,12 @@ postgres
 
 - Report Writer、Scheduler、Tavily、MCP 基础扩展。
 - AIO sandbox、结构化轨迹、图表报告。
-- Redis 多 worker profile。
+- Redis StreamBridge 多 worker 配置（Redis 本身仍是默认 Compose 服务）。
 
 **Optional**
 
 - 企业 OIDC、更多 datasource adapter、远程指标平台 MCP。
-- 人工批准 HIGH 风险查询的工作流。
+- HIGH 风险人工批准工作流（当前 V1 未实现；在实现并验收前 HIGH 一律拒绝）。
 - 多租户和 Kubernetes。
 
 ## 18. 项目学习与简历价值

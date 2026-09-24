@@ -34,7 +34,7 @@ Docker 本机试用需要 Docker Desktop/Compose、`make`、Python 3.12+ 和 `uv
 
 ## 分析与 Agent 边界
 
-Analytics 查询经受控查询服务执行：数据源凭证保存在服务端 secret reference 中，查询计划先授权再执行，并保留审计历史。Agent 工具不能绕过该服务直接查询登记的数据源。
+平台内置 Analytics 查询工具经受控查询服务执行：数据源凭证保存在服务端 secret reference 中，查询计划先授权再执行，并保留审计历史。任意第三方 MCP 工具目前没有被强制接入这条策略链，可能提供独立的数据访问路径；统一约束所有 MCP 访问仍是发布阻塞。
 
 Lead Agent 可将普通任务委派给内置子代理。定时运行使用 Lead Agent 和标准 Gateway run 生命周期。Local 沙箱命令以 Gateway 主机权限运行；AIO 使用独立沙箱服务。外部 AIO provisioner 仅作为配置的客户端端点；本仓库不包含或启动该服务。
 

@@ -37,7 +37,7 @@
 
 聊天依赖有效的 `config.yaml -> models[]`、提供方要求的凭据（如有）以及管理员账号。本次无模型凭据冷启动验证没有发起模型请求，因此模型对话仍需使用者配置后实测。
 
-Analytics 的应用控制面默认使用本机持久 SQLite。要分析业务数据，还需准备一份小型、非敏感的 PostgreSQL 或 MySQL 数据集，并为 Gateway 提供只读账号。管理员在“数据源”登记连接（`secret_ref` 使用 `env://ANALYTICS_DS`），发布与真实表列一致的 schema snapshot，为明确的用户 principal 配置访问 policy，并在“指标”登记指标和维度。凭证 JSON 由 `.env` 中的 `ANALYTICS_DS` 提供，字段为 `engine`、`host`、`port`、`database`、`username`、`password`；TLS 选项见[配置指南](../backend/docs/CONFIGURATION.md)。关闭 TLS 仅允许连接 loopback；容器访问宿主机时不要把 `host.docker.internal` 当作 loopback。
+Analytics 应用控制面默认使用持久 SQLite：Gateway 在 `backend` 工作目录下写入 `backend/.deer-flow/data/deerflow.db`，默认 Compose 将 `backend/.deer-flow` 持久挂载。显式设置 `database.backend: postgres` 时，应用 PostgreSQL 由运维提供，默认 Compose 不会启动它；Analytics 管理的业务 PostgreSQL/MySQL 也是外部数据源，与应用数据库分开。默认 Compose 固定运行 Nginx、Frontend、Gateway、Redis 四个服务，Redis 是必需服务而非可选组件；本地 `make dev` 则运行三个面向用户的进程。要分析业务数据，还需准备一份小型、非敏感的数据集，并为 Gateway 提供只读账号。管理员在“数据源”登记连接（`secret_ref` 使用 `env://ANALYTICS_DS`），发布与真实表列一致的 schema snapshot，为明确的用户 principal 配置访问 policy，并在“指标”登记指标和维度。凭证 JSON 由使用者保存在 Git 忽略的 `.env` 并作为 `ANALYTICS_DS` 注入，字段为 `engine`、`host`、`port`、`database`、`username`、`password`；TLS 选项见[配置指南](../backend/docs/CONFIGURATION.md)。关闭 TLS 仅允许连接 loopback；容器访问宿主机时不要把 `host.docker.internal` 当作 loopback。
 
 推荐的最小演示数据：一个 `demo` schema、一张包含日期、状态、金额和产品标识的合成订单表、50–200 行合成数据，以及只能读取所需 schema/table/column 的数据库账号。不放入真实个人信息。建议从 1 vCPU、1 GiB 内存和 1 GiB 持久磁盘起步；这是小型样例库的资源预算建议，尚未做容量基准。默认 Compose 不新增业务数据库服务。
 
@@ -67,3 +67,14 @@ Analytics 的应用控制面默认使用本机持久 SQLite。要分析业务数
 - 当前根配置的 `models` 列表为空，因此模型对话未验证。没有通过持久业务数据库、只读账号、schema snapshot 和用户 policy 完成 Analytics 查询；**经营分析未端到端验证**。按指南填写模型与业务数据源配置后，再由使用者进行人工试用。
 - 静态演示未提供可复现的 Agent→沙箱 HTML 写入→artifact 登记→浏览器预览全链路证据；现有 artifact 预览 E2E 使用模拟写入与响应。保留四个可编辑欢迎示例，不增加第五个网页示例。
 - `D:\develop\workspace\InsightFlow-6A-baseline-20260924` 仍需保留；它不属于已登记 worktree，可能包含未跟踪文件。不得递归删除或移动，如需清理应先由使用者检查并另行授权。
+
+## Phase 6D1 契约复核补记（2026-09-24）
+
+- 默认 Compose 与持久化边界已按当前配置/代码核对：生产与 Docker 开发默认是 `nginx`、`frontend`、`gateway`、`redis` 四服务；Redis 是必需容器。Gateway 应用库默认是 `backend/.deer-flow/data/deerflow.db` SQLite 并挂载持久目录。可选应用 PostgreSQL 和业务 PostgreSQL/MySQL 由运维提供，均不由默认 Compose 启动。该项为静态配置/代码核对，不是本补记重新启动 Docker 的记录。
+- 后端聚焦命令首次尝试：`uv run --locked pytest tests/test_auth_middleware.py tests/test_analytics_api.py tests/test_analytics_delivery.py tests/test_semantic_authorizer.py tests/test_sql_policy.py tests/test_result_normalizer.py tests/test_analytics_agent_tools.py tests/test_analytics_agent_reports.py tests/test_business_analysis_skill.py tests/test_compose_default_bind_host.py tests/test_compose_default_workers.py tests/test_gateway_services.py tests/test_scheduled_task_queue.py tests/test_subagent_executor.py -q`，退出码 **1**。pytest 未启动；UV 依赖解析使用的 `https://pypi.tuna.tsinghua.edu.cn/simple` 返回 403，报 `sqlglot==30.18.0` 无法解析。该次没有测试失败 ID。
+- 后端同一聚焦命令重试：PowerShell 进程先设 `$env:UV_DEFAULT_INDEX = 'https://pypi.org/simple'`，随后运行上述 `uv run --locked pytest ... -q`，退出码 **0**，**817 passed，0 failed，0 skipped，2 warnings，14 个测试文件**，43.82s。两个弃用 warning 分别为 Starlette TestClient 与 `httpx` 的兼容提示、单请求 `cookies=` 行为提示；不是测试失败。没有运行数据库容器门禁。
+- 前端聚焦命令 `pnpm rstest run unit/core/analytics/trace.test.ts unit/components/analytics/analytics-trace-panel.dom.test.tsx`，退出码 **0**，**2 files / 28 passed / 0 failed / 0 skipped**，5.14s。
+- 矩阵静态检查通过（PowerShell here-string 管道到 `python -`，以 UTF-8 读取 11 份变更文档，校验尾随空白/末尾换行、AS ID 顺序、三种状态值以及矩阵所引用文件和测试标识存在）：退出码 **0**，**15 行，所有引用可定位；状态计数为 2 项自动测试已证实 / 10 项仅设计或未真实验收 / 3 项与实现矛盾**。AS-13 的 HIGH/PII 拒绝与审计子行为有自动测试，但整项还要求跨工具响应、Gateway events、receipt、artifact 和报告投影扫描，故按整体契约归为未验收。第一次校验器因 PowerShell→Python 命令管道传输源码时的编码，把脚本内中文状态标签转成乱码，退出码 **1**；矩阵文件本身 UTF-8 正常、标签无乱码。将标签改用 Python `\u` Unicode 转义的修正版退出码 **0**，全部行与引用校验通过。这是检查脚本输入编码问题，不是矩阵内容失败；没有遗漏的 AS ID。
+- `git diff --check` 退出码 **0**、无空白错误输出。提交前仓库核对为根目录 `D:\develop\workspace\InsightFlow`、`main` 分支、HEAD `bb6af491ee389460b52a9f84627a68388ea7de35`、固定 tag tree `2473c22e163a3879490848a7995eb2b7be7f6f50`；`git ls-files` 为 **2251**（两份新增文档尚未计入已跟踪数，提交后预计 2253）。`backend/uv.lock` 和 `frontend/pnpm-lock.yaml` SHA-256 与起点一致，未修改；此处未移动固定 tag。
+- 这批命令不需要也没有读取 `.env`，未发起模型请求、未创建数据库容器。本机历史数据库门禁仍只记录 PG 16.15 / MySQL 8.4.11 共 82 passed；原记录没有退出码，因此不将其表述为本切片新运行或完整业务分析验收。旧离线全量后端的 13 个失败仍按 Phase 5 记录保留，未在本切片重跑，也未标为通过。
+- 行为证据和端到端残差按 AS-01..AS-15 逐条记录于[契约矩阵](acceptance/phase-06d-contract-reconciliation.md)；AS-14 第三方 MCP 绕过路径仍是发布阻塞，但不阻止 6D2 对平台自有受控查询路径做独立验证。

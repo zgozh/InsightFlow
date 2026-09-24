@@ -8,6 +8,8 @@
 
 每个场景在通过时必须提交：执行命令、退出码、关键输出与证据位置。只写「测试通过」不构成验收。
 
+本文件描述目标发布验收，不自动表示当前代码已经具备或通过该场景。当前代码路径、测试 ID、命令实测和未覆盖范围以[Phase 6D1 契约对账矩阵](phase-06d-contract-reconciliation.md)为准；AS-14 目前仍是发布阻塞。
+
 ---
 
 ## AS-01 认证（authentication）
@@ -63,7 +65,7 @@
 - **Then** 执行受 statement timeout 约束：超时以明确的错误类别结束并记录审计，不无限占用连接
 - **And** 结果受 row cap 与 byte cap 约束，超出部分被截断而不返回，且截断事实在 run event 与审计中可见
 - **And** `MEDIUM` 风险查询使用更低超时与更低结果上限
-- **And** `HIGH` 风险查询在 V1 默认要求批准或拒绝，不静默执行
+- **And** V1 对 `HIGH` 风险查询一律以 `APPROVAL_REQUIRED` fail closed 拒绝，不签发可执行计划，也不静默执行；当前没有人工批准路径
 
 依据：报告 §10（statement timeout / row cap / byte cap、风险级别）、§14 Integration（EXPLAIN、timeout、row/byte cap）。
 
@@ -76,6 +78,8 @@
 - **And** 子 Agent 不得再创建子 Agent；数据库查询默认串行
 
 依据：报告 §7（运行数据流）、§8（Agent 责任与禁止能力）、§14 Workflow。
+
+现行状态边界：当前只有 `business-analysis` skill 提示 Lead 使用 `general-purpose` 子 Agent 扮演 Data Analyst 与 Reviewer；没有专职 SQL Analyst、Reviewer 或 Report Writer。该主链仍是目标验收，不是已实现的多专职 Agent 产品行为。
 
 ## AS-08 子 Agent 失败恢复（failed subagent recovery）
 
@@ -107,6 +111,8 @@
 
 依据：报告 §7、§8（Report Writer 能力边界）、§11（`analysis_reports`）、§14 E2E（下载报告）。
 
+现行状态边界：`publish_analysis_report` 只登记报告索引 metadata，不读取或校验 artifact 内容及其数字/evidence 对应关系。文件写入与 `present_files` 由 skill 指导 Lead 单独执行；完整链尚未真实端到端验收。
+
 ## AS-11 计划分析（scheduled analysis）
 
 - **Given** 已配置一个计划任务且 Scheduler 处于启用状态
@@ -117,25 +123,29 @@
 
 依据：报告 §4 KEEP（Scheduler）、§14 E2E（Scheduler 触发分析并生成 artifact）、§17 Recommended 范围。
 
+现行状态边界：Scheduler 已有通用非交互 Gateway run、持久队列与并发控制，但没有真实业务分析 artifact 链验收；不得把通用 Scheduler run 等同于已完成计划分析。
+
 ## AS-12 PostgreSQL 重启恢复（PostgreSQL restart recovery）
 
-- **Given** 一个已在 PostgreSQL 中持久化的 thread 及其 run、run_events、artifact 元数据
+- **Given** 运维已显式把应用 `database.backend` 配置为外部 PostgreSQL，并在其中持久化 thread、run、run_events、checkpoint 与 artifact 元数据
 - **When** Gateway 与 PostgreSQL 重启完成后
 - **Then** thread 与 run 历史可恢复并在前端继续查看
 - **And** 可从持久化 checkpoint 继续，已产生的 evidence 与 artifact 记录不丢失
 - **And** 重启过程中未完成的运行状态在恢复后如实反映，不被伪装为成功
 
-依据：报告 §4 KEEP（PostgreSQL persistence/checkpoint）、§14 E2E（PostgreSQL 持久化后重启恢复 thread/run）、§15（postgres 为默认 Compose 必选组件）。
+依据：报告 §4 KEEP（可选 PostgreSQL persistence/checkpoint）、§14 E2E（PostgreSQL 持久化后重启恢复 thread/run）、§15（应用 PostgreSQL 为显式外部配置，不属于默认 Compose）。
+
+现行状态边界：默认应用数据库是 SQLite；可选 PostgreSQL 后端的 Gateway/PostgreSQL 重启恢复尚未完整实测验收。
 
 ## AS-13 凭据与 PII 不进入日志和事件（secrets/PII absent from logs and events）
 
-- **Given** 数据源凭据仅通过环境变量或 secret file/provider 注入，数据库仅保存 `secret_ref` 而不保存明文密码
-- **When** 执行一次包含敏感列访问的完整分析
-- **Then** 日志、SSE 事件、receipt、artifact 与 `sql_query_audits` 中均不出现明文凭据，也不出现原始 PII 结果行
-- **And** 审计只保存 query hash 与脱敏后的 SQL，以及 EXPLAIN 摘要、row count、latency、outcome/error class
-- **And** 结果按 PII policy 与聚合策略脱敏；以凭据/PII 样本扫描全部输出通道（日志、事件、receipt、artifact、审计表）的结果为空
+- **Given** 数据源凭据仅通过环境变量或 secret file/provider 注入，数据库仅保存 `secret_ref` 而不保存明文密码；列标记为 sensitive/PII
+- **When** 认证用户请求包含该 HIGH 列的查询
+- **Then** V1 以 `APPROVAL_REQUIRED` fail closed 拒绝；不签发可执行 query plan ID、不执行任何业务数据库查询、不返回结果行
+- **And** 审计、工具响应、事件与报告投影只允许稳定决定码和已定义的安全 metadata，不包含明文凭据、原始 SQL、token 或原始 PII 结果行
+- **And** 标记为 sensitive/PII 的列在 V1 不支持“获批后查询”或动态结果脱敏；动态 PII 脱敏尚未实现，不得宣称已具备
 
-依据：报告 §10（PII 与聚合策略、结果脱敏）、§11（`secret_ref` 禁止明文、审计禁止保存敏感结果行）、§14 Security（凭据和 PII 不进入日志、SSE、receipt、artifact）。
+依据：报告 §10（V1 HIGH 拒绝策略）、§11（`secret_ref` 禁止明文、审计禁止保存敏感结果行）、§14 Security（拒绝路径的安全 metadata 边界）。
 
 ## AS-14 MCP 不能绕过查询策略（MCP cannot bypass query policy）
 
@@ -147,17 +157,22 @@
 
 依据：报告 §4 MODIFY（MCP 不能绕过统一查询安全层）、§9（MCP datasource adapter 也必须调用相同 Query Policy 契约）、§14 Security、§17（不把核心数据访问强行包装为 MCP）。
 
+现行状态：发布阻塞。任意第三方 MCP 工具没有被强制经平台 Query Policy；不得以“管理员不会配置危险 MCP”替代统一安全保证。该阻塞不阻止 6D2 验证平台自有受控 Analytics 路径。
+
 ## AS-15 四服务默认 Compose 启动（four-service default Compose startup）
 
-- **Given** 一份按默认配置准备的运行环境（`config.yaml` 与 secret 注入就绪）
+- **Given** 一份按默认配置准备的单机运行环境（`config.yaml` 与 secret 注入就绪）
 - **When** 执行默认 Compose 启动
-- **Then** 恰好启动四个默认服务：`nginx`、`frontend`、`gateway`、`postgres`，且仅在 gateway 通过 health 探针后才报告启动成功
+- **Then** 恰好启动四个默认服务：`nginx`、`frontend`、`gateway`、`redis`；生产 `make up` 仅在 Gateway readiness health 探针通过后报告启动成功
 - **And** 从 nginx 统一入口可完成登录并进入分析工作台
-- **And** PostgreSQL 不暴露公网端口，开发环境仅绑定 localhost
-- **And** `redis` 与 AIO sandbox 仅在显式启用 profile 时启动，默认不启动
+- **And** Nginx 入口默认只绑定 `127.0.0.1`，Gateway 与 Redis 端口不发布到宿主机
+- **And** 应用数据库默认为持久 SQLite（`backend/.deer-flow/data/deerflow.db`）；显式 PostgreSQL 应用数据库与业务 PostgreSQL/MySQL 均由运维作为外部依赖配置，不由默认 Compose 启动
+- **And** Redis 是默认必需服务；AIO sandbox 仅通过显式 DooD overlay 启用
 - **And** 冷启动路径不依赖任何已删除的 Provider/Provisioner 组件
 
-依据：报告 §1（默认容器 4）、§15（默认 Compose 与可选 profiles、PostgreSQL 端口约束）、§14 E2E。
+依据：报告 §1（四个默认容器预算）、§15（当前默认 Compose 拓扑与外部数据库边界）、§14 E2E。
+
+现行状态边界：2026-09-24 的本机记录验证了容器健康、入口 HTTP 路由和未登录保护，但没有创建管理员或完成认证后进入工作台；AS-01 的完整登录验收仍未完成。
 
 ---
 

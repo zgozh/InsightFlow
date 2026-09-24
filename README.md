@@ -34,7 +34,7 @@ Never commit config.yaml, extensions_config.json, .env, or provider credentials.
 
 ## Analytics and agent boundaries
 
-Analytics queries pass through the governed query service: datasource credentials stay in server-side secret references, query plans are authorized before execution, and audit history is retained. Agent tools cannot bypass that service to query a registered datasource.
+The built-in Analytics query tool uses the governed query service: datasource credentials stay in server-side secret references, query plans are authorized before execution, and audit history is retained. Arbitrary third-party MCP tools are not forced through this policy and may expose separate data access paths; universal MCP mediation remains a release blocker.
 
 The lead agent can delegate ordinary tasks to built-in subagents. Scheduled runs use the lead agent and the normal Gateway run lifecycle. Local sandbox commands run with the Gateway host's privileges; AIO uses a separate sandbox service. An external AIO provisioner is only a configured client endpoint: this repository does not ship or start that service.
 

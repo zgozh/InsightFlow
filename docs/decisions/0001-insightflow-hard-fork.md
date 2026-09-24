@@ -68,7 +68,7 @@ InsightFlow 以 ByteDance DeerFlow `v2.1.0-rc0`（上游 commit `769589e8daee14c
 
 4. **保留 ByteDance/DeerFlow 署名。** 保留原 `LICENSE` 与适用版权声明（MIT）。
 
-5. **规模按预算收敛，而非按单一文件数考核：** tracked files 目标 850–1050、硬上限 1200；生产源码 450–650；测试文件 250–350；默认容器 4 个。安全覆盖优先于文件数削减。
+5. **规模按预算收敛，而非按单一文件数考核：** tracked files 目标 850–1050、硬上限 1200；生产源码 450–650；测试文件 250–350；默认 Docker Compose 容器预算为 4 个，现行服务是 `nginx`、`frontend`、`gateway`、`redis`。Redis 是默认必需服务；SQLite 是应用数据库默认值，应用 PostgreSQL 需由运维显式配置外部实例，业务 PostgreSQL/MySQL 是外部数据源而不是 Compose 运行时服务。安全覆盖优先于文件数削减。部署事实与预算修订见 [ADR 0003](0003-deployment-and-release-contract-reconciliation.md)。
 
 ## Consequences
 

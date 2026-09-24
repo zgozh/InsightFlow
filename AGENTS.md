@@ -24,13 +24,16 @@ Agent、Projects/Documents/Trash、Browser 与上游 provider zoo 已删除。
 
 ## Service Topology
 
-A single `make dev` / Docker stack runs three cooperating services:
+Local `make dev` starts the three application-facing services. Both default Docker Compose files run four cooperating containers; the extra Redis container backs the Redis Streams bridge:
 
 | Service         | Port   | Role                                                                 |
 | --------------- | ------ | -------------------------------------------------------------------- |
 | **Nginx**       | `2026` | Unified reverse-proxy entry point — open this in the browser        |
 | **Gateway API** | `8001` | FastAPI REST API + embedded LangGraph-compatible agent runtime      |
 | **Frontend**    | `3000` | Next.js web interface                                               |
+| **Redis**       | `6379` | Docker Compose internal Redis Streams bridge; no host port is published |
+
+The default Docker Compose set is exactly `nginx`, `frontend`, `gateway`, and `redis`; Redis is a required default service, not an optional profile. The application database defaults to SQLite at `.deer-flow/data/deerflow.db` relative to the Gateway working directory, persisted under `backend/.deer-flow` in the default deployment. Operators may explicitly configure an external PostgreSQL application database. PostgreSQL/MySQL business databases are separate external data sources; neither is included in the default Compose stack.
 
 Nginx is the single public entry: it proxies `/api/*` to the Gateway, rewriting
 `/api/langgraph/*` onto the Gateway's native routes, and serves the frontend — see
