@@ -79,8 +79,6 @@ export interface Translations {
   welcome: {
     greeting: string;
     description: string;
-    createYourOwnSkill: string;
-    createYourOwnSkillDescription: string;
   };
 
   // Clipboard
@@ -182,7 +180,6 @@ export interface Translations {
   inputBox: {
     placeholder: string;
     disclaimer: string;
-    createSkillPrompt: string;
     addAttachments: string;
     referenceConversations: string;
     referenceConversationsSearch: string;
@@ -227,8 +224,6 @@ export interface Translations {
     reasoningEffortMediumDescription: string;
     reasoningEffortHigh: string;
     reasoningEffortHighDescription: string;
-    surpriseMe: string;
-    surpriseMePrompt: string;
     followupLoading: string;
     followupConfirmTitle: string;
     followupConfirmDescription: string;
@@ -255,16 +250,6 @@ export interface Translations {
       prompt: string;
       icon: LucideIcon;
     }[];
-    suggestionsCreate: (
-      | {
-          suggestion: string;
-          prompt: string;
-          icon: LucideIcon;
-        }
-      | {
-          type: "separator";
-        }
-    )[];
     pleaseWaitStreaming: string;
     stopStreamingUnavailable: string;
   };

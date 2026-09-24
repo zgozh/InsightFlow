@@ -1,10 +1,6 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type Route } from "@playwright/test";
 
-import {
-  handleRunStream,
-  MOCK_THREAD_ID,
-  mockLangGraphAPI,
-} from "./utils/mock-api";
+import { handleRunStream, mockLangGraphAPI } from "./utils/mock-api";
 
 function textFromMessageContent(content: unknown) {
   if (typeof content === "string") {
@@ -109,6 +105,109 @@ test.describe("Chat workspace", () => {
     const textarea = page.getByPlaceholder(/how can i assist you/i);
     await expect(textarea).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole("button", { name: /load more/i })).toBeHidden();
+  });
+
+  test("welcome examples fill an editable prompt in English and Chinese", async ({
+    page,
+  }) => {
+    let runRequests = 0;
+    page.on("request", (request) => {
+      if (request.method() === "POST" && request.url().includes("/runs")) {
+        runRequests += 1;
+      }
+    });
+
+    await page.goto("/workspace/chats/new?mode=skill");
+    const textarea = page.getByPlaceholder(/how can i assist you/i);
+    await expect(textarea).toBeVisible({ timeout: 15_000 });
+
+    const examples = page.locator('[data-slot="suggestions-list"]');
+    const englishExamples = [
+      "Business analysis",
+      "Web research",
+      "Evidence brief",
+      "Data quality",
+    ];
+    await expect(examples.getByRole("button")).toHaveCount(4);
+    for (const label of englishExamples) {
+      await expect(examples.getByRole("button", { name: label })).toBeVisible();
+    }
+    await expect(
+      page.getByRole("button", { name: "Create", exact: true }),
+    ).toBeHidden();
+    await expect(page.getByText("Create Your Own Skill")).toBeHidden();
+
+    await examples.getByRole("button", { name: "Business analysis" }).click();
+    await expect(textarea).toHaveValue(
+      "Analyze the connected sales data by month. Compare total revenue and ask me for any missing data before reaching a conclusion.",
+    );
+    expect(runRequests).toBe(0);
+
+    await page.evaluate(() => {
+      document.cookie = "locale=zh-CN; path=/; SameSite=Lax";
+    });
+    await page.reload();
+
+    const localizedTextarea = page.getByPlaceholder("今天我能为你做些什么？");
+    await expect(localizedTextarea).toBeVisible({ timeout: 15_000 });
+    const localizedExamples = page.locator('[data-slot="suggestions-list"]');
+    for (const label of ["经营分析", "网页研究", "证据摘要", "数据质量"]) {
+      await expect(
+        localizedExamples.getByRole("button", { name: label }),
+      ).toBeVisible();
+    }
+    await localizedExamples.getByRole("button", { name: "网页研究" }).click();
+    await expect(localizedTextarea).toHaveValue(
+      "研究[主题]的近期可靠来源，比较主要发现并附上来源链接。",
+    );
+    expect(runRequests).toBe(0);
+  });
+
+  test("welcome examples support focus, reduced motion, and narrow screens", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto("/workspace/chats/new");
+
+    const textarea = page.getByPlaceholder(/how can i assist you/i);
+    await expect(textarea).toBeVisible({ timeout: 15_000 });
+    const examples = page.locator('[data-slot="suggestions-list"]');
+    const buttons = examples.getByRole("button");
+    await expect(buttons).toHaveCount(4);
+
+    const measurements = await buttons.evaluateAll((elements) =>
+      elements.map((element) => {
+        const rect = element.getBoundingClientRect();
+        return { height: rect.height, width: rect.width };
+      }),
+    );
+    expect(measurements.every(({ height }) => height >= 44)).toBe(true);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+
+    const firstExample = buttons.first();
+    await firstExample.focus();
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Shift+Tab");
+    expect(
+      await firstExample.evaluate((element) =>
+        element.matches(":focus-visible"),
+      ),
+    ).toBe(true);
+    expect(
+      await firstExample.evaluate(
+        (element) => getComputedStyle(element).boxShadow !== "none",
+      ),
+    ).toBe(true);
+    expect(
+      await firstExample.evaluate(
+        (element) => getComputedStyle(element.parentElement!).animationName,
+      ),
+    ).toBe("none");
   });
 
   test("shows the localized AI disclaimer", async ({ page }) => {
@@ -867,6 +966,12 @@ test.describe("Chat workspace", () => {
   test("blocks suggestion template placeholders until replaced", async ({
     page,
   }) => {
+    const researchPrompt =
+      "Research recent, reliable sources about [topic], compare the main findings, and include source links.";
+    const completedResearchPrompt = researchPrompt.replace(
+      "[topic]",
+      "AI agents",
+    );
     let streamCalled = false;
     let submittedText: string | undefined;
     await page.route("**/runs/stream", (route) => {
@@ -898,17 +1003,13 @@ test.describe("Chat workspace", () => {
     await expect(textarea).toBeVisible({ timeout: 15_000 });
 
     await page.getByRole("button", { name: /research/i }).click();
-    await expect(textarea).toHaveValue(
-      "Conduct a deep dive research on [topic], and summarize the findings.",
-    );
+    await expect(textarea).toHaveValue(researchPrompt);
 
     await textarea.press("Enter");
     await page.waitForTimeout(500);
 
     expect(streamCalled).toBe(false);
-    await expect(textarea).toHaveValue(
-      "Conduct a deep dive research on [topic], and summarize the findings.",
-    );
+    await expect(textarea).toHaveValue(researchPrompt);
     await expect
       .poll(
         () =>
@@ -921,18 +1022,14 @@ test.describe("Chat workspace", () => {
       .toBe("[topic]");
 
     await textarea.pressSequentially("AI agents");
-    await expect(textarea).toHaveValue(
-      "Conduct a deep dive research on AI agents, and summarize the findings.",
-    );
+    await expect(textarea).toHaveValue(completedResearchPrompt);
 
     await textarea.press("Enter");
 
     await expect.poll(() => streamCalled, { timeout: 10_000 }).toBeTruthy();
     await expect
       .poll(() => submittedText, { timeout: 10_000 })
-      .toBe(
-        "Conduct a deep dive research on AI agents, and summarize the findings.",
-      );
+      .toBe(completedResearchPrompt);
   });
 
   test("slash skill command is submitted as normal chat text", async ({

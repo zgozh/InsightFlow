@@ -61,7 +61,6 @@ import { env } from "@/env";
 import { cn } from "@/lib/utils";
 
 import { ChatBox } from "./chat-box";
-import { useSpecificChatMode } from "./use-chat-mode";
 import { useThreadChat } from "./use-thread-chat";
 export default function ChatPage() {
   const { t } = useI18n();
@@ -95,8 +94,6 @@ export default function ChatPage() {
   const backendTokenUsage = threadTokenUsageToTokenUsage(threadTokenUsage.data);
   const contextUsage = selectContextUsage(threadTokenUsage.data);
   const mountedRef = useRef(false);
-  useSpecificChatMode();
-
   useEffect(() => {
     mountedRef.current = true;
   }, []);
@@ -451,9 +448,7 @@ export default function ChatPage() {
                           extraHeader={
                             isWelcomeMode &&
                             !hasGoal &&
-                            !hasTodos && (
-                              <Welcome mode={settings.context.mode} />
-                            )
+                            !hasTodos && <Welcome />
                           }
                           disabled={
                             isMock ||

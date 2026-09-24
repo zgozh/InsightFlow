@@ -1,14 +1,30 @@
 "use client";
 
-import { useSearchParams } from "next/navigation";
-import { useEffect, useMemo } from "react";
-
 import { useI18n } from "@/core/i18n/hooks";
 import { cn } from "@/lib/utils";
 
-import { AuroraText } from "../ui/aurora-text";
-
-let waved = false;
+function EvidenceMark() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="text-primary size-7 shrink-0"
+      fill="none"
+      viewBox="0 0 32 32"
+    >
+      <path
+        d="M7 23 15 9l11 8"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeOpacity=".55"
+        strokeWidth="1.5"
+      />
+      <circle cx="7" cy="23" r="2.4" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="15" cy="9" r="2.4" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="26" cy="17" r="2.4" fill="currentColor" />
+    </svg>
+  );
+}
 
 function WelcomeDescription({ children }: { children: string }) {
   return (
@@ -18,25 +34,8 @@ function WelcomeDescription({ children }: { children: string }) {
   );
 }
 
-export function Welcome({
-  className,
-  mode,
-}: {
-  className?: string;
-  mode?: "ultra" | "pro" | "thinking" | "flash";
-}) {
+export function Welcome({ className }: { className?: string }) {
   const { t } = useI18n();
-  const searchParams = useSearchParams();
-  const isUltra = useMemo(() => mode === "ultra", [mode]);
-  const colors = useMemo(() => {
-    if (isUltra) {
-      return ["#efefbb", "#e9c665", "#e3a812"];
-    }
-    return ["var(--color-foreground)"];
-  }, [isUltra]);
-  useEffect(() => {
-    waved = true;
-  }, []);
   return (
     <div
       className={cn(
@@ -45,28 +44,14 @@ export function Welcome({
       )}
     >
       <div className="max-w-full text-2xl font-bold">
-        {searchParams.get("mode") === "skill" ? (
-          `✨ ${t.welcome.createYourOwnSkill} ✨`
-        ) : (
-          <div className="flex max-w-full flex-wrap items-center justify-center gap-2">
-            <div className={cn("inline-block", !waved ? "animate-wave" : "")}>
-              {isUltra ? "🚀" : "👋"}
-            </div>
-            <AuroraText colors={colors}>{t.welcome.greeting}</AuroraText>
-          </div>
-        )}
+        <div className="flex max-w-full flex-wrap items-center justify-center gap-2">
+          <EvidenceMark />
+          <span>{t.welcome.greeting}</span>
+        </div>
       </div>
-      {searchParams.get("mode") === "skill" ? (
-        <div className="text-muted-foreground max-w-full text-sm">
-          <WelcomeDescription>
-            {t.welcome.createYourOwnSkillDescription}
-          </WelcomeDescription>
-        </div>
-      ) : (
-        <div className="text-muted-foreground max-w-full text-sm">
-          <WelcomeDescription>{t.welcome.description}</WelcomeDescription>
-        </div>
-      )}
+      <div className="text-muted-foreground max-w-full text-sm">
+        <WelcomeDescription>{t.welcome.description}</WelcomeDescription>
+      </div>
     </div>
   );
 }

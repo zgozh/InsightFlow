@@ -1,12 +1,8 @@
 import {
-  CompassIcon,
-  GraduationCapIcon,
-  ImageIcon,
+  ChartColumnIcon,
+  ListChecksIcon,
   MicroscopeIcon,
   PenLineIcon,
-  ShapesIcon,
-  SparklesIcon,
-  VideoIcon,
 } from "lucide-react";
 
 import { analyticsEnUS } from "./analytics.en-US";
@@ -90,11 +86,7 @@ export const enUS: Translations = {
   welcome: {
     greeting: "Hello, again!",
     description:
-      "Welcome to InsightFlow, a governed business-analysis workspace. With built-in and custom skills, InsightFlow queries data under your access policy and audit trail, checks metric definitions, and turns the result into a traceable report backed by evidence.",
-
-    createYourOwnSkill: "Create Your Own Skill",
-    createYourOwnSkillDescription:
-      "Create your own skill to extend InsightFlow. Custom skills run under the same governed query and audit path — they extend the workflow, they never bypass it.",
+      "Start with governed business analysis, web research, or evidence-based writing. Examples only fill an editable prompt; review it before sending.",
   },
 
   // Clipboard
@@ -210,8 +202,6 @@ export const enUS: Translations = {
   inputBox: {
     placeholder: "How can I assist you today?",
     disclaimer: "InsightFlow is AI and can make mistakes",
-    createSkillPrompt:
-      "We're going to build a new skill step by step with `skill-creator`. To start, what do you want this skill to do?",
     addAttachments: "Add attachments",
     referenceConversations: "Reference a conversation",
     referenceConversationsSearch: "Search conversations",
@@ -269,8 +259,6 @@ export const enUS: Translations = {
     reasoningEffortHigh: "High",
     reasoningEffortHighDescription:
       "Full-dimensional Logic Deduction + Multi-path Verification + Backward Check",
-    surpriseMe: "Surprise",
-    surpriseMePrompt: "Surprise me",
     followupLoading: "Generating follow-up questions...",
     followupConfirmTitle: "Send suggestion?",
     followupConfirmDescription:
@@ -299,51 +287,28 @@ export const enUS: Translations = {
     compactFailed: "Context compaction failed.",
     suggestions: [
       {
-        suggestion: "Write",
-        prompt: "Write a blog post about the latest trends on [topic]",
-        icon: PenLineIcon,
+        suggestion: "Business analysis",
+        prompt:
+          "Analyze the connected sales data by month. Compare total revenue and ask me for any missing data before reaching a conclusion.",
+        icon: ChartColumnIcon,
       },
       {
-        suggestion: "Research",
+        suggestion: "Web research",
         prompt:
-          "Conduct a deep dive research on [topic], and summarize the findings.",
+          "Research recent, reliable sources about [topic], compare the main findings, and include source links.",
         icon: MicroscopeIcon,
       },
       {
-        suggestion: "Collect",
-        prompt: "Collect data from [source] and create a report.",
-        icon: ShapesIcon,
-      },
-      {
-        suggestion: "Learn",
-        prompt: "Learn about [topic] and create a tutorial.",
-        icon: GraduationCapIcon,
-      },
-    ],
-    suggestionsCreate: [
-      {
-        suggestion: "Webpage",
-        prompt: "Create a webpage about [topic]",
-        icon: CompassIcon,
-      },
-      {
-        suggestion: "Image",
-        prompt: "Create an image about [topic]",
-        icon: ImageIcon,
-      },
-      {
-        suggestion: "Video",
-        prompt: "Create a video about [topic]",
-        icon: VideoIcon,
-      },
-      {
-        type: "separator",
-      },
-      {
-        suggestion: "Skill",
+        suggestion: "Evidence brief",
         prompt:
-          "We're going to build a new skill step by step with `skill-creator`. To start, what do you want this skill to do?",
-        icon: SparklesIcon,
+          "Draft a concise evidence brief about [topic], separating verified facts from inference and citing sources.",
+        icon: PenLineIcon,
+      },
+      {
+        suggestion: "Data quality",
+        prompt:
+          "Check the connected dataset for missing values and unusual changes. Show the evidence and limits of the analysis.",
+        icon: ListChecksIcon,
       },
     ],
     pleaseWaitStreaming: "Please wait for the current response to finish.",

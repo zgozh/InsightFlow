@@ -1,12 +1,8 @@
 import {
-  CompassIcon,
-  GraduationCapIcon,
-  ImageIcon,
+  ChartColumnIcon,
+  ListChecksIcon,
   MicroscopeIcon,
   PenLineIcon,
-  ShapesIcon,
-  SparklesIcon,
-  VideoIcon,
 } from "lucide-react";
 
 import { analyticsZhCN } from "./analytics.zh-CN";
@@ -89,11 +85,7 @@ export const zhCN: Translations = {
   welcome: {
     greeting: "你好，欢迎回来！",
     description:
-      "欢迎使用 InsightFlow，一个面向企业的受控经营分析工作台。通过内置和自定义的 Skills，\nInsightFlow 可以在权限与审计约束下查询数据、核对指标口径，\n并把结论连同 evidence 一起整理成可追溯的分析报告。",
-
-    createYourOwnSkill: "创建你自己的 Agent SKill",
-    createYourOwnSkillDescription:
-      "创建你的 Agent Skill 来释放 InsightFlow 的潜力。通过自定义技能，InsightFlow\n可以在同一套受控查询与审计约束下扩展你的分析流程，\n而不是绕过它们。",
+      "从受控经营数据分析、网页研究或证据写作开始。点击下方示例只会填入可编辑提示词；确认后再发送。",
   },
 
   // Clipboard
@@ -201,8 +193,6 @@ export const zhCN: Translations = {
   inputBox: {
     placeholder: "今天我能为你做些什么？",
     disclaimer: "内容由 InsightFlow 生成，重要信息请务必核查",
-    createSkillPrompt:
-      "我们一起用 skill-creator 技能来创建一个技能吧。先问问我希望这个技能能做什么。",
     addAttachments: "添加附件",
     referenceConversations: "引用会话",
     referenceConversationsSearch: "搜索会话",
@@ -251,8 +241,6 @@ export const zhCN: Translations = {
     reasoningEffortMediumDescription: "多层逻辑分析 + 基础验证",
     reasoningEffortHigh: "高",
     reasoningEffortHighDescription: "全维度逻辑推演 + 多路径验证 + 反推校验",
-    surpriseMe: "小惊喜",
-    surpriseMePrompt: "给我一个小惊喜吧",
     followupLoading: "正在生成可能的后续问题...",
     followupConfirmTitle: "发送建议问题？",
     followupConfirmDescription: "当前输入框已有内容，选择发送方式。",
@@ -278,50 +266,25 @@ export const zhCN: Translations = {
     compactFailed: "上下文压缩失败。",
     suggestions: [
       {
-        suggestion: "写作",
-        prompt: "撰写一篇关于[主题]的博客文章",
-        icon: PenLineIcon,
+        suggestion: "经营分析",
+        prompt:
+          "按月份分析已连接的销售数据，比较总销售额；若缺少必要数据，请先向我确认。",
+        icon: ChartColumnIcon,
       },
       {
-        suggestion: "研究",
-        prompt: "深入浅出的研究一下[主题]，并总结发现。",
+        suggestion: "网页研究",
+        prompt: "研究[主题]的近期可靠来源，比较主要发现并附上来源链接。",
         icon: MicroscopeIcon,
       },
       {
-        suggestion: "收集",
-        prompt: "从[来源]收集数据并创建报告。",
-        icon: ShapesIcon,
+        suggestion: "证据摘要",
+        prompt: "为[主题]撰写简明证据摘要，区分已核实事实与推断并引用来源。",
+        icon: PenLineIcon,
       },
       {
-        suggestion: "学习",
-        prompt: "学习关于[主题]并创建教程。",
-        icon: GraduationCapIcon,
-      },
-    ],
-    suggestionsCreate: [
-      {
-        suggestion: "网页",
-        prompt: "生成一个关于[主题]的网页",
-        icon: CompassIcon,
-      },
-      {
-        suggestion: "图片",
-        prompt: "生成一个关于[主题]的图片",
-        icon: ImageIcon,
-      },
-      {
-        suggestion: "视频",
-        prompt: "生成一个关于[主题]的视频",
-        icon: VideoIcon,
-      },
-      {
-        type: "separator",
-      },
-      {
-        suggestion: "技能",
-        prompt:
-          "我们一起用 skill-creator 技能来创建一个技能吧。先问问我希望这个技能能做什么。",
-        icon: SparklesIcon,
+        suggestion: "数据质量",
+        prompt: "检查已连接数据中的缺失值和异常变化，说明判断依据与分析限制。",
+        icon: ListChecksIcon,
       },
     ],
     pleaseWaitStreaming: "请等待当前响应完成。",
