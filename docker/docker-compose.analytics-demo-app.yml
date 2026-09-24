@@ -1,0 +1,21 @@
+# 与 docker-compose.analytics-demo.yml 一起显式使用；默认 make up 不会加载本文件。
+# 启动命令必须在 `.env.analytics-demo` 设置独立的绝对 `DEER_FLOW_HOME`。
+services:
+  gateway:
+    container_name: insightflow-analytics-demo-gateway
+    environment:
+      ANALYTICS_DEMO_READER_CREDENTIAL: ${ANALYTICS_DEMO_READER_CREDENTIAL:?create .env.analytics-demo first}
+      NO_PROXY: ${NO_PROXY:-}${NO_PROXY:+,}analytics-demo-postgresql
+      no_proxy: ${no_proxy:-}${no_proxy:+,}analytics-demo-postgresql
+    depends_on:
+      analytics-demo-postgresql:
+        condition: service_healthy
+
+  frontend:
+    container_name: insightflow-analytics-demo-frontend
+
+  nginx:
+    container_name: insightflow-analytics-demo-nginx
+
+  redis:
+    container_name: insightflow-analytics-demo-redis

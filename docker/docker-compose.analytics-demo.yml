@@ -1,0 +1,50 @@
+# 持久化的本机 PostgreSQL 16 演示数据库。只有显式追加此文件才会启动。
+# 根目录相对路径按 Compose 项目首个文件 docker-compose.yaml 解析。
+services:
+  analytics-demo-postgresql:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: analytics_test
+      POSTGRES_USER: analytics_admin
+      POSTGRES_PASSWORD: ${ANALYTICS_DEMO_ADMIN_PASSWORD:?create .env.analytics-demo first}
+      ANALYTICS_DEMO_DB_PASSWORD: ${ANALYTICS_DEMO_DB_PASSWORD:?create .env.analytics-demo first}
+    entrypoint: ["/bin/sh", "/usr/local/bin/analytics-demo-entrypoint.sh"]
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/tmp/analytics-demo-server.crt
+      - -c
+      - ssl_key_file=/tmp/analytics-demo-server.key
+    volumes:
+      - analytics-demo-data:/var/lib/postgresql/data
+      - ../.analytics-demo/server.crt:/run/analytics-demo-tls/server.crt:ro
+      - ../.analytics-demo/server.key:/run/analytics-demo-tls/server.key:ro
+    configs:
+      - source: analytics_demo_seed
+        target: /docker-entrypoint-initdb.d/10-analytics-demo.sql
+      - source: analytics_demo_entrypoint
+        target: /usr/local/bin/analytics-demo-entrypoint.sh
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    networks:
+      - deer-flow
+    restart: unless-stopped
+
+volumes:
+  analytics-demo-data: {}
+
+configs:
+  analytics_demo_seed:
+    file: ./analytics-demo-init.sql
+  analytics_demo_entrypoint:
+    file: ./analytics-demo-postgres-entrypoint.sh
+
+networks:
+  deer-flow:
+    driver: bridge

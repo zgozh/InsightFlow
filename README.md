@@ -30,6 +30,8 @@ Docker trial requirements: Docker Desktop/Compose, `make`, Python 3.12+, and `uv
 
 Open http://localhost:2026 and create the first administrator account at `/setup`. The published Nginx port binds to loopback by default. Run `make down` to stop the Docker stack. For source development, run `make install` followed by `make dev`. See the [local trial guide](docs/LOCAL_TRIAL.md) for PowerShell steps, model configuration, and Analytics prerequisites.
 
+The persistent synthetic PostgreSQL 16 walkthrough is an opt-in Compose overlay documented in the [local trial guide](docs/LOCAL_TRIAL.md); `make up` does not start it.
+
 Never commit config.yaml, extensions_config.json, .env, or provider credentials. See [configuration](backend/docs/CONFIGURATION.md) and [deployment](Install.md) for setup details.
 
 ## Analytics and agent boundaries

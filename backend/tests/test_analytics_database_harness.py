@@ -16,14 +16,28 @@
 
 from __future__ import annotations
 
+import importlib.util
+import json
 from pathlib import Path
 
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_PATH = REPO_ROOT / "docker" / "docker-compose.analytics-test.yml"
+DEMO_COMPOSE_PATH = REPO_ROOT / "docker" / "docker-compose.analytics-demo.yml"
+DEMO_APP_COMPOSE_PATH = REPO_ROOT / "docker" / "docker-compose.analytics-demo-app.yml"
+DEMO_INIT_PATH = REPO_ROOT / "docker" / "analytics-demo-init.sql"
 
 EXPECTED_MYSQL_IMAGE = "mysql:8.4"
+RUNNER_PATH = REPO_ROOT / "scripts" / "test_analytics_databases.py"
+
+
+def _runner():
+    spec = importlib.util.spec_from_file_location("test_analytics_databases_runner", RUNNER_PATH)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _compose() -> dict:
@@ -80,3 +94,75 @@ def test_postgresql_port_is_published_on_loopback_only():
 
     assert ports
     assert all(entry.startswith("127.0.0.1:") for entry in ports), ports
+
+
+def test_postgresql_gate_injects_the_restricted_demo_reader_credential(monkeypatch):
+    runner = _runner()
+    monkeypatch.setenv("ANALYTICS_PG_PORT", "55432")
+
+    environment = runner._test_environment(["postgresql"])
+
+    credential = json.loads(environment["ANALYTICS_TEST_PG_DEMO_READONLY_CREDENTIAL"])
+    assert credential == {
+        "engine": "postgresql",
+        "host": "127.0.0.1",
+        "port": 55432,
+        "database": "analytics_test",
+        "username": "analytics_demo_reader",
+        "password": "analytics_demo_reader_pw",
+        "tls_mode": "disable",
+    }
+
+
+def test_postgresql_gate_uses_a_scoped_compose_project_and_non_destructive_teardown():
+    runner = _runner()
+
+    assert runner.COMPOSE_PROJECT == "insightflow-analytics-test"
+    command = runner._compose_command("down", "--timeout", "20", env_file=Path("empty-compose.env"))
+
+    assert command[command.index("-p") + 1] == runner.COMPOSE_PROJECT
+    assert command[command.index("--env-file") + 1] == "empty-compose.env"
+    assert "--volumes" not in command
+    assert "--remove-orphans" not in command
+
+
+def test_manual_demo_is_an_opt_in_postgresql_16_stack_with_private_persistent_storage():
+    compose = yaml.safe_load(DEMO_COMPOSE_PATH.read_text(encoding="utf-8"))
+    service = compose["services"]["analytics-demo-postgresql"]
+    default_compose = yaml.safe_load((REPO_ROOT / "docker" / "docker-compose.yaml").read_text(encoding="utf-8"))
+
+    assert set(default_compose["services"]) == {"nginx", "frontend", "gateway", "redis"}
+    assert service["image"] == "postgres:16"
+    assert "ports" not in service
+    assert service["healthcheck"]["test"]
+    assert "deer-flow" in service["networks"]
+    assert "analytics-demo-data:/var/lib/postgresql/data" in service["volumes"]
+    assert set(compose["volumes"]) == {"analytics-demo-data"}
+    assert "POSTGRES_PASSWORD" in service["environment"]
+    assert "ANALYTICS_DEMO_DB_PASSWORD" in service["environment"]
+
+    app_compose = yaml.safe_load(DEMO_APP_COMPOSE_PATH.read_text(encoding="utf-8"))
+    assert {"gateway", "frontend", "nginx", "redis"} <= set(app_compose["services"])
+    container_names = {item["container_name"] for item in app_compose["services"].values()}
+    assert container_names == {
+        "insightflow-analytics-demo-gateway",
+        "insightflow-analytics-demo-frontend",
+        "insightflow-analytics-demo-nginx",
+        "insightflow-analytics-demo-redis",
+    }
+    gateway = app_compose["services"]["gateway"]
+    assert any("analytics-demo-postgresql" in str(item) for item in gateway["depends_on"])
+    assert any("ANALYTICS_DEMO_READER_CREDENTIAL" in str(item) for item in gateway["environment"])
+    assert "DEER_FLOW_HOME" in DEMO_APP_COMPOSE_PATH.read_text(encoding="utf-8")
+    ignored = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
+    assert ".env.analytics-demo" in ignored and "/.analytics-demo/" in ignored
+
+
+def test_persistent_demo_seed_has_no_test_observer_or_static_reader_password():
+    seed = DEMO_INIT_PATH.read_text(encoding="utf-8").casefold()
+
+    assert "pg_stat_statements" not in seed
+    assert "analytics_demo_observer" not in seed
+    assert "analytics_demo_reader_pw" not in seed
+    assert "\\getenv demo_reader_password analytics_demo_db_password" in seed
+    assert "select (order_id, order_date, region, product, status, amount)" in seed

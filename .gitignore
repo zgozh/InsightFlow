@@ -28,6 +28,8 @@ backend/scripts/benchmark/*.jsonl
 
 # Environment variables
 .env
+.env.analytics-demo
+/.analytics-demo/
 
 # Configuration files
 config.yaml

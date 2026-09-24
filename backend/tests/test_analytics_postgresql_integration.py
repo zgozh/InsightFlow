@@ -416,6 +416,8 @@ def test_connect_args_carry_only_the_connect_timeout():
 
 _CREDENTIAL_ENV = "ANALYTICS_TEST_PG_CREDENTIAL"
 _READONLY_CREDENTIAL_ENV = "ANALYTICS_TEST_PG_READONLY_CREDENTIAL"
+_DEMO_READONLY_CREDENTIAL_ENV = "ANALYTICS_TEST_PG_DEMO_READONLY_CREDENTIAL"
+_OBSERVER_CREDENTIAL_ENV = "ANALYTICS_TEST_PG_OBSERVER_CREDENTIAL"
 _TIMEOUT_MARKER = "insightflow_timeout_probe"
 
 
@@ -534,6 +536,328 @@ class TestPostgreSQLAgainstRealDatabase:
         assert estimate.estimated_rows > 0
         assert estimate.engine_cost > 0
         assert estimate.plan_digest == _canonical_digest(document)
+
+    async def test_synthetic_dataset_is_readable_by_the_restricted_demo_principal(self):
+        """演示主体只能用真实 column grants 读取合成订单的白名单字段。"""
+
+        engine = _engine(PostgreSQLRuntime(), variable=_DEMO_READONLY_CREDENTIAL_ENV)
+        try:
+            async with engine.connect() as connection:
+                first_order = (await connection.exec_driver_sql("SELECT order_id FROM demo.orders ORDER BY order_id LIMIT 1")).scalar_one()
+        finally:
+            await engine.dispose()
+
+        assert first_order == 1
+
+    async def test_demo_reader_cannot_read_outside_its_columns_or_change_data(self):
+        from sqlalchemy.exc import DBAPIError
+
+        engine = _engine(PostgreSQLRuntime(), variable=_DEMO_READONLY_CREDENTIAL_ENV)
+        denied_sql = (
+            "SELECT id FROM public.orders LIMIT 1",
+            "SELECT internal_margin FROM demo.internal_margin LIMIT 1",
+            "SELECT customer_email FROM demo.orders LIMIT 1",
+            "INSERT INTO demo.orders (order_id, order_date, region, product, status, amount, customer_email, internal_note) VALUES (99991, DATE '2026-01-01', 'North', 'Atlas', 'paid', 1.00, 'fake@invalid', 'synthetic')",
+            "UPDATE demo.orders SET amount = 999.00 WHERE order_id = 1",
+            "CREATE TABLE demo.d6d2_direct_ddl_probe (id integer)",
+            "CREATE TEMP TABLE d6d2_direct_temp_probe (id integer)",
+        )
+        try:
+            for sql in denied_sql:
+                async with engine.connect() as connection:
+                    with pytest.raises(DBAPIError) as caught:
+                        await connection.exec_driver_sql(sql)
+                assert getattr(caught.value.orig, "sqlstate", None) == "42501", sql
+        finally:
+            await engine.dispose()
+
+    async def test_postgresql_records_statements_for_no_execution_rejection_proofs(self):
+        engine = _engine(PostgreSQLRuntime())
+        try:
+            async with engine.connect() as connection:
+                installed = (await connection.exec_driver_sql("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements')")).scalar_one()
+        finally:
+            await engine.dispose()
+
+        assert installed is True
+
+    async def test_january_paid_revenue_runs_through_registered_services_and_tool(self, tmp_path):
+        """经服务和 Agent tool 实际 plan→execute；本用例不启动模型或 HTTP Agent run。"""
+
+        import json
+        from types import SimpleNamespace
+
+        from langgraph.prebuilt.tool_node import ToolRuntime
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+        from sqlalchemy.pool import NullPool
+
+        from app.analytics.agent.runtime import bind_analytics_services, clear_analytics_services
+        from app.analytics.agent.tools import inspect_business_catalog, query_business_data
+        from app.analytics.composition import build_analytics_services
+        from app.analytics.domain import (
+            ColumnAccess,
+            ColumnAccessRule,
+            ColumnSchema,
+            ColumnSensitivity,
+            DatasourceEngine,
+            MetricDefinition,
+            MetricStatus,
+            RelationAccessRule,
+            RelationSchema,
+        )
+
+        control_engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'analytics-control.db'}", poolclass=NullPool, echo=False)
+        services = await build_analytics_services(
+            config=SimpleNamespace(database=SimpleNamespace(backend="sqlite")),
+            engine=control_engine,
+            session_factory=async_sessionmaker(control_engine, expire_on_commit=False),
+            backend="sqlite",
+        )
+        assert services is not None
+        try:
+            datasource = await services.administration.create_datasource(
+                owner_id="demo-owner",
+                name="合成订单库",
+                engine=DatasourceEngine.POSTGRESQL,
+                secret_ref=f"env://{_DEMO_READONLY_CREDENTIAL_ENV}",
+                default_schema="demo",
+            )
+            await services.administration.replace_schema(
+                owner_id="demo-owner",
+                datasource_id=datasource.id,
+                version="demo-schema-v1",
+                default_schema="demo",
+                relations=(
+                    RelationSchema(
+                        name="orders",
+                        schema="demo",
+                        columns=(
+                            ColumnSchema(name="order_id", data_type="integer"),
+                            ColumnSchema(name="order_date", data_type="date"),
+                            ColumnSchema(name="region", data_type="text"),
+                            ColumnSchema(name="product", data_type="text"),
+                            ColumnSchema(name="status", data_type="text"),
+                            ColumnSchema(name="amount", data_type="numeric(12,2)"),
+                            ColumnSchema(name="customer_email", data_type="text", sensitivity=ColumnSensitivity.PII),
+                            ColumnSchema(name="internal_note", data_type="text", sensitivity=ColumnSensitivity.SENSITIVE),
+                        ),
+                    ),
+                ),
+                expected_version=None,
+            )
+            await services.administration.replace_policy(
+                owner_id="demo-owner",
+                datasource_id=datasource.id,
+                principal_id="demo-user",
+                version="demo-policy-v1",
+                relations=(
+                    RelationAccessRule(
+                        name="orders",
+                        schema="demo",
+                        columns=(
+                            ColumnAccessRule(name="order_id", access=ColumnAccess.ALLOW),
+                            ColumnAccessRule(name="order_date", access=ColumnAccess.ALLOW),
+                            ColumnAccessRule(name="region", access=ColumnAccess.ALLOW),
+                            ColumnAccessRule(name="product", access=ColumnAccess.ALLOW),
+                            ColumnAccessRule(name="status", access=ColumnAccess.ALLOW),
+                            ColumnAccessRule(name="amount", access=ColumnAccess.ALLOW),
+                            ColumnAccessRule(name="customer_email", access=ColumnAccess.ALLOW),
+                        ),
+                    ),
+                ),
+                allowed_functions=("and", "cast", "count", "sum"),
+                expected_version=None,
+            )
+            for metric in (
+                MetricDefinition(
+                    key="january_paid_revenue",
+                    owner_id="demo-user",
+                    name="1 月已支付收入",
+                    description="统计 2026 年 1 月 paid 状态订单的金额。",
+                    expression="sum(amount)",
+                    dimensions=("order_date", "status"),
+                    version=1,
+                    status=MetricStatus.ACTIVE,
+                ),
+                MetricDefinition(
+                    key="january_paid_revenue_by_region",
+                    owner_id="demo-user",
+                    name="1 月各地区已支付收入",
+                    description="按地区统计 2026 年 1 月 paid 状态订单的金额。",
+                    expression="sum(amount)",
+                    dimensions=("region", "order_date", "status"),
+                    version=1,
+                    status=MetricStatus.ACTIVE,
+                ),
+                MetricDefinition(
+                    key="january_refund_order_ratio",
+                    owner_id="demo-user",
+                    name="1 月退款订单占比",
+                    description="2026 年 1 月 refunded 订单数占当月全部订单的比例。",
+                    expression="count(refunded orders) / count(orders)",
+                    dimensions=("order_date", "status"),
+                    version=1,
+                    status=MetricStatus.ACTIVE,
+                ),
+            ):
+                await services.administration.save_metric(owner_id="demo-user", metric=metric)
+            bind_analytics_services(services)
+            runtime = ToolRuntime(state={}, context={"user_id": "demo-user"}, config={}, stream_writer=lambda _: None, tool_call_id=None, store=None, tools=[])
+            catalog = json.loads(await inspect_business_catalog.ainvoke({"runtime": runtime}))
+            question_sql = (
+                "SELECT SUM(amount) AS revenue FROM demo.orders WHERE order_date >= DATE '2026-01-01' AND order_date < DATE '2026-02-01' AND status = 'paid' LIMIT 1",
+                "SELECT region, SUM(amount) AS paid_revenue FROM demo.orders WHERE order_date >= DATE '2026-01-01' AND order_date < DATE '2026-02-01' AND status = 'paid' GROUP BY region ORDER BY region LIMIT 10",
+                "SELECT COUNT(*) FILTER (WHERE status = 'refunded') AS refunded_orders, COUNT(*) AS total_orders FROM demo.orders WHERE order_date >= DATE '2026-01-01' AND order_date < DATE '2026-02-01' LIMIT 1",
+            )
+            payloads = [json.loads(await query_business_data.ainvoke({"datasource_id": datasource.id, "sql": sql, "runtime": runtime})) for sql in question_sql]
+            repeated = json.loads(await query_business_data.ainvoke({"datasource_id": datasource.id, "sql": question_sql[0], "runtime": runtime}))
+            from sqlalchemy import event, text
+            from sqlalchemy.engine import Engine
+
+            observer_engine = _engine(PostgreSQLRuntime(), variable=_OBSERVER_CREDENTIAL_ENV)
+            denied_cases = (
+                ("SELECT internal_margin AS d6d2_unlisted_relation FROM demo.internal_margin LIMIT 1", "d6d2_unlisted_relation", "unknown_relation"),
+                ("SELECT internal_note AS d6d2_unlisted_column FROM demo.orders LIMIT 1", "d6d2_unlisted_column", "column_not_allowed"),
+                (
+                    "INSERT INTO demo.orders (order_id, order_date, region, product, status, amount, customer_email, internal_note) "
+                    "VALUES (99992, DATE '2026-01-01', 'North', 'Atlas', 'paid', 1.00, 'fake@invalid', 'synthetic') "
+                    "RETURNING order_id AS d6d2_denied_insert",
+                    "d6d2_denied_insert",
+                    "unsupported_statement",
+                ),
+                ("UPDATE demo.orders SET amount = 888.00 WHERE order_id = 1 RETURNING order_id AS d6d2_denied_update", "d6d2_denied_update", "unsupported_statement"),
+                ("CREATE TABLE demo.d6d2_denied_ddl (id integer)", "d6d2_denied_ddl", "unsupported_statement"),
+                ("SELECT order_id AS d6d2_multi_probe FROM demo.orders LIMIT 1; SELECT order_id AS d6d2_multi_probe FROM demo.orders LIMIT 1", "d6d2_multi_probe", "multiple_statements"),
+                ("SELECT customer_email AS d6d2_pii_probe FROM demo.orders LIMIT 1", "d6d2_pii_probe", "sensitive_column"),
+            )
+
+            submitted_markers: set[str] = set()
+            markers = {marker.casefold() for _, marker, _ in denied_cases}
+
+            def record_submitted_postgresql_statement(connection, cursor, statement, parameters, context, executemany):
+                del cursor, parameters, context, executemany
+                if connection.dialect.name != "postgresql":
+                    return
+                normalized = statement.casefold()
+                submitted_markers.update(marker for marker in markers if marker in normalized)
+
+            event.listen(Engine, "before_cursor_execute", record_submitted_postgresql_statement)
+
+            async def calls_for(marker: str) -> int:
+                async with observer_engine.connect() as connection:
+                    value = await connection.execute(
+                        text("SELECT COALESCE(SUM(calls), 0) FROM pg_stat_statements WHERE query ILIKE :needle"),
+                        {"needle": f"%{marker}%"},
+                    )
+                    return int(value.scalar_one())
+
+            try:
+                denial_results = []
+                for sql, marker, expected_code in denied_cases:
+                    before_calls = await calls_for(marker)
+                    denial = json.loads(await query_business_data.ainvoke({"datasource_id": datasource.id, "sql": sql, "runtime": runtime}))
+                    after_calls = await calls_for(marker)
+                    assert denial["code"] == expected_code, (marker, denial)
+                    assert denial == {"code": expected_code, "columns": [], "rows": [], "row_count": 0, "truncated": False}, (marker, denial)
+                    assert marker not in repr(denial), denial
+                    assert "analytics_demo_reader_pw" not in repr(denial), denial
+                    assert "fake@invalid" not in repr(denial), denial
+                    assert "evidence" not in denial and "raw_sql" not in denial and "plan_token" not in denial
+                    assert marker not in submitted_markers, f"rejected statement was sent to PostgreSQL: {marker}"
+                    assert after_calls == before_calls, f"rejected statement reached PostgreSQL: {marker} ({before_calls}->{after_calls})"
+                    denial_results.append((sql, marker, expected_code, denial))
+                audit_records = await services.audit_reader.list_for_principal(principal_id="demo-user", limit=100)
+            finally:
+                event.remove(Engine, "before_cursor_execute", record_submitted_postgresql_statement)
+                await observer_engine.dispose()
+        finally:
+            clear_analytics_services()
+            await control_engine.dispose()
+
+        assert catalog["code"] == "ok"
+        assert {metric["key"] for metric in catalog["metrics"]} == {"january_paid_revenue", "january_paid_revenue_by_region", "january_refund_order_ratio"}
+        assert {metric["key"]: metric["name"] for metric in catalog["metrics"]} == {
+            "january_paid_revenue": "1 \u6708\u5df2\u652f\u4ed8\u6536\u5165",
+            "january_paid_revenue_by_region": "1 \u6708\u5404\u5730\u533a\u5df2\u652f\u4ed8\u6536\u5165",
+            "january_refund_order_ratio": "1 \u6708\u9000\u6b3e\u8ba2\u5355\u5360\u6bd4",
+        }
+        assert [(item["columns"], item["rows"], item["row_count"], item["truncated"]) for item in payloads] == [
+            (["revenue"], [["540.00"]], 1, False),
+            (["region", "paid_revenue"], [["North", "300.00"], ["South", "150.00"], ["West", "90.00"]], 3, False),
+            (["refunded_orders", "total_orders"], [[2, 8]], 1, False),
+        ], payloads
+        first_evidence = payloads[0]["evidence"]
+        repeated_evidence = repeated["evidence"]
+        assert payloads[0]["code"] == "executed" and repeated["code"] == "executed"
+        assert first_evidence["risk"] == "low"
+        assert first_evidence["schema_version"] == "demo-schema-v1"
+        assert first_evidence["policy_version"] == "demo-policy-v1"
+        assert first_evidence["query_hash"] == repeated_evidence["query_hash"]
+        assert first_evidence["result_digest"] == repeated_evidence["result_digest"] == _canonical_digest({"columns": ["revenue"], "rows": [["540.00"]]})
+        assert first_evidence["evidence_id"] == repeated_evidence["evidence_id"]
+        assert len(first_evidence["query_hash"]) == len(first_evidence["plan_digest"]) == len(first_evidence["result_digest"]) == len(first_evidence["evidence_id"]) == 64
+        assert payloads[1]["row_count"] <= 10 and payloads[1]["truncated"] is False
+        assert payloads[2]["row_count"] <= 1 and payloads[2]["truncated"] is False
+        assert repeated["evidence"]["estimated_rows"] == first_evidence["estimated_rows"]
+        assert repeated["evidence"]["engine_cost"] == first_evidence["engine_cost"]
+        assert repeated["evidence"]["plan_digest"] == first_evidence["plan_digest"]
+        expected_evidence_id = _canonical_digest(
+            {
+                "datasource_id": first_evidence["datasource_id"],
+                "query_hash": first_evidence["query_hash"],
+                "risk": first_evidence["risk"],
+                "schema_version": first_evidence["schema_version"],
+                "policy_version": first_evidence["policy_version"],
+                "plan_digest": first_evidence["plan_digest"],
+                "estimated_rows": first_evidence["estimated_rows"],
+                "engine_cost": first_evidence["engine_cost"],
+                "row_count": first_evidence["row_count"],
+                "byte_count": first_evidence["byte_count"],
+                "truncated": first_evidence["truncated"],
+                "result_digest": first_evidence["result_digest"],
+                "decision_code": first_evidence["decision_code"],
+            }
+        )
+        assert first_evidence["evidence_id"] == expected_evidence_id
+        successful_audits = [record for record in audit_records if record.query_hash == first_evidence["query_hash"]]
+        successful_plan_audits = [record for record in successful_audits if record.phase.value == "plan"]
+        successful_execute_audits = [record for record in successful_audits if record.phase.value == "execute"]
+        assert len(successful_plan_audits) == 2
+        assert len(successful_execute_audits) == 2
+        assert all(
+            record.status.value == "completed"
+            and record.decision_code == "plan_created"
+            and record.risk.value == "low"
+            and record.schema_version == first_evidence["schema_version"]
+            and record.policy_version == first_evidence["policy_version"]
+            and record.plan_digest == first_evidence["plan_digest"]
+            for record in successful_plan_audits
+        ), [(record.status.value, record.decision_code, record.risk, record.schema_version, record.policy_version, record.plan_digest) for record in successful_plan_audits]
+        assert all(
+            record.status.value == "completed"
+            and record.decision_code == "executed"
+            and record.risk.value == "low"
+            and record.schema_version == first_evidence["schema_version"]
+            and record.policy_version == first_evidence["policy_version"]
+            and record.row_count == first_evidence["row_count"] == 1
+            and record.truncated is False
+            for record in successful_execute_audits
+        ), [(record.status.value, record.decision_code, record.risk, record.schema_version, record.policy_version, record.plan_digest, record.row_count, record.truncated) for record in successful_execute_audits]
+        denied_codes = {code for _, _, code, _ in denial_results}
+        denial_audits = [record for record in audit_records if record.decision_code in denied_codes]
+        assert {record.decision_code for record in denial_audits} == denied_codes
+        assert all(record.status.value == "completed" and record.phase.value in {"policy", "authorization"} for record in denial_audits)
+        assert any(record.decision_code == "sensitive_column" and record.risk.value == "high" for record in denial_audits)
+        authorization_hashes = {record.query_hash for record in denial_audits if record.phase.value == "authorization"}
+        assert authorization_hashes
+        assert not any(record.phase.value in {"plan", "execute"} and record.query_hash in authorization_hashes for record in audit_records)
+        rendered_audits = repr(audit_records)
+        for sql, marker, _, _ in denial_results:
+            assert sql not in rendered_audits
+            assert marker not in rendered_audits
+        for forbidden in ("analytics_demo_reader_pw", "fake@invalid", "540.00", "300.00"):
+            assert forbidden not in rendered_audits
+        assert all(not hasattr(record, "raw_sql") and not hasattr(record, "plan_token") for record in audit_records)
 
     async def test_execute_returns_normalised_rows_and_rolls_back(self):
         runtime = PostgreSQLRuntime()

@@ -20,6 +20,8 @@ configs:
     content: |
       CREATE ROLE analytics_tester LOGIN PASSWORD 'analytics_tester_pw';
       CREATE ROLE analytics_reader LOGIN PASSWORD 'analytics_reader_pw';
+      CREATE ROLE analytics_demo_observer LOGIN PASSWORD 'analytics_demo_observer_pw';
+      GRANT pg_read_all_stats TO analytics_demo_observer;
 
       CREATE TABLE public.orders (
           id integer PRIMARY KEY,
@@ -37,6 +39,12 @@ configs:
       -- tester 必须真的拥有写权限，否则"写入被只读事务拒绝"会被权限错误冒充。
       GRANT SELECT, INSERT, UPDATE, DELETE ON public.orders TO analytics_tester;
       GRANT SELECT ON public.orders TO analytics_reader;
+
+  postgresql_demo_init:
+    file: ./analytics-demo-init.sql
+
+  postgresql_observer_init:
+    file: ./analytics-test-observer-init.sql
 
   mysql_init:
     content: |
@@ -71,8 +79,13 @@ services:
       - synchronous_commit=off
       - -c
       - max_connections=50
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
     environment:
       POSTGRES_DB: analytics_test
+      ANALYTICS_DEMO_DB_PASSWORD: analytics_demo_reader_pw
       # 超级用户只在初始化阶段使用；被测查询走 analytics_tester / analytics_reader。
       POSTGRES_USER: analytics_admin
       POSTGRES_PASSWORD: analytics_admin_pw
@@ -84,6 +97,10 @@ services:
     configs:
       - source: postgresql_init
         target: /docker-entrypoint-initdb.d/10-analytics-init.sql
+      - source: postgresql_demo_init
+        target: /docker-entrypoint-initdb.d/20-analytics-demo.sql
+      - source: postgresql_observer_init
+        target: /docker-entrypoint-initdb.d/30-analytics-test-observer.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U analytics_admin -d analytics_test"]
       interval: 2s
