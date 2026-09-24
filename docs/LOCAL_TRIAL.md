@@ -1,5 +1,20 @@
 # InsightFlow 本机试用指南
 
+## 配置速览
+
+首次启动建议从仓库根目录运行 `make setup`。交互向导会写出带有有效 `models[]` 的 `config.yaml`，并保存所选模型需要的 key；之后启动服务，在网页 `/setup` 创建首位管理员。`make config` 只复制模板，不会替你选模型。仅在 `.env` 填 key 但没有启用任何 `models[]` 条目，Gateway 仍无法启动 Agent。
+
+| 配置项 | 写入位置或操作入口 | 说明 |
+| --- | --- | --- |
+| **必填：模型与首位管理员** | 模型条目在 `config.yaml` 的 `models[]`；模型 key 放 Git 忽略的根目录 `.env`；管理员在网页 `/setup` 创建 | 至少启用一个有效模型；只需填写该模型实际要求的 key。也可通过 `make setup` 生成模型配置。 |
+| **默认可不填** | `config.yaml`、`extensions_config.json`、Compose | 应用数据库默认 SQLite；本机 sandbox 与基础工具有默认值；MCP/自定义 skills 可按需配置。默认 Compose 已提供必需 Redis 和内部地址，不需要单独发布 Redis 端口。 |
+| **经营分析额外** | 只读连接凭证放根目录 `.env` 的 `ANALYTICS_DS`；schema、metric、policy 在登录后的管理页面登记 | PostgreSQL/MySQL 业务库由使用者提供，不会随默认栈启动。数据源 `secret_ref` 填 `env://ANALYTICS_DS`；凭证用只读账号 JSON，不能把密码写入 `config.yaml`、数据源记录或仓库。 |
+| **高级可选** | 依功能写入 `.env`、`config.yaml` 或 `extensions_config.json` | Jina key 放 `.env`；Scheduler 在 `config.yaml` 配置；应用 PostgreSQL 要同时配置 `database.backend: postgres` 与 `.env` 中的 `DATABASE_URL`；MCP 与 skills 属于 `extensions_config.json`；观测按需设置 LangSmith/Monocle 环境变量。 |
+
+`make up` 默认只启动 Nginx、Frontend、Gateway 和 Redis，并绑定本机回环地址；部署脚本会生成所需的认证密钥。外部 sandbox provisioner 必须由运维另行部署：`config.yaml` 中的 provisioner URL/key 要与该服务端配置匹配，Compose 不会自动创建它。`.env` 保存环境值，`config.yaml` 描述启用的模型和应用行为，`extensions_config.json` 管理 MCP/skills；这三者不能相互替代。
+
+DeepSeek Flash 的简洁模型条目见根目录 `config.example.yaml` 的 “DEEPSEEK FLASH QUICKSTART” 注释块。模板使用 `langchain_openai:ChatOpenAI`、`base_url` 和非思考模式；DeepSeek 官方文档列出 `deepseek-flash`、`https://api.deepseek.com`，并说明 Chat Completions 工具调用支持。[模型与价格](https://api-docs.deepseek.com/quick_start/pricing/)、[工具调用](https://api-docs.deepseek.com/guides/tool_calls/)。思考模式下的工具调用需正确回传 `reasoning_content`；本模板不启用该路径。
+
 ## 6D2：持久化 PostgreSQL 16 演示
 
 本节的合成演示数据库是显式 opt-in 的 Compose overlay，与一次性数据库门禁分开管理。`make up` 仍只启动 Nginx、Frontend、Gateway、Redis 四个默认服务。演示栈使用独立 Compose project `insightflow-analytics-demo`、独立容器名和具名数据卷；数据库不发布宿主机端口，只允许同项目 Gateway 通过私有 Compose 网络访问。网页入口固定为 loopback `127.0.0.1:2027`。

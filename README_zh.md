@@ -30,6 +30,8 @@ Docker 本机试用需要 Docker Desktop/Compose、`make`、Python 3.12+ 和 `uv
 
 打开 http://localhost:2026，并在首次访问时通过 `/setup` 创建管理员账号。Nginx 发布端口默认只绑定本机回环地址。使用 `make down` 停止 Docker 服务；源码开发可先运行 `make install`，再使用 `make dev`。PowerShell 本机试用、模型配置和 Analytics 前置条件见[本机试用指南](docs/LOCAL_TRIAL.md)。
 
+必填项、默认配置、经营分析凭据与高级选项的区别见[配置速览](docs/LOCAL_TRIAL.md#配置速览)。
+
 持久化合成 PostgreSQL 16 演示是手动 opt-in 的 Compose overlay，启动方式见[本机试用指南](docs/LOCAL_TRIAL.md)；`make up` 不会启动它。
 
 不要提交 config.yaml、extensions_config.json、.env 或模型凭证。配置说明见 [CONFIGURATION](backend/docs/CONFIGURATION.md)，部署说明见 [Install](Install.md)。

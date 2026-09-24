@@ -1,69 +1,60 @@
-# InsightFlow configuration
+# InsightFlow 配置模板
 #
-# Guidelines:
-# - Copy this file to `config.yaml` and customize it for your environment
-# - The default path of this configuration file is `config.yaml` in the project root.
-#   You can set `DEER_FLOW_PROJECT_ROOT` to define that root explicitly, or use
-#   `DEER_FLOW_CONFIG_PATH` to point at a specific config file.
-# - Runtime state defaults to `.deer-flow` under the project root. Override it
-#   with `DEER_FLOW_HOME` when you need a different writable data directory.
-# - Set `DEER_FLOW_DATE_TIMEZONE` to an IANA timezone name (e.g. `Asia/Shanghai`)
-#   when the conversation date injected into agents should follow a zone other
-#   than the server's local timezone. It is read at runtime by the date-context
-#   middlewares (not a config-schema field), so it can be set on a container
-#   without mounting a `config.yaml`.
-# - Environment variables are available for all field values. Example: `api_key: $OPENAI_API_KEY`
-# - The `use` path is a string that looks like "package_name.sub_package_name.module_name:class_name/variable_name".
+# 首次启动（推荐）：在仓库根目录运行 `make setup`。向导会询问模型服务，生成含有效
+# `models[]` 的 `config.yaml`，并把所需模型 key 写入被 Git 忽略的 `.env`。服务启动后，
+# 打开本机入口并在 `/setup` 创建首位管理员。
+#
+# 手动配置：复制本文件为 `config.yaml`，启用 `models:` 下至少一个模型条目，并为需要
+# 认证的模型在 `.env` 设置 key。配置中使用 `api_key: $DEEPSEEK_API_KEY` 这样的环境变量引用。
+# `make config` 只复制模板；本模板里的模型条目是注释示例，复制后仍需运行 `make setup`
+# 或手动启用一个模型。`.env` 单独有 key 不会自动创建模型配置。
+#
+# `make up` 会生成缺少的 Compose 认证密钥，并默认只监听 `127.0.0.1:2026`；手动调用
+# Docker Compose 时需自行提供 Compose 引用的路径和认证变量。SQLite、Redis、沙箱与工具的
+# 配置归属，以及经营分析和高级选项，见 `docs/LOCAL_TRIAL.md` 的“配置速览”。
+#
+# 本文件位于仓库根目录。运行状态默认写入项目数据目录；需要隔离时可用 `DEER_FLOW_HOME`
+# 指定独立的可写目录，或用 `DEER_FLOW_CONFIG_PATH` 指向另一份 `config.yaml`。
+# `DEER_FLOW_DATE_TIMEZONE` 是运行时环境变量（不是本文件的 schema 字段），用于指定
+# 注入 Agent 的对话日期时区，例如 `Asia/Shanghai`。
+# 每个模型的 `use` 是 `package.module:ClassName` 形式的可加载类路径。
 
 # ============================================================================
-# Config Version (used to detect outdated config files)
+# 配置版本（用于检测本地配置是否落后于模板）
 # ============================================================================
-# Bump this number when the config schema changes.
-# Run `make config-upgrade` to merge new fields into your local config.yaml.
+# 配置 schema 变化时递增版本号。运行 `make config-upgrade` 可合并模板中的新字段；
+# 执行后请检查变更，再重启服务。
 config_version: 49
 
-# Optional per-model request pacing (inside a models[] entry):
+# 可选：在单个 `models[]` 条目中限制进程内请求速率：
 # request_admission:
 #   requests_per_minute: 60
-#   group: shared-provider-account  # optional; defaults to the model config name
+#   group: shared-provider-account  # 可选；默认使用模型配置名
 #   max_wait_seconds: 300
 #   max_queue_size: 256
-# Off unless configured. Shared groups require identical settings; restart after
-# changes. Process-local RPM only, not TPM or a cluster-wide quota. See the
-# "Model request admission" section in backend/docs/CONFIGURATION.md.
+# 默认关闭。共享 group 的设置必须一致，修改后需重启。这里只限制单进程每分钟请求数，
+# 不限制 token 用量，也不是跨节点配额。详见 `backend/docs/CONFIGURATION.md`。
 
 # ============================================================================
-# Logging
+# 日志
 # ============================================================================
-# Log level for deerflow modules (debug/info/warning/error)
+# DeerFlow 模块日志级别：debug、info、warning 或 error。
 log_level: info
 
-# Trace ids are always issued and always returned in the `X-Trace-Id` response
-# header; this block controls log output only — whether records carry a
-# `trace_id` field, and in which format. Off by default because enabling it
-# changes the log format. Restart required (see reload_boundary.py).
+# 响应始终返回 `X-Trace-Id`。此处只控制日志是否附带 `trace_id` 及其格式；默认关闭。
+# 启用会改变日志格式，并需要重启。
 logging:
   enhance:
     enabled: false
     format: text
 
 # ============================================================================
-# Agent Extensions
+# Agent 扩展中间件
 # ============================================================================
-# Optional AgentMiddleware classes loaded into the lead and subagent runtime
-# middleware chains after built-in runtime middlewares, but before the
-# safety/clarification tail. Missing packages, invalid classes, and broken
-# modules fail at agent creation with an actionable import error; constructor
-# errors fail at agent creation with the underlying exception.
-# The same list applies to both lead and subagent runtimes; lead-only vs
-# subagent-only configuration is not expressible yet. Each entry is a class
-# path or `{class, kwargs}` for constructor arguments. kwargs values must be
-# JSON types (object, array, string, number, boolean, or null); YAML dates
-# and timestamps are coerced to ISO strings so they match JSON. Treat these
-# files as trusted operator config because middleware classes execute code.
-# Uncomment this block to define middlewares in config.yaml. Leaving it commented
-# lets extensions_config.json remain the source of truth for this fixed-slot
-# (not deprecated) middleware list. Packaged plugins use the `plugins:` block below.
+# 可选的自定义 AgentMiddleware，会在内置运行时中间件之后加载。它们对主 Agent 与子 Agent
+# 同时生效，目前不能分别配置。每项可以是类路径，也可以是包含 `class` 和 `kwargs` 的对象。
+# 中间件代码会以 Gateway 权限运行，只应加载可信实现。留空时继续使用
+# `extensions_config.json` 中配置的中间件；Python 扩展包另见下方 `plugins:`。
 # extensions:
 #   middlewares:
 #     - my_company.deerflow_middlewares:DomainGuardMiddleware
@@ -72,29 +63,24 @@ logging:
 #         header: X-DeerFlow-Latency
 
 # ============================================================================
-# Tracing / Observability (Monocle)
+# 追踪与观测（Monocle）
 # ============================================================================
-# Optional agent tracing via Monocle. Configured through environment variables
-# (MONOCLE_TRACING, MONOCLE_EXPORTERS, OKAHU_API_KEY — like LangSmith/Langfuse),
-# not config.yaml keys, and OFF by default. See README.md → "Monocle Tracing"
-# for setup, what each exporter captures, and where the trace data goes.
+# Monocle 通过环境变量 `MONOCLE_TRACING`、`MONOCLE_EXPORTERS` 和可选的
+# `OKAHU_API_KEY` 配置，不是 `config.yaml` 字段，默认关闭。追踪数据会发送到所选 exporter；
+# 先确认数据去向，再按需启用。设置项见 `.env.example`。
 
 # ============================================================================
-# Token Usage
+# Token 用量
 # ============================================================================
-# Enable token usage collection and display.
-# When enabled, DeerFlow records input/output/total tokens per model call
-# and shows usage metadata in the workspace UI when providers return it.
+# 可选记录每次模型调用的输入、输出和总 token 数；仅在 provider 返回用量时显示。
 token_usage:
   enabled: true
 
 # ============================================================================
-# Token Budget — Per-run token limits
+# 每次运行的 Token 预算
 # ============================================================================
-# Prevents runaway API costs by enforcing hard token limits per run.
-# When warn_threshold is crossed, the agent receives an in-context warning.
-# When hard_stop_threshold is crossed, tool_calls are stripped and the agent
-# is forced to produce a final answer immediately.
+# 可按单次运行设置 token 上限，控制意外的长调用成本。达到警告阈值时 Agent 会收到提示；
+# 达到硬停止阈值时将停止后续工具调用并生成最终答复。
 token_budget:
   enabled: false                # Set to true to activate budget enforcement
   max_tokens: 200000            # Total token limit (input + output) per run
@@ -104,50 +90,58 @@ token_budget:
   hard_stop_threshold: 1.0      # Force stop at 100% of the budget
 
 # ============================================================================
-# Recursion Limits
+# 递归步数上限
 # ============================================================================
-# A run's recursion_limit caps the number of LangGraph super-steps (each is at
-# least one LLM call). Clients may override the default per request; invalid or
-# non-positive client values fall back to this configured default.
+# `recursion_limit` 限制单次运行的 LangGraph super-step 数量；每步至少包含一次模型调用。
+# 客户端可按请求覆盖默认值，无效或非正数会回退到此处配置。
 recursion_limit: 100
 
-# The Gateway never trusts a configured or client-supplied value above this
-# ceiling, preventing runaway API cost / DoS. Raise it only if you legitimately
-# run very deeply nested subagent graphs.
+# Gateway 会再用此上限约束配置值和客户端值。只有确实运行很深的子 Agent 图时才调高。
 max_recursion_limit: 1000
 
 
 # ============================================================================
-# Models Configuration
+# 模型配置
 # ============================================================================
-# Configure available LLM models for the agent to use.
+# 配置 Agent 可使用的模型。至少启用一个模型条目；推荐先运行 `make setup` 生成。
+# 手动配置可复制并取消注释下方 DeepSeek Flash 样例，或选择后续保留的其他 provider 样例。
 #
-# Two token fields look similar but mean different things:
-# - `max_tokens` is the per-call OUTPUT cap passed to the provider.
-# - `context_window` is a positive integer for the total context capacity
-#   (prompt + completion). It drives the real-time "% context used" indicator
-#   in the chat UI and feeds the model's langchain profile, which fraction-based
-#   summarization triggers (`summarization.trigger: [{type: fraction, ...}]`)
-#   resolve their thresholds from. Third-party OpenAI-compatible models carry no
-#   built-in profile, so without `context_window` a fraction trigger degrades
-#   (dropped with a warning) instead of crashing the agent build.
-# Leave `context_window` unset if the provider limit is unknown; the percentage
-# will not render. Verify configured values against the provider's model docs.
+# `max_tokens` 是单次调用允许生成的最大输出；`context_window` 是输入与输出合计的上下文容量，
+# 用于聊天界面用量比例和按上下文比例触发的摘要。第三方模型没有可靠规格时可不填，界面会
+# 隐藏比例。填写前请核对 provider 文档。
 #
-# Optional per-model pricing (powers the real-cost display on the workspace
-# console). Add a `pricing` block to any model entry; use ONE currency across
-# all models. Mixed currencies disable cost reporting to prevent invalid sums.
-# Prices are per one million tokens.
+# 可选的 `pricing` 仅用于控制台成本估算。所有模型必须使用同一种货币，价格单位为每百万 token。
 #
 #   pricing:
-#     currency: CNY                    # ISO code shown in the console (CNY, USD, ...)
-#     input_per_million: 8.0           # price per 1M input tokens (cache miss)
-#     output_per_million: 32.0         # price per 1M output tokens
-#     input_cache_hit_per_million: 0.8 # price per 1M cache-hit input tokens
-#                                      # (optional; omit → hits billed at miss price)
+#     currency: CNY                    # 控制台显示的 ISO 币种代码（CNY、USD 等）
+#     input_per_million: 8.0           # 每百万输入 token 价格（缓存未命中）
+#     output_per_million: 32.0         # 每百万输出 token 价格
+#     input_cache_hit_per_million: 0.8 # 每百万缓存命中输入 token 价格
+#                                      # 可选；省略时按缓存未命中价格估算
 
 models:
-  # Example: Volcengine (Doubao) model
+  # BEGIN DEEPSEEK FLASH QUICKSTART
+  # DeepSeek Flash 使用 OpenAI Chat Completions 接口。此样例按普通非思考模式调用，
+  # 避免未验证的 reasoning_content 历史回放；官方非思考模式支持 function tool calls。
+  # 在 `.env` 设置 `DEEPSEEK_API_KEY` 后，把下面的模型条目复制到本 `models:` 列表并启用。
+  # 模型类使用 `base_url`；`api_base` 是其他 provider 类的参数名，不要混用。
+  #   - name: deepseek-flash
+  #     display_name: DeepSeek Flash
+  #     use: langchain_openai:ChatOpenAI
+  #     model: deepseek-flash
+  #     base_url: https://api.deepseek.com
+  #     api_key: $DEEPSEEK_API_KEY
+  #     request_timeout: 120.0
+  #     max_retries: 2
+  #     max_tokens: 8192
+  #     context_window: 1000000
+  #     supports_thinking: false
+  #     extra_body:
+  #       thinking:
+  #         type: disabled
+  # END DEEPSEEK FLASH QUICKSTART
+
+  # 示例：火山引擎 Doubao 模型
   # - name: doubao-seed-1.8
   #   display_name: Doubao-Seed-1.8
   #   use: deerflow.models.patched_deepseek:PatchedChatDeepSeek
@@ -169,10 +163,9 @@ models:
   #       thinking:
   #         type: disabled
 
-  # Example: Volcengine Coding Plan (one key, multi-vendor gateway)
-  # The Coding Plan endpoint (/api/coding/v3) lets you access models from
-  # Doubao, GLM, DeepSeek, Kimi, and MiniMax with a single API key.
-  # Each model may differ in thinking/vision support - configure per-model.
+  # 示例：火山引擎 Coding Plan（一个 key 接入多个厂商）
+  # `/api/coding/v3` 可用同一个 key 调用 Doubao、GLM、DeepSeek、Kimi 和 MiniMax。
+  # 各模型的 thinking/vision 能力不同，需分别核实并配置。
   #
   # - name: glm-5.2-cp
   #   display_name: GLM-5.2 (Coding Plan)
@@ -214,16 +207,12 @@ models:
   #       thinking:
   #         type: disabled
 
-  # Example: Z.AI GLM-5.3-Flash (required-thinking workaround)
+  # 示例：Z.AI GLM-5.3-Flash（必须启用 thinking 的兼容配置）
   #
-  # GLM-5.3-Flash cannot disable thinking and only accepts low/high/max effort.
-  # DeerFlow's current generic UI may request disabled thinking or emit
-  # minimal/medium, so this profile keeps thinking enabled unconditionally and
-  # suppresses generic effort forwarding. Keep the thinking block in the base
-  # extra_body: moving it to when_thinking_enabled would let background calls
-  # synthesize the invalid thinking.type=disabled + reasoning_effort=minimal pair.
-  # clear_thinking=true is intentional for this compatibility workaround: it
-  # avoids requiring exact historical reasoning replay after summarization.
+  # 该模型不能关闭 thinking，reasoning_effort 只接受 low/high/max。当前通用 UI 可能请求关闭
+  # thinking 或发送 minimal/medium；此配置固定启用 thinking，并关闭通用 effort 转发。
+  # thinking 必须留在基础 `extra_body` 中；若移到 `when_thinking_enabled`，后台调用可能组合出
+  # 无效的 disabled + minimal 参数。`clear_thinking: true` 避免摘要后依赖完整重放历史推理内容。
   #
   # - name: glm-5.3-flash
   #   display_name: GLM-5.3-Flash
@@ -247,12 +236,12 @@ models:
   #       clear_thinking: true
   #     tool_stream: true
 
-  # Example: OpenAI model
+  # 示例：OpenAI Chat Completions
   # - name: gpt-4
   #   display_name: GPT-4
   #   use: langchain_openai:ChatOpenAI
   #   model: gpt-4
-  #   api_key: $OPENAI_API_KEY # Use environment variable
+  #   api_key: $OPENAI_API_KEY # 从根目录 .env 读取 key
   #   request_timeout: 600.0
   #   max_retries: 2
   #   max_tokens: 4096          # Per-call output cap
@@ -260,7 +249,7 @@ models:
   #   temperature: 0.7
   #   supports_vision: true # Enable vision support for view_image tool
 
-  # Example: OpenAI Responses API model
+  # 示例：OpenAI Responses API
   # - name: gpt-5-responses
   #   display_name: GPT-5 (Responses API)
   #   use: langchain_openai:ChatOpenAI
@@ -270,30 +259,25 @@ models:
   #   max_retries: 2
   #   use_responses_api: true
   #   output_version: responses/v1
-  #   # Optional, forwarded to ChatOpenAI as-is (default false): send only the new
-  #   # turn plus previous_response_id instead of replaying the full history. The
-  #   # chained context is still billed as input tokens, and any client-side
-  #   # history rewrite (e.g. blocked-write payload elision) is only honored when
-  #   # the history is replayed.
+  #   # 可选：只发送新一轮与 previous_response_id，不重放完整历史（默认 false）。
+  #   # 链接上下文仍按输入 token 计费；客户端对历史的改写只有在重放历史时才会生效。
   #   use_previous_response_id: false
   #   context_window: 400000
   #   supports_vision: true
 
-  # Example: Ollama (native provider — preserves thinking/reasoning content)
+  # 示例：Ollama 原生接口（保留 thinking/reasoning 内容）
   #
-  # IMPORTANT: Use langchain_ollama:ChatOllama instead of langchain_openai:ChatOpenAI
-  # for Ollama models. The OpenAI-compatible endpoint (/v1/chat/completions) does NOT
-  # return reasoning_content as a separate field — thinking content is either flattened
-  # into <think> tags or dropped entirely (ollama/ollama#15293). The native Ollama API
-  # (/api/chat) correctly separates thinking from response content.
+  # Ollama 模型请使用 `langchain_ollama:ChatOllama`，不要使用 `langchain_openai:ChatOpenAI`。
+  # Ollama 的 OpenAI-compatible 接口不会单独返回 `reasoning_content`，thinking 可能被合并到
+  # 正文或丢弃；原生 `/api/chat` 接口会区分推理与答复内容。
   #
-  # Install: cd backend && uv pip install 'deerflow-harness[ollama]'
+  # 安装：在 backend/ 下运行 `uv sync --extra ollama`。
   #
   # - name: qwen3-local
   #   display_name: Qwen3 32B (Ollama)
   #   use: langchain_ollama:ChatOllama
   #   model: qwen3:32b
-  #   base_url: http://localhost:11434   # No /v1 suffix — uses native /api/chat
+  #   base_url: http://localhost:11434   # 不加 /v1；使用原生 /api/chat
   #   num_predict: 8192
   #   temperature: 0.7
   #   reasoning: true                    # Passes think:true to Ollama native API
@@ -313,14 +297,13 @@ models:
   #   supports_thinking: true
   #   supports_vision: true
   #
-  # For Docker deployments, use host.docker.internal instead of localhost:
+  # 使用 Docker 时，将 localhost 改为 host.docker.internal：
   #   base_url: http://host.docker.internal:11434
 
-  # Example: Anthropic Claude model (with extended thinking)
-  # supports_thinking: true is required — without it, DeerFlow silently falls
-  # back to non-thinking mode even when the UI thinking toggle is on.
-  # budget_tokens is required by the Anthropic API when thinking.type=enabled
-  # (no server default; min 1024; must be less than max_tokens).
+  # 示例：Anthropic Claude（扩展思考）
+  # 必须设置 `supports_thinking: true` 才会启用 UI 的 thinking 开关。
+  # Anthropic 在 `thinking.type=enabled` 时要求提供 `budget_tokens`，最小 1024 且必须小于
+  # `max_tokens`；服务端不会替你填默认值。
   # - name: claude-sonnet-4
   #   display_name: Claude Sonnet 4
   #   use: langchain_anthropic:ChatAnthropic
@@ -340,7 +323,7 @@ models:
   #     thinking:
   #       type: disabled
 
-  # Example: Google Gemini model (native SDK, no thinking support)
+  # 示例：Google Gemini 原生 SDK（此示例不启用 thinking）
   # - name: gemini-2.5-pro
   #   display_name: Gemini 2.5 Pro
   #   use: langchain_google_genai:ChatGoogleGenerativeAI
@@ -352,10 +335,8 @@ models:
   #   context_window: 1048576
   #   supports_vision: true
 
-  # Example: Gemini model via OpenAI-compatible gateway (with thinking support)
-  # Use PatchedChatOpenAI so that tool-call thought_signature values on tool_calls
-  # are preserved across multi-turn tool-call conversations — required by the
-  # Gemini API when thinking is enabled. See:
+  # 示例：通过 OpenAI-compatible 网关调用 Gemini（thinking）
+  # 使用 `PatchedChatOpenAI` 可在多轮工具调用时保留 Gemini 要求的 thought_signature。详见：
   # https://docs.cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures
   # - name: gemini-2.5-pro-thinking
   #   display_name: Gemini 2.5 Pro (Thinking)
@@ -378,7 +359,7 @@ models:
   #       thinking:
   #         type: disabled
 
-  # Example: DeepSeek V4 model (with thinking support)
+  # 示例：DeepSeek V4 Pro（原生 DeepSeek adapter 与 thinking）
   # - name: deepseek-v4
   #   display_name: DeepSeek V4 (Thinking)
   #   use: deerflow.models.patched_deepseek:PatchedChatDeepSeek
@@ -398,7 +379,7 @@ models:
   #       thinking:
   #         type: disabled
 
-  # Example: Kimi K2.5 model
+  # 示例：Moonshot Kimi K2.5
   # - name: kimi-k2.5
   #   display_name: Kimi K2.5
   #   use: deerflow.models.patched_deepseek:PatchedChatDeepSeek
@@ -419,9 +400,8 @@ models:
   #       thinking:
   #         type: disabled
 
-  # Example: Novita AI (OpenAI-compatible)
-  # Novita provides an OpenAI-compatible API with competitive pricing
-  # See: https://novita.ai
+  # 示例：Novita AI（OpenAI-compatible）
+  # provider 的模型 ID 和服务能力以其文档为准：https://novita.ai
   # - name: novita-deepseek-v3.2
   #   display_name: Novita DeepSeek V3.2
   #   use: langchain_openai:ChatOpenAI
@@ -443,8 +423,8 @@ models:
   #       thinking:
   #         type: disabled
 
-  # Example: OpenRouter (OpenAI-compatible)
-  # OpenRouter models use the same ChatOpenAI + base_url pattern as other OpenAI-compatible gateways.
+  # 示例：OpenRouter（OpenAI-compatible）
+  # 与其他 OpenAI-compatible 网关一样，使用 ChatOpenAI 和 `base_url`。
   # - name: openrouter-gemini-2.5-flash
   #   display_name: Gemini 2.5 Flash (OpenRouter)
   #   use: langchain_openai:ChatOpenAI
@@ -456,11 +436,9 @@ models:
   #   max_tokens: 8192
   #   temperature: 0.7
 
-  # Example: Atlas Cloud (OpenAI-compatible)
-  # Atlas Cloud exposes a single OpenAI-compatible endpoint in front of many open
-  # models (DeepSeek, Qwen, Kimi, GLM, MiniMax, Llama, ...), so it uses the same
-  # ChatOpenAI + base_url pattern as other OpenAI-compatible gateways.
-  # Browse model ids at https://api.atlascloud.ai/v1/models — see https://atlascloud.ai
+  # 示例：Atlas Cloud（OpenAI-compatible；需手动配置，不在 setup 向导 provider 列表中）
+  # 该服务以统一兼容接口提供多个模型，仍使用 ChatOpenAI + `base_url`。
+  # 模型 ID 见 https://api.atlascloud.ai/v1/models ，服务说明见 https://atlascloud.ai
   # - name: atlascloud-deepseek-v3.2
   #   display_name: DeepSeek V3.2 (Atlas Cloud)
   #   use: langchain_openai:ChatOpenAI
