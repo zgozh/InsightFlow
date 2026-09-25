@@ -30,6 +30,12 @@ def _resolve_thread_id(body: RunCreateRequest) -> str:
     return resolve_thread_id(thread_id)
 
 
+def _uses_existing_thread(body: RunCreateRequest) -> bool:
+    """Tell a generated stateless chat from an explicitly selected thread."""
+    configurable = (body.config or {}).get("configurable")
+    return isinstance(configurable, dict) and configurable.get("thread_id") is not None
+
+
 @router.post("/stream")
 @require_permission("runs", "create")
 async def stateless_stream(body: RunCreateRequest, request: Request) -> StreamingResponse:
@@ -42,7 +48,7 @@ async def stateless_stream(body: RunCreateRequest, request: Request) -> Streamin
     thread_id = _resolve_thread_id(body)
     bridge = get_stream_bridge(request)
     run_mgr = get_run_manager(request)
-    record = await start_run(body, thread_id, request)
+    record = await start_run(body, thread_id, request, require_existing_thread=_uses_existing_thread(body))
 
     return StreamingResponse(
         sse_consumer(bridge, record, request, run_mgr),
@@ -68,7 +74,7 @@ async def stateless_wait(body: RunCreateRequest, request: Request) -> dict:
     thread_id = _resolve_thread_id(body)
     bridge = get_stream_bridge(request)
     run_mgr = get_run_manager(request)
-    record = await start_run(body, thread_id, request)
+    record = await start_run(body, thread_id, request, require_existing_thread=_uses_existing_thread(body))
 
     completed = True
     if record.task is not None:

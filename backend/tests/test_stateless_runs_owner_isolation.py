@@ -153,12 +153,13 @@ def test_stream_without_thread_id_passes_owner_check():
     create_or_reject.assert_awaited()
 
 
-def test_stream_untracked_thread_passes_owner_check():
-    """A thread_id with no thread_meta row (untracked legacy) stays accessible."""
+def test_stream_untracked_explicit_thread_returns_404():
+    """An explicit thread id without a persisted row cannot be classified safely."""
     with _client(USER_B) as (client, create_or_reject):
         response = client.post("/api/runs/stream", json=_body("never-created-thread"))
-    assert response.status_code == 409
-    create_or_reject.assert_awaited()
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Thread never-created-thread not found"
+    create_or_reject.assert_not_awaited()
 
 
 def test_stream_shared_thread_passes_owner_check():

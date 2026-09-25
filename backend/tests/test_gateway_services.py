@@ -1642,6 +1642,176 @@ async def test_start_run_checkpoint_validation_failure_does_not_admit_run(_stub_
 
 
 @pytest.mark.asyncio
+async def test_start_run_rejects_analysis_thread_before_agent_factory(_stub_app_config):
+    from unittest.mock import patch
+
+    from fastapi import HTTPException
+
+    from app.gateway.services import start_run
+
+    thread_id = "analysis-thread-denied"
+    request, run_store, thread_store = _make_start_run_persistence_context()
+    await thread_store.create(thread_id, metadata={"analysis_mode": True})
+    body = _run_create_request(
+        context={"analysis_mode": False},
+        config={"configurable": {"analysis_mode": False}},
+    )
+
+    with (
+        patch("app.gateway.services.resolve_agent_factory") as resolve_factory,
+        patch("app.gateway.services.run_agent") as run_agent,
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await start_run(body, thread_id, request, require_existing_thread=True)
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == {"code": "analysis_mode_unavailable"}
+    resolve_factory.assert_not_called()
+    run_agent.assert_not_called()
+    assert await run_store.list_by_thread(thread_id, user_id=None) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_mode", [None, "analysis", 1])
+async def test_start_run_fails_closed_on_corrupt_analysis_thread_mode(_stub_app_config, invalid_mode):
+    from unittest.mock import patch
+
+    from fastapi import HTTPException
+
+    from app.gateway.services import start_run
+
+    thread_id = "analysis-thread-corrupt"
+    request, run_store, thread_store = _make_start_run_persistence_context()
+    await thread_store.create(thread_id, metadata={"analysis_mode": invalid_mode})
+
+    with (
+        patch("app.gateway.services.resolve_agent_factory") as resolve_factory,
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await start_run(_run_create_request(), thread_id, request, require_existing_thread=True)
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == {"code": "analysis_mode_unavailable"}
+    resolve_factory.assert_not_called()
+    assert await run_store.list_by_thread(thread_id, user_id=None) == []
+
+
+@pytest.mark.asyncio
+async def test_start_run_rejects_missing_persisted_thread_when_required(_stub_app_config):
+    from unittest.mock import patch
+
+    from fastapi import HTTPException
+
+    from app.gateway.services import start_run
+
+    thread_id = "missing-persisted-thread"
+    request, run_store, _thread_store = _make_start_run_persistence_context()
+
+    with (
+        patch("app.gateway.services.resolve_agent_factory") as resolve_factory,
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await start_run(_run_create_request(), thread_id, request, require_existing_thread=True)
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == f"Thread {thread_id} not found"
+    resolve_factory.assert_not_called()
+    assert await run_store.list_by_thread(thread_id, user_id=None) == []
+
+
+@pytest.mark.asyncio
+async def test_start_run_fails_closed_when_thread_mode_cannot_be_read(_stub_app_config):
+    from unittest.mock import AsyncMock, patch
+
+    from fastapi import HTTPException
+
+    from app.gateway.services import start_run
+
+    thread_id = "unreadable-thread-mode"
+    request, run_store, _thread_store = _make_start_run_persistence_context()
+    request.app.state.thread_store = SimpleNamespace(get=AsyncMock(side_effect=RuntimeError("synthetic store failure")))
+
+    with (
+        patch("app.gateway.services.resolve_agent_factory") as resolve_factory,
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await start_run(_run_create_request(), thread_id, request)
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == {"code": "analysis_mode_unavailable"}
+    resolve_factory.assert_not_called()
+    assert await run_store.list_by_thread(thread_id, user_id=None) == []
+
+
+@pytest.mark.asyncio
+async def test_start_run_ignores_client_analysis_mode_for_ordinary_thread(_stub_app_config):
+    from unittest.mock import patch
+
+    from app.gateway.services import start_run
+
+    thread_id = "ordinary-thread-forged-mode"
+    request, _run_store, thread_store = _make_start_run_persistence_context()
+    await thread_store.create(thread_id, metadata={})
+    captured: dict[str, object] = {}
+
+    async def fake_run_agent(*_args, **kwargs):
+        captured["config"] = kwargs["config"]
+
+    with (
+        patch("app.gateway.services.resolve_agent_factory", return_value=object()),
+        patch("app.gateway.services.run_agent", side_effect=fake_run_agent),
+    ):
+        record = await start_run(
+            _run_create_request(
+                context={"analysis_mode": True},
+                config={"configurable": {"analysis_mode": True}},
+            ),
+            thread_id,
+            request,
+            require_existing_thread=True,
+        )
+        await record.task
+
+    config = captured["config"]
+    assert config["context"]["analysis_mode"] is False
+    assert config["configurable"]["analysis_mode"] is False
+
+
+@pytest.mark.asyncio
+async def test_run_metadata_cannot_create_analysis_mode_on_new_thread(_stub_app_config):
+    from unittest.mock import patch
+
+    from app.gateway.services import start_run
+
+    thread_id = "new-chat-forged-mode"
+    request, _run_store, thread_store = _make_start_run_persistence_context()
+    captured: dict[str, object] = {}
+
+    async def fake_run_agent(*_args, **kwargs):
+        captured["config"] = kwargs["config"]
+
+    with (
+        patch("app.gateway.services.resolve_agent_factory", return_value=object()),
+        patch("app.gateway.services.run_agent", side_effect=fake_run_agent),
+    ):
+        record = await start_run(
+            _run_create_request(
+                metadata={"analysis_mode": True},
+                config={"metadata": {"analysis_mode": True}},
+            ),
+            thread_id,
+            request,
+        )
+        await record.task
+
+    stored = await thread_store.get(thread_id, user_id=None)
+    assert stored is not None
+    assert "analysis_mode" not in stored["metadata"]
+    assert "analysis_mode" not in record.metadata
+    assert "analysis_mode" not in captured["config"]["metadata"]
+
+
+@pytest.mark.asyncio
 async def test_pending_cancel_bypasses_thread_metadata_and_logs_failure(_stub_app_config, caplog):
     from unittest.mock import AsyncMock, patch
 
@@ -1650,8 +1820,13 @@ async def test_pending_cancel_bypasses_thread_metadata_and_logs_failure(_stub_ap
     from deerflow.runtime.runs.store.memory import MemoryRunStore
 
     metadata_started = asyncio.Event()
+    metadata_reads = 0
 
     async def get_thread(_thread_id):
+        nonlocal metadata_reads
+        metadata_reads += 1
+        if metadata_reads <= 2:
+            return {"thread_id": _thread_id, "user_id": None, "metadata": {}}
         metadata_started.set()
         try:
             await asyncio.Event().wait()
@@ -1699,8 +1874,13 @@ async def test_thread_metadata_timeout_logs_and_run_still_starts(_stub_app_confi
 
     metadata_started = asyncio.Event()
     run_agent_called = asyncio.Event()
+    metadata_reads = 0
 
     async def get_thread(_thread_id):
+        nonlocal metadata_reads
+        metadata_reads += 1
+        if metadata_reads <= 2:
+            return {"thread_id": _thread_id, "user_id": None, "metadata": {}}
         metadata_started.set()
         await asyncio.Event().wait()
 
@@ -2767,12 +2947,13 @@ def test_launch_scheduled_thread_run_marks_context_non_interactive(_stub_app_con
     async def _scenario():
         captured: dict[str, object] = {}
 
-        async def fake_start_run(body, thread_id, request, *, idempotency_key=None):
+        async def fake_start_run(body, thread_id, request, *, idempotency_key=None, require_existing_thread=False):
             captured["body"] = body
             captured["thread_id"] = thread_id
             captured["context"] = body.context
             captured["metadata"] = body.metadata
             captured["idempotency_key"] = idempotency_key
+            captured["require_existing_thread"] = require_existing_thread
             captured["if_not_exists"] = body.if_not_exists
             captured["on_completion"] = body.on_completion
             return SimpleNamespace(run_id="run-1", thread_id=thread_id)
@@ -2802,6 +2983,7 @@ def test_launch_scheduled_thread_run_marks_context_non_interactive(_stub_app_con
         "scheduled_task_run_id": "task-run-1",
     }
     assert captured["idempotency_key"] == "scheduled-task:task-run-1"
+    assert captured["require_existing_thread"] is True
     assert captured["if_not_exists"] == "create"
     assert captured["on_completion"] is None
     assert result == {"run_id": "run-1", "thread_id": "thread-scheduled"}
@@ -2827,8 +3009,9 @@ def test_launch_scheduled_thread_run_uses_configured_recursion_limit(_stub_app_c
     async def _scenario():
         captured: dict[str, object] = {}
 
-        async def fake_start_run(body, thread_id, request, *, idempotency_key=None):
+        async def fake_start_run(body, thread_id, request, *, idempotency_key=None, require_existing_thread=False):
             assert idempotency_key is None
+            assert require_existing_thread is True
             captured["config"] = body.config
             return SimpleNamespace(run_id="run-1", thread_id=thread_id)
 
@@ -2869,8 +3052,9 @@ def test_launch_scheduled_thread_run_recursion_limit_is_clamped_to_ceiling(_stub
     async def _scenario():
         captured: dict[str, object] = {}
 
-        async def fake_start_run(body, thread_id, request, *, idempotency_key=None):
+        async def fake_start_run(body, thread_id, request, *, idempotency_key=None, require_existing_thread=False):
             assert idempotency_key is None
+            assert require_existing_thread is True
             captured["config"] = body.config
             return SimpleNamespace(run_id="run-1", thread_id=thread_id)
 
@@ -2902,8 +3086,9 @@ def test_launch_scheduled_thread_run_falls_back_when_config_unloadable(_stub_app
     async def _scenario():
         captured: dict[str, object] = {}
 
-        async def fake_start_run(body, thread_id, request, *, idempotency_key=None):
+        async def fake_start_run(body, thread_id, request, *, idempotency_key=None, require_existing_thread=False):
             assert idempotency_key is None
+            assert require_existing_thread is True
             captured["config"] = body.config
             return SimpleNamespace(run_id="run-1", thread_id=thread_id)
 

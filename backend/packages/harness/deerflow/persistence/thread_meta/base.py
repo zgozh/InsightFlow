@@ -30,6 +30,10 @@ THREAD_ARCHIVED_METADATA_KEY = "deerflow_archived"
 # ``frontend/tests/e2e/utils/mock-api.ts``.
 THREAD_PROJECT_METADATA_KEY = "deerflow_project_id"
 
+# Gateway-owned mode marker. Callers may choose a kind only through the
+# authenticated thread-creation request; metadata writes cannot change it.
+THREAD_ANALYSIS_MODE_METADATA_KEY = "analysis_mode"
+
 
 class _ProjectFilterUnset:
     """Sentinel for ``search(project_id=...)``: absent filter vs explicit unassigned."""

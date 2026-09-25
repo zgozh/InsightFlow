@@ -45,6 +45,7 @@ from deerflow.agents.middlewares.tool_transform_meta import TOOL_TRANSFORMS_KEY
 from deerflow.agents.middlewares.view_image_middleware import _IMAGE_CONTEXT_MESSAGE_MARKER_KEY
 from deerflow.config.app_config import get_app_config
 from deerflow.config.database_config import resolve_checkpoint_graph_cache_max
+from deerflow.persistence.thread_meta import THREAD_ANALYSIS_MODE_METADATA_KEY
 from deerflow.runtime import (
     END_SENTINEL,
     HEARTBEAT_SENTINEL,
@@ -91,6 +92,24 @@ from deerflow.utils.messages import ORIGINAL_USER_CONTENT_KEY, UNTRUSTED_INPUT_K
 from deerflow.utils.thread_id import validate_thread_id
 
 logger = logging.getLogger(__name__)
+
+
+def read_thread_analysis_mode(thread_record: Any) -> bool:
+    """Read the server-owned analysis marker from one persisted thread row."""
+    if not isinstance(thread_record, Mapping):
+        raise ValueError("thread record is unavailable")
+    metadata = thread_record.get("metadata")
+    if not isinstance(metadata, Mapping):
+        raise ValueError("thread metadata is malformed")
+    mode = metadata.get(THREAD_ANALYSIS_MODE_METADATA_KEY, False)
+    if type(mode) is not bool:
+        raise ValueError("thread analysis marker is malformed")
+    return mode
+
+
+def analysis_mode_unavailable_error(*, status_code: int = 409) -> HTTPException:
+    """Return the stable, detail-free response used while analysis is gated."""
+    return HTTPException(status_code=status_code, detail={"code": "analysis_mode_unavailable"})
 
 
 @asynccontextmanager
@@ -219,7 +238,7 @@ async def _ensure_thread_metadata(
             # membership key: run admission never modifies project membership —
             # the column is written only by POST /api/threads and
             # /threads/{id}/move — so the key must not persist either.
-            if key not in (DEERFLOW_TRACE_METADATA_KEY, THREAD_PROJECT_METADATA_KEY)
+            if key not in (DEERFLOW_TRACE_METADATA_KEY, THREAD_PROJECT_METADATA_KEY, THREAD_ANALYSIS_MODE_METADATA_KEY)
         }
         await thread_store.create(
             record.thread_id,
@@ -541,6 +560,7 @@ _SERVER_OWNED_RUNTIME_CONTEXT_KEYS: frozenset[str] = (
             "__run_tool_progress_recorder",
             "langgraph_auth_user",
             "langgraph_auth_user_id",
+            THREAD_ANALYSIS_MODE_METADATA_KEY,
             # Server-owned pinned project snapshot (spec §7.1): resolved once
             # at admission from threads_meta; a client-supplied value must
             # never survive in either run-config section.
@@ -1556,6 +1576,49 @@ async def start_run(
     if not await thread_access_allowed():
         raise HTTPException(status_code=404, detail=f"Thread {thread_id} not found")
 
+    mode_owner = owner_user_id or getattr(user, "id", None)
+
+    async def persisted_analysis_mode() -> bool:
+        mode_owner_context_token = set_current_user(SimpleNamespace(id=mode_owner)) if mode_owner is not None else None
+        try:
+            try:
+                thread_record = await run_ctx.thread_store.get(thread_id)
+            except Exception:
+                logger.warning("Failed to resolve thread mode for %s", sanitize_log_param(thread_id))
+                raise analysis_mode_unavailable_error(status_code=503) from None
+        finally:
+            if mode_owner_context_token is not None:
+                reset_current_user(mode_owner_context_token)
+
+        if thread_record is None:
+            # ``get`` is owner-scoped and therefore hides legacy/shared rows
+            # whose owner is NULL. Access was checked above; read that row
+            # unscoped, then independently enforce the owner accepted by the
+            # access check before trusting its server-owned mode marker.
+            try:
+                candidate = await run_ctx.thread_store.get(thread_id, user_id=None)
+            except Exception:
+                logger.warning("Failed to resolve thread mode for %s", sanitize_log_param(thread_id))
+                raise analysis_mode_unavailable_error(status_code=503) from None
+            if isinstance(candidate, Mapping) and candidate.get("user_id") in (None, mode_owner):
+                thread_record = candidate
+
+        if thread_record is None:
+            if require_existing_thread:
+                raise HTTPException(status_code=404, detail=f"Thread {thread_id} not found")
+            return False
+        try:
+            return read_thread_analysis_mode(thread_record)
+        except ValueError:
+            raise analysis_mode_unavailable_error() from None
+
+    # All externally addressable thread runs and trusted internal dispatchers
+    # require a persisted row; only a server-generated stateless chat may
+    # exist before its metadata row is created by the worker.
+    analysis_mode = await persisted_analysis_mode()
+    if analysis_mode:
+        raise analysis_mode_unavailable_error()
+
     owner_context_token = set_current_user(SimpleNamespace(id=owner_user_id)) if owner_user_id else None
     try:
         agent_factory = resolve_agent_factory(body.assistant_id)
@@ -1574,9 +1637,13 @@ async def start_run(
         # id, disagreeing with the response header, the logs, and the
         # checkpoint. The caller's own metadata keys are preserved.
         run_metadata = dict(body.metadata) if isinstance(body.metadata, dict) else {}
+        run_metadata.pop(THREAD_ANALYSIS_MODE_METADATA_KEY, None)
         run_metadata[DEERFLOW_TRACE_METADATA_KEY] = ensure_trace_id()
 
         config = build_run_config(thread_id, body.config, run_metadata, assistant_id=body.assistant_id)
+        config_metadata = config.get("metadata")
+        if isinstance(config_metadata, dict):
+            config_metadata.pop(THREAD_ANALYSIS_MODE_METADATA_KEY, None)
         await apply_checkpoint_to_run_config(config, body=body, thread_id=thread_id, request=request)
 
         # Merge DeerFlow-specific context overrides into both ``configurable`` and ``context``.
@@ -1595,6 +1662,8 @@ async def start_run(
             internal_owner_user=internal_owner_user,
             request_context=getattr(body, "context", None),
         )
+        config.setdefault("context", {})[THREAD_ANALYSIS_MODE_METADATA_KEY] = analysis_mode
+        config.setdefault("configurable", {})[THREAD_ANALYSIS_MODE_METADATA_KEY] = analysis_mode
 
         conversation_references = list(getattr(body, "conversation_references", None) or [])
         if conversation_references:
@@ -1722,6 +1791,9 @@ async def start_run(
                 # cannot both succeed across Gateway workers.
                 if require_existing_thread and not await thread_access_allowed():
                     raise HTTPException(status_code=404, detail=f"Thread {thread_id} not found")
+                analysis_mode = await persisted_analysis_mode()
+                if analysis_mode:
+                    raise analysis_mode_unavailable_error()
                 record = await run_mgr.create_or_reject(
                     thread_id,
                     body.assistant_id,
@@ -1839,6 +1911,7 @@ async def launch_scheduled_thread_run(
             thread_id,
             request,
             idempotency_key=idempotency_key,
+            require_existing_thread=True,
         )
     return {"run_id": record.run_id, "thread_id": record.thread_id}
 

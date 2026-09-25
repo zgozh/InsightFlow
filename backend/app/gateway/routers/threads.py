@@ -16,7 +16,7 @@ import logging
 import shutil
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from langgraph.checkpoint.base import empty_checkpoint
@@ -36,9 +36,11 @@ from app.gateway.deps import get_checkpointer, get_run_event_store, get_run_mana
 from app.gateway.internal_auth import get_trusted_internal_owner_user_id
 from app.gateway.services import (
     abuild_checkpoint_state_accessor,
+    analysis_mode_unavailable_error,
     build_checkpoint_state_mutation_accessor,
     build_thread_checkpoint_state_accessor,
     build_thread_checkpoint_state_mutation_accessor,
+    read_thread_analysis_mode,
     reserve_checkpoint_write,
     strip_server_owned_state_metadata,
 )
@@ -46,7 +48,7 @@ from app.gateway.utils import sanitize_log_param
 from deerflow.agents.thread_state import THREAD_STATE_REDUCER_FIELDS
 from deerflow.config.paths import Paths, get_paths
 from deerflow.config.summarization_config import ContextSize
-from deerflow.persistence.thread_meta import THREAD_ARCHIVED_METADATA_KEY, THREAD_PINNED_METADATA_KEY, THREAD_PROJECT_METADATA_KEY, ThreadOwnershipConflictError
+from deerflow.persistence.thread_meta import THREAD_ANALYSIS_MODE_METADATA_KEY, THREAD_ARCHIVED_METADATA_KEY, THREAD_PINNED_METADATA_KEY, THREAD_PROJECT_METADATA_KEY, ThreadOwnershipConflictError
 from deerflow.runtime import ThreadOperationKind, serialize_channel_values_for_api
 from deerflow.runtime.checkpoint_mode import CheckpointModeMismatchError, CheckpointModeReconfigurationError
 from deerflow.runtime.checkpoint_state import graph_reducer_channels, graph_state_schema, graph_writable_channels
@@ -112,7 +114,7 @@ def _checkpoint_mode_http_error(exc: Exception, thread_id: str) -> HTTPException
 # owner identity through the API surface. Defense-in-depth — the
 # row-level invariant is still ``threads_meta.user_id`` populated from
 # the auth contextvar; this list closes the metadata-blob echo gap.
-_SERVER_RESERVED_METADATA_KEYS: frozenset[str] = frozenset({"owner_id", "user_id", THREAD_PROJECT_METADATA_KEY})
+_SERVER_RESERVED_METADATA_KEYS: frozenset[str] = frozenset({"owner_id", "user_id", THREAD_PROJECT_METADATA_KEY, THREAD_ANALYSIS_MODE_METADATA_KEY})
 _SIDECAR_METADATA_KEY = "deerflow_sidecar"
 _BRANCH_METADATA_KEY = "deerflow_branch"
 _BRANCH_TITLE_SEQUENCE_METADATA_KEY = "branch_title_sequence"
@@ -449,6 +451,7 @@ class ThreadCreateRequest(BaseModel):
     """Request body for creating a thread."""
 
     thread_id: ThreadId | None = Field(default=None, description="Optional thread ID (auto-generated if omitted)")
+    kind: Literal["chat", "analysis"] = Field(default="chat", description="Thread kind selected at creation")
     assistant_id: str | None = Field(default=None, description="Associate thread with an assistant")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Initial metadata")
 
@@ -817,13 +820,17 @@ async def create_thread(body: ThreadCreateRequest, request: Request) -> ThreadRe
     if existing_record is not None:
         return _existing_thread_response(thread_id, existing_record)
 
+    thread_metadata = dict(body.metadata)
+    if body.kind == "analysis":
+        thread_metadata[THREAD_ANALYSIS_MODE_METADATA_KEY] = True
+
     # Write thread_meta so the thread appears in /threads/search immediately
     try:
         created_record = await thread_store.create(
             thread_id,
             assistant_id=getattr(body, "assistant_id", None),
             **thread_owner_kwargs,
-            metadata=body.metadata,
+            metadata=thread_metadata,
         )
     except ThreadOwnershipConflictError:
         # Do not reveal that a caller-chosen id belongs to another user.
@@ -903,6 +910,11 @@ async def _branch_thread_with_reservation(
     if source_record is None:
         raise HTTPException(status_code=404, detail=f"Thread {thread_id} not found")
 
+    try:
+        analysis_mode = read_thread_analysis_mode(source_record)
+    except ValueError:
+        raise analysis_mode_unavailable_error() from None
+
     source_metadata = source_record.get("metadata") or {}
     if source_metadata.get(_SIDECAR_METADATA_KEY) is True:
         raise HTTPException(status_code=409, detail="Branching is only available in the main conversation.")
@@ -944,6 +956,8 @@ async def _branch_thread_with_reservation(
         "branch_parent_message_id": body.message_id,
         "branch_created_at": now,
     }
+    if analysis_mode:
+        branch_metadata[THREAD_ANALYSIS_MODE_METADATA_KEY] = True
     if body.title:
         display_name = body.title
     else:
@@ -992,7 +1006,7 @@ async def _branch_thread_with_reservation(
     # serializers fall back to metadata when snapshot.created_at is absent.
     checkpoint_metadata_updates = {
         **checkpoint_agent_binding_metadata(getattr(snapshot, "metadata", None)),
-        **branch_metadata,
+        **{key: value for key, value in branch_metadata.items() if key != THREAD_ANALYSIS_MODE_METADATA_KEY},
         "source": "branch",
         "updated_at": now,
         "created_at": now,

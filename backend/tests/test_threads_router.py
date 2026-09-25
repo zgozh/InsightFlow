@@ -19,6 +19,7 @@ from app.gateway.routers import thread_runs, threads
 from deerflow.config.paths import Paths
 from deerflow.persistence.thread_meta import (
     PROJECT_FILTER_UNSET,
+    THREAD_ANALYSIS_MODE_METADATA_KEY,
     THREAD_PINNED_METADATA_KEY,
     THREAD_PROJECT_METADATA_KEY,
     InvalidMetadataFilterError,
@@ -641,6 +642,72 @@ def test_create_thread_rejects_client_supplied_project_membership_metadata():
         patched = client.patch("/api/threads/reserved-meta", json={"metadata": {THREAD_PROJECT_METADATA_KEY: "forged-2"}})
         assert patched.status_code == 200, patched.text
         assert THREAD_PROJECT_METADATA_KEY not in patched.json()["metadata"]
+
+
+def test_create_thread_analysis_kind_is_server_owned_and_patch_cannot_clear_it() -> None:
+    app, _store, _checkpointer = _build_thread_app()
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/threads",
+            json={
+                "thread_id": "analysis-kind-thread",
+                "kind": "analysis",
+                "metadata": {THREAD_ANALYSIS_MODE_METADATA_KEY: False, "title": "kept"},
+            },
+        )
+        assert created.status_code == 200, created.text
+
+        patched = client.patch(
+            "/api/threads/analysis-kind-thread",
+            json={"metadata": {THREAD_ANALYSIS_MODE_METADATA_KEY: False, "title": "updated"}},
+        )
+
+    assert patched.status_code == 200, patched.text
+    stored = asyncio.run(app.state.thread_store.get("analysis-kind-thread", user_id=None))
+    assert stored["metadata"][THREAD_ANALYSIS_MODE_METADATA_KEY] is True
+    assert stored["metadata"]["title"] == "updated"
+
+
+def test_thread_kind_defaults_to_chat_and_metadata_cannot_create_analysis_mode() -> None:
+    app, _store, _checkpointer = _build_thread_app()
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/threads",
+            json={"thread_id": "ordinary-kind-thread", "metadata": {THREAD_ANALYSIS_MODE_METADATA_KEY: True}},
+        )
+        invalid_kind = client.post("/api/threads", json={"thread_id": "invalid-kind-thread", "kind": "other"})
+
+    assert created.status_code == 200, created.text
+    assert invalid_kind.status_code == 422
+    stored = asyncio.run(app.state.thread_store.get("ordinary-kind-thread", user_id=None))
+    assert THREAD_ANALYSIS_MODE_METADATA_KEY not in stored["metadata"]
+
+
+@pytest.mark.parametrize("handler_name", ["create_run", "stream_run", "wait_run"])
+def test_explicit_thread_run_entrypoints_require_persisted_thread(monkeypatch, handler_name: str) -> None:
+    from _router_auth_helpers import call_unwrapped
+
+    captured: dict[str, object] = {}
+
+    async def fake_start_run(_body, _thread_id, _request, **kwargs):
+        captured.update(kwargs)
+        raise HTTPException(status_code=404, detail="thread not found")
+
+    monkeypatch.setattr(thread_runs, "start_run", fake_start_run)
+    monkeypatch.setattr(thread_runs, "get_stream_bridge", lambda _request: object())
+    monkeypatch.setattr(thread_runs, "get_run_manager", lambda _request: object())
+    request = SimpleNamespace(headers={}, state=SimpleNamespace(user=SimpleNamespace(id="router-user")))
+    body = thread_runs.RunCreateRequest(
+        assistant_id="lead_agent",
+        input={"messages": [{"role": "user", "content": "synthetic"}]},
+    )
+
+    with pytest.raises(HTTPException, match="thread not found"):
+        asyncio.run(call_unwrapped(getattr(thread_runs, handler_name), "missing-thread", body, request))
+
+    assert captured["require_existing_thread"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -2427,7 +2494,7 @@ def test_branch_thread_can_prepare_regenerate_without_branch_run_events() -> Non
     ai = AIMessage(id="ai-1", content="Answer")
 
     with TestClient(app) as client:
-        created = client.post("/api/threads", json={"thread_id": source_thread_id, "metadata": {}})
+        created = client.post("/api/threads", json={"thread_id": source_thread_id, "kind": "analysis", "metadata": {}})
         assert created.status_code == 200, created.text
 
         initial = asyncio.run(checkpointer.aget_tuple({"configurable": {"thread_id": source_thread_id, "checkpoint_ns": ""}}))
@@ -2455,10 +2522,12 @@ def test_branch_thread_can_prepare_regenerate_without_branch_run_events() -> Non
 
         branch_response = client.post(
             f"/api/threads/{source_thread_id}/branches",
-            json={"message_id": "ai-1", "message_ids": ["ai-1"]},
+            json={"message_id": "ai-1", "message_ids": ["ai-1"], "kind": "chat"},
         )
         assert branch_response.status_code == 200, branch_response.text
         branch_thread_id = branch_response.json()["thread_id"]
+        branch_thread = asyncio.run(app.state.thread_store.get(branch_thread_id, user_id=None))
+        assert branch_thread["metadata"][THREAD_ANALYSIS_MODE_METADATA_KEY] is True
 
         prepare_response = client.post(
             f"/api/threads/{branch_thread_id}/runs/regenerate/prepare",

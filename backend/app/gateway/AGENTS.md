@@ -166,3 +166,11 @@ Proxied through nginx: `/api/langgraph/*` → Gateway LangGraph-compatible runti
 archive/search behavior, read [Thread lifecycle invariants](../../docs/THREAD_LIFECYCLE.md).
 It owns lineage and settled-checkpoint rules, legacy fallback boundaries, archive
 filtering before pagination, owner isolation, and activity-time preservation.
+
+**可信分析线程模式**：`POST /api/threads` 只通过顶层 `kind="analysis"` 创建分析线程，
+并将 `analysis_mode` 写入 `threads_meta.metadata_json` 的服务端保留字段；普通 metadata、
+PATCH、分支请求和 run 的 `context` / `configurable` 均不能设置或清除它。分支从持久源线程
+记录继承该标记。所有显式线程及 scheduler、MCP 通知运行都必须从持久线程记录解析模式；
+记录缺失或标记损坏时拒绝，分析线程在解析 Lead Agent 工厂之前以稳定的
+`analysis_mode_unavailable` 错误拒绝。只有 Gateway 新生成、未绑定既有线程的 stateless
+聊天可在元数据行建立前运行。6E2B 完成工具隔离前，不得移除此门禁或回退到普通聊天。
