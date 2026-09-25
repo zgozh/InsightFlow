@@ -61,6 +61,7 @@ from deerflow.config.subagents_config import (
     effective_subagent_concurrency,
 )
 from deerflow.models import create_chat_model
+from deerflow.persistence.thread_meta import THREAD_ANALYSIS_MODE_METADATA_KEY
 from deerflow.runtime.checkpoint_mode import (
     INTERNAL_CHECKPOINT_MODE_KEY,
     freeze_checkpoint_channel_mode,
@@ -75,6 +76,12 @@ from deerflow.tracing import build_tracing_callbacks
 logger = logging.getLogger(__name__)
 
 _NON_INTERACTIVE_DISABLED_TOOL_NAMES = frozenset({"ask_clarification"})
+
+
+def _is_trusted_analysis_mode(config: RunnableConfig) -> bool:
+    """只读取 Gateway 清洗客户端输入后写入的运行 context 标记。"""
+    context = config.get("context")
+    return isinstance(context, Mapping) and context.get(THREAD_ANALYSIS_MODE_METADATA_KEY) is True
 
 
 @dataclass(frozen=True)
@@ -890,6 +897,7 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
 
     cfg = _get_runtime_config(config)
     resolved_app_config = app_config
+    analysis_mode = _is_trusted_analysis_mode(config)
     mode = (config.get("configurable", {}) or {}).get(
         INTERNAL_CHECKPOINT_MODE_KEY,
         resolved_app_config.database.checkpoint_channel_mode,
@@ -903,8 +911,8 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
     resolved_user_id = resolve_config_user_id(config)
 
     requested_model_name: str | None = cfg.get("model_name") or cfg.get("model")
-    is_plan_mode = cfg.get("is_plan_mode", False)
-    requested_subagent_enabled = cfg.get("subagent_enabled", False)
+    is_plan_mode = False if analysis_mode else cfg.get("is_plan_mode", False)
+    requested_subagent_enabled = False if analysis_mode else cfg.get("subagent_enabled", False)
     subagent_execution_capacity = configured_subagent_max_running()
     max_concurrent_subagents = effective_subagent_concurrency(
         cfg.get("max_concurrent_subagents"),
@@ -913,10 +921,10 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
     )
     max_total_subagents = cfg.get("max_total_subagents", _default_max_total_subagents(resolved_app_config))
     non_interactive = bool(cfg.get("non_interactive", False))
-    agent_name = validate_agent_name(cfg.get("agent_name"))
+    agent_name = None if analysis_mode else validate_agent_name(cfg.get("agent_name"))
 
-    agent_config = load_agent_config(agent_name, user_id=resolved_user_id)
-    memory_enabled = getattr(agent_config, "memory_enabled", True) is not False
+    agent_config = None if analysis_mode else load_agent_config(agent_name, user_id=resolved_user_id)
+    memory_enabled = False if analysis_mode else getattr(agent_config, "memory_enabled", True) is not False
     # Keep compatibility with lightweight AgentConfig-shaped objects used by
     # integrations that predate caller-level subagent restrictions.
     allowed_subagents = getattr(agent_config, "allowed_subagents", None) if agent_config is not None else None
@@ -926,7 +934,7 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
     config.setdefault("configurable", {})["subagent_enabled"] = subagent_enabled
     if isinstance(config.get("context"), dict):
         config["context"]["subagent_enabled"] = subagent_enabled
-    available_skills = _available_skill_names(agent_config)
+    available_skills = None if analysis_mode else _available_skill_names(agent_config)
     # Custom agent model from agent config (if any), or None to let _resolve_model_name pick the default
     agent_model_name = agent_config.model if agent_config and agent_config.model else None
 
@@ -1002,13 +1010,13 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
             existing = list(existing)
         config["callbacks"] = [*existing, *tracing_callbacks]
 
-    enabled_skills = _load_enabled_available_skills(available_skills, app_config=resolved_app_config, user_id=resolved_user_id)
+    enabled_skills = [] if analysis_mode else _load_enabled_available_skills(available_skills, app_config=resolved_app_config, user_id=resolved_user_id)
 
     # Build skill search setup (deferred skill discovery).
     # Controlled by skills.deferred_discovery — independent from tool_search.enabled.
     from deerflow.skills.describe import build_skill_search_setup
 
-    skill_search_enabled = resolved_app_config.skills.deferred_discovery
+    skill_search_enabled = resolved_app_config.skills.deferred_discovery and not analysis_mode
     container_base_path = resolved_app_config.skills.container_path
 
     # Build skill search setup from the agent-available skills. The same
@@ -1022,20 +1030,22 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
     # Default lead agent (unchanged behavior)
     raw_tools = get_available_tools(
         model_name=model_name,
-        groups=agent_config.tool_groups if agent_config else None,
+        groups=agent_config.tool_groups if agent_config and not analysis_mode else None,
         subagent_enabled=subagent_enabled,
-        include_conversation_reader=callable(cfg.get(CONVERSATION_READER_CONTEXT_KEY)) and not bool(cfg.get("is_subagent")),
+        include_conversation_reader=not analysis_mode and callable(cfg.get(CONVERSATION_READER_CONTEXT_KEY)) and not bool(cfg.get("is_subagent")),
+        analysis_mode=analysis_mode,
         app_config=resolved_app_config,
     )
     configured_tools = list(raw_tools)
     if non_interactive:
         configured_tools = [tool for tool in configured_tools if tool.name not in _NON_INTERACTIVE_DISABLED_TOOL_NAMES]
     authorization_candidates = [*configured_tools]
-    if skill_setup.describe_skill_tool:
-        authorization_candidates.append(skill_setup.describe_skill_tool)
-    if memory_enabled and should_use_memory_tools(resolved_app_config.memory):
-        _append_memory_tools_without_name_conflicts(authorization_candidates)
-    append_task_continuity_tools(authorization_candidates, resolved_app_config)
+    if not analysis_mode:
+        if skill_setup.describe_skill_tool:
+            authorization_candidates.append(skill_setup.describe_skill_tool)
+        if memory_enabled and should_use_memory_tools(resolved_app_config.memory):
+            _append_memory_tools_without_name_conflicts(authorization_candidates)
+        append_task_continuity_tools(authorization_candidates, resolved_app_config)
     configured_tool_ids = {id(tool) for tool in configured_tools}
     authorized_tools, _authz_provider = apply_tool_authorization(
         authorization_candidates,
@@ -1043,28 +1053,38 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
         app_config=resolved_app_config,
     )
     configured_tools = [tool for tool in authorized_tools if id(tool) in configured_tool_ids]
-    late_tools = [tool for tool in authorized_tools if id(tool) not in configured_tool_ids]
-    final_tools, setup = assemble_deferred_tools(configured_tools, enabled=resolved_app_config.tool_search.enabled)
-    final_tools.extend(late_tools)
-    mcp_routing_middleware = build_mcp_routing_middleware(
-        final_tools,
-        setup,
-        top_k=resolved_app_config.tool_search.auto_promote_top_k,
+    late_tools = [] if analysis_mode else [tool for tool in authorized_tools if id(tool) not in configured_tool_ids]
+    final_tools, setup = assemble_deferred_tools(
+        configured_tools,
+        enabled=resolved_app_config.tool_search.enabled and not analysis_mode,
     )
-    mcp_routing_hints_section = get_mcp_routing_hints_prompt_section(authorized_tools, deferred_names=setup.deferred_names)
-    middlewares = build_middlewares(
-        config,
-        model_name=model_name,
-        agent_name=agent_name,
-        available_skills=available_skills,
-        memory_enabled=memory_enabled,
-        app_config=resolved_app_config,
-        deferred_setup=setup,
-        mcp_routing_middleware=mcp_routing_middleware,
-        user_id=resolved_user_id,
-        authorization_provider=_authz_provider,
-        subagent_execution_capacity=subagent_execution_capacity,
-    )
+    if analysis_mode:
+        final_tools = [tool for tool in final_tools if id(tool) in configured_tool_ids]
+        mcp_routing_middleware = None
+        mcp_routing_hints_section = ""
+        # 中间件可能注册额外的模型工具；分析运行先只保留固定来源的两个工具。
+        middlewares = []
+    else:
+        final_tools.extend(late_tools)
+        mcp_routing_middleware = build_mcp_routing_middleware(
+            final_tools,
+            setup,
+            top_k=resolved_app_config.tool_search.auto_promote_top_k,
+        )
+        mcp_routing_hints_section = get_mcp_routing_hints_prompt_section(authorized_tools, deferred_names=setup.deferred_names)
+        middlewares = build_middlewares(
+            config,
+            model_name=model_name,
+            agent_name=agent_name,
+            available_skills=available_skills,
+            memory_enabled=memory_enabled,
+            app_config=resolved_app_config,
+            deferred_setup=setup,
+            mcp_routing_middleware=mcp_routing_middleware,
+            user_id=resolved_user_id,
+            authorization_provider=_authz_provider,
+            subagent_execution_capacity=subagent_execution_capacity,
+        )
     system_prompt = apply_prompt_template(
         subagent_enabled=subagent_enabled,
         max_concurrent_subagents=max_concurrent_subagents,
@@ -1105,6 +1125,7 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
         enabled_skills=enabled_skills,
         effective_policies={
             "bootstrap": False,
+            "analysis_mode": analysis_mode,
             "non_interactive": non_interactive,
             "plan_mode": is_plan_mode,
             "subagents": _subagent_release_policy(
@@ -1115,7 +1136,7 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
                 allowed_subagents=allowed_subagents,
             ),
             "deferred_tools": {
-                "enabled": resolved_app_config.tool_search.enabled,
+                "enabled": resolved_app_config.tool_search.enabled and not analysis_mode,
                 "catalog_hash": setup.catalog_hash,
             },
             "deferred_skills": skill_search_enabled,

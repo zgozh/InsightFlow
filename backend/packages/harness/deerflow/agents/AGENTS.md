@@ -19,6 +19,7 @@
 - A trusted per-agent runtime configuration may set `memory_enabled: false` to disable memory reads, writes, tools, and compaction flushes while retaining date context. Manual compaction trusts the state-producing checkpoint binding, and global disable stays authoritative. Embedded clients cache the named policy by agent/user until `reset_agent()`; unreadable configs keep the legacy enabled default and log a warning.
 - **Prompt trust**: framework authority uses the system channel; user/model-influenced text uses the sanitized `HumanMessage` data channel. Never interpolate untrusted values into system text—even escaped tags do not neutralize natural-language injection (PR #5090).
 - Pass the same rendered prompt and middleware objects to the graph and assembly descriptor so observers describe the live graph, including any configured subagent allowlist.
+- 受控分析仅读取 Gateway 清洗后的 `context[THREAD_ANALYSIS_MODE_METADATA_KEY]` 标记；该 Harness 判断本身不是认证边界，不能信任 `configurable` 或模型/客户端自报值。分析分支必须关闭自定义 Agent、skill、memory、计划、子 Agent、MCP/deferred discovery 与中间件工具注入，并让固定 Analytics 正向工具集合同时驱动模型 schema 和最终图分发。Gateway 的 `analysis_mode_unavailable` 运行拒绝保持在 Agent 构造之前，直至独立完成安全 artifact 写入与运行闭环验收。
 
 **ThreadState** (`packages/harness/deerflow/agents/thread_state.py`):
 - Extends `AgentState` with: `sandbox`, `thread_data`, `title`, `artifacts`, `todos`, `uploaded_files`, `viewed_images`, `goal`, `promoted`, `delegations`, `skill_context`, `summary_text`

@@ -23,6 +23,11 @@ from deerflow.tools.sync import make_sync_tool_wrapper
 
 logger = logging.getLogger(__name__)
 
+_ANALYSIS_TOOL_SOURCES = (
+    ("inspect_business_catalog", "analytics", "app.analytics.agent.tools:inspect_business_catalog"),
+    ("query_business_data", "analytics", "app.analytics.agent.tools:query_business_data"),
+)
+
 BUILTIN_TOOLS = [
     present_file_tool,
     ask_clarification_tool,
@@ -64,6 +69,24 @@ def _ensure_sync_invocable_tool(tool: BaseTool) -> BaseTool:
     return tool
 
 
+def _get_analysis_tools(config: AppConfig) -> list[BaseTool]:
+    """只从固定配置来源解析受控分析工具，并拒绝缺失或歧义配置。"""
+    approved_sources: list[tuple[str, str]] = []
+    for expected_name, expected_group, expected_use in _ANALYSIS_TOOL_SOURCES:
+        matches = [item for item in config.tools if item.name == expected_name and item.group == expected_group and item.use == expected_use]
+        if len(matches) != 1:
+            raise RuntimeError("analysis_tool_allowlist_incomplete")
+        approved_sources.append((expected_name, expected_use))
+
+    tools: list[BaseTool] = []
+    for expected_name, expected_use in approved_sources:
+        loaded = resolve_variable(expected_use, BaseTool)
+        if loaded.name != expected_name:
+            raise RuntimeError("analysis_tool_allowlist_source_mismatch")
+        tools.append(_ensure_sync_invocable_tool(loaded))
+    return tools
+
+
 def get_available_tools(
     groups: list[str] | None = None,
     include_mcp: bool = True,
@@ -72,6 +95,7 @@ def get_available_tools(
     *,
     include_upload_tool: bool = True,
     include_conversation_reader: bool = False,
+    analysis_mode: bool = False,
     app_config: AppConfig | None = None,
 ) -> list[BaseTool]:
     """Get all available tools from config.
@@ -96,6 +120,9 @@ def get_available_tools(
         List of available tools.
     """
     config = app_config or get_app_config()
+    if analysis_mode:
+        return _get_analysis_tools(config)
+
     tool_configs = [tool for tool in config.tools if groups is None or tool.group in groups]
     if not include_conversation_reader:
         tool_configs = [tool for tool in tool_configs if tool.use != CONVERSATION_TOOL_USE]

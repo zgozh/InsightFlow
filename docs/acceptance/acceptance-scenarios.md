@@ -149,17 +149,22 @@
 
 依据：报告 §10（V1 HIGH 拒绝策略）、§11（`secret_ref` 禁止明文、审计禁止保存敏感结果行）、§14 Security（拒绝路径的安全 metadata 边界）。Phase 6E3A 为部分运行输出路径加入结构化投影；整项 AS-13 仍须按证据矩阵完成 GPT 复验与后续真实验收。
 
-## AS-14 MCP 不能绕过查询策略（MCP cannot bypass query policy）
+## AS-14 受控分析工具边界与 MCP 保证范围（Controlled analysis boundary and MCP scope）
 
-- **Given** 一个被配置为可提供数据访问的 MCP server
-- **When** 通过 MCP 路径尝试访问任一数据源
-- **Then** 该路径必须调用与本地路径相同的 Query Policy 契约；未通过策略的查询被拒绝，并产生与本地路径同等的审计记录
-- **And** 不存在任何仅经由 MCP 绕过统一权限、LIMIT、超时、脱敏或审计的数据访问路径
-- **And** 系统不把核心数据访问只实现为 MCP
+- **Given** 平台托管的 Analytics 数据源
+- **When** 通过平台 `query_business_data` 路径访问
+- **Then** 查询必须经过平台 Query Policy、授权、限额、超时与审计闭环；该保证属于平台 Analytics 工具，不推及任意第三方 MCP
+- **And Given** 普通聊天启用了操作者配置的第三方 MCP
+- **Then** 普通聊天保留这些已配置工具；产品不承诺它们遵循平台 SQL Query Policy 或同等审计
+- **And Given** 一个受控分析运行
+- **Then** 模型工具 schema 与最终执行分发必须来自同一固定正向集合，且精确限于 `inspect_business_catalog`、`query_business_data`
+- **And** 普通/durable MCP、bash/命令执行、任意文件工具、动态插件、`tool_search`、`task`/子 Agent、`publish_analysis_report` 与未知新工具均不可见且不可执行
+- **And** MCP 热更新、延迟发现和历史或伪造 `tool_call` 不得扩大该集合
+- **And** 只有报告 artifact 安全写入闭环及其余运行边界也经验证后，才可开放受控分析入口
 
-依据：报告 §4 MODIFY（MCP 不能绕过统一查询安全层）、§9（MCP datasource adapter 也必须调用相同 Query Policy 契约）、§14 Security、§17（不把核心数据访问强行包装为 MCP）。
+依据：已批准的 [Phase 6E2B 运行隔离边界](../prompts/phase-06e2b-controlled-analysis-runtime.md) 与 6E2B1 工具 allowlist 切片。本场景区分平台 Analytics 的 Query Policy 保证和普通聊天 operator MCP 的权限范围。
 
-现行状态：发布阻塞。任意第三方 MCP 工具没有被强制经平台 Query Policy；不得以“管理员不会配置危险 MCP”替代统一安全保证。该阻塞不阻止 6D2 验证平台自有受控 Analytics 路径。
+现行状态：发布阻塞。6E2B1 的合成构图/执行测试只证明固定工具集合及普通聊天 MCP 保持原路径；Gateway 仍在 Agent/tool 构造前以 `analysis_mode_unavailable` 拒绝分析线程。安全 artifact 写入和完整受控运行均未验收，因此本切片不构成 AS-14 完成。
 
 ## AS-15 四服务默认 Compose 启动（four-service default Compose startup）
 
