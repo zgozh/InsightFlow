@@ -7,6 +7,12 @@ export interface Translations {
   branding: BrandingTranslations;
   analytics: AnalyticsTranslations;
 
+  analysisUnavailable: {
+    title: string;
+    description: string;
+    goToChat: string;
+  };
+
   // Locale meta
   locale: {
     localName: string;

@@ -11,6 +11,13 @@ import type { Translations } from "./types";
 export const zhCN: Translations = {
   ...analyticsZhCN,
 
+  analysisUnavailable: {
+    title: "受控分析暂不可用",
+    description:
+      "受控分析运行环境尚未通过安全验证。此页面不会创建普通聊天，也不会启动聊天任务。",
+    goToChat: "前往普通聊天",
+  },
+
   // Locale meta
   locale: {
     localName: "中文",

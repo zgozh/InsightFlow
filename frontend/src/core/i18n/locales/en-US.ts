@@ -11,6 +11,13 @@ import type { Translations } from "./types";
 export const enUS: Translations = {
   ...analyticsEnUS,
 
+  analysisUnavailable: {
+    title: "Controlled analysis is temporarily unavailable",
+    description:
+      "The controlled-analysis runtime has not completed its safety review. This page will not create an ordinary chat or start a chat run.",
+    goToChat: "Go to regular chat",
+  },
+
   // Locale meta
   locale: {
     localName: "English",
