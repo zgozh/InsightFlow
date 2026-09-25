@@ -319,16 +319,12 @@ def project_analytics_event_rows(events: list[Any]) -> list[Any]:
     return projected
 
 
-class AnalyticsToolCallCorrelationError(RuntimeError):
-    """流式工具参数块缺少可靠工具身份时抛出。"""
-
-
 class AnalyticsToolCallChunkProjector:
-    """跨消息块只移除 query_business_data 的参数。
+    """跨消息块在外发副本中只移除 Analytics 参数。
 
     LangChain 可能只在首个增量携带工具名。后续增量通过稳定消息 ID 与工具
-    索引关联；如果参数可能属于 Analytics 却没有该关联键，就在模糊内容到达
-    StreamBridge 前停止发布。
+    索引关联。身份未明时只遮盖当前模糊参数，不因无法关联而中止整次 run；
+    名称分叉为其他工具后，后续参数仍按普通工具参数保留。
     """
 
     def __init__(self) -> None:
@@ -345,14 +341,12 @@ class AnalyticsToolCallChunkProjector:
 
     @staticmethod
     def _name_state(previous: str | None, delta: Any) -> str | None:
+        if previous == "__other_tool__":
+            return previous
         if delta is None:
             return previous
         if not isinstance(delta, str) or not delta:
             return previous
-        if previous == _ANALYTICS_QUERY_TOOL:
-            return _ANALYTICS_QUERY_TOOL
-        if delta == _ANALYTICS_QUERY_TOOL:
-            return _ANALYTICS_QUERY_TOOL
         combined = f"{previous}{delta}" if previous and _ANALYTICS_QUERY_TOOL.startswith(previous) else delta
         if combined == _ANALYTICS_QUERY_TOOL:
             return _ANALYTICS_QUERY_TOOL
@@ -372,9 +366,8 @@ class AnalyticsToolCallChunkProjector:
         if not isinstance(chunks, list):
             return result
 
-        analytics_indexes: set[int] = set()
-        candidate_indexes: set[int] = set()
         analytics_ids: set[str] = set()
+        has_ambiguous_chunk = False
         tool_names: dict[str, str] = {}
         for chunk in chunks:
             if not isinstance(chunk, dict):
@@ -386,39 +379,37 @@ class AnalyticsToolCallChunkProjector:
             previous = self._names_by_index.get(key) if key is not None else None
             state = self._name_state(previous, chunk.get("name"))
             has_args = bool(chunk.get("args"))
+            tool_id = chunk.get("id")
 
             if state == "__other_tool__":
-                if previous and _ANALYTICS_QUERY_TOOL.startswith(previous):
-                    raise AnalyticsToolCallCorrelationError("Analytics tool-call name changed before identity was resolved")
                 if key is not None:
-                    self._names_by_index.pop(key, None)
+                    self._names_by_index[key] = state
                     self._ids_by_index.pop(key, None)
                 continue
             if state is None:
                 if has_args:
-                    if key is None:
-                        raise AnalyticsToolCallCorrelationError("Analytics tool-call arguments lack a stable chunk identity")
-                    raise AnalyticsToolCallCorrelationError("Analytics tool-call arguments arrived before the tool name")
+                    chunk["args"] = ""
+                    has_ambiguous_chunk = True
                 continue
-            if key is None:
-                raise AnalyticsToolCallCorrelationError("Analytics tool-call arguments lack a stable chunk identity")
 
             # 工具名仍是 Analytics 名称前缀时身份尚未确定；完成判定前不外发参数增量。
-            self._names_by_index[key] = state
+            if key is not None:
+                self._names_by_index[key] = state
             if state != _ANALYTICS_QUERY_TOOL:
-                candidate_indexes.add(index)
+                has_ambiguous_chunk = True
                 if has_args:
                     chunk["args"] = ""
                 continue
 
-            if state == _ANALYTICS_QUERY_TOOL:
-                analytics_indexes.add(index)
-                tool_id = chunk.get("id") or self._ids_by_index.get(key)
-                if isinstance(tool_id, str) and tool_id:
-                    analytics_ids.add(tool_id)
-                    tool_names[tool_id] = _ANALYTICS_QUERY_TOOL
+            has_ambiguous_chunk = True
+            previous_id = self._ids_by_index.get(key) if key is not None else None
+            tool_id = tool_id or previous_id
+            if isinstance(tool_id, str) and tool_id:
+                analytics_ids.add(tool_id)
+                tool_names[tool_id] = _ANALYTICS_QUERY_TOOL
+                if key is not None:
                     self._ids_by_index[key] = tool_id
-                chunk["args"] = ""
+            chunk["args"] = ""
 
         _project_analytics_message(message, tool_names)
 
@@ -432,18 +423,17 @@ class AnalyticsToolCallChunkProjector:
                 if isinstance(call_id, str) and call_id in analytics_ids:
                     direct_analytics = True
                 call_name = _analytics_tool_name(call)
-                # LangChain 组装中的唯一工具块可能带一个尚无 ID/名称的解析壳；
-                # 仅当本消息只有一个工具调用和一个 Analytics 块时才可唯一归因。
-                if not direct_analytics and not call_name and not call_id and len(calls) == 1 and len(chunks) == 1 and (analytics_indexes or candidate_indexes):
+                # LangChain 组装中的解析壳可能没有名称或 ID；只遮盖模糊壳，
+                # 不把同帧中有明确名称的普通工具参数一起清空。
+                if not direct_analytics and not call_name and not call_id and len(calls) == 1 and len(chunks) == 1 and has_ambiguous_chunk:
                     direct_analytics = True
-                possible_analytics = isinstance(call_name, str) and call_name != _ANALYTICS_QUERY_TOOL and _ANALYTICS_QUERY_TOOL.startswith(call_name) and bool(candidate_indexes)
+                possible_analytics = isinstance(call_name, str) and call_name != _ANALYTICS_QUERY_TOOL and _ANALYTICS_QUERY_TOOL.startswith(call_name)
                 direct_analytics = direct_analytics or possible_analytics
                 if not direct_analytics:
-                    # 已解析调用通常有 ID 或名称。如果本消息含 Analytics 块但两者皆缺，
-                    # 就不能安全判断该参数属于哪个工具。
-                    if (analytics_indexes or candidate_indexes) and not call_name and not call_id:
-                        raise AnalyticsToolCallCorrelationError("Analytics tool-call arguments map to multiple streamed tools")
-                    continue
+                    explicit_other = isinstance(call_name, str) and bool(call_name)
+                    if explicit_other or not has_ambiguous_chunk:
+                        continue
+                    direct_analytics = True
                 if field == "invalid_tool_calls":
                     call["args"] = ""
                     call["error"] = "invalid_arguments"

@@ -339,13 +339,11 @@ class TestPublishStreamItem:
         assert continuation.tool_call_chunks[0]["args"] == ' CONTINUATION_SENTINEL"}'
 
     # ---------------------------------------------------------------------------
-    # Analytics argument deltas must fail closed when their identity is ambiguous.
+    # Ambiguous argument deltas are masked on detached output without aborting the run.
     # ---------------------------------------------------------------------------
     @pytest.mark.asyncio
-    async def test_partial_analytics_name_is_masked_and_unmatched_arguments_fail_closed(self):
+    async def test_partial_and_unidentified_arguments_are_masked_without_aborting(self):
         import json
-
-        from deerflow.runtime.serialization import AnalyticsToolCallCorrelationError
 
         bridge = _FakeBridge()
         projector = AnalyticsToolCallChunkProjector()
@@ -370,18 +368,220 @@ class TestPublishStreamItem:
             content="",
             tool_call_chunks=[{"id": None, "index": None, "name": None, "args": "UNMATCHED_SQL_SENTINEL"}],
         )
-        with pytest.raises(AnalyticsToolCallCorrelationError):
-            await _publish_stream_item(
-                bridge=bridge,
-                run_id="run-1",
-                mode="messages",
-                chunk=uncorrelated,
-                namespace=(),
-                file_tool_chunk_batcher=None,
-                subagent_events=_FakeSubagentEvents(),
-                analytics_chunk_projector=projector,
+        before_name = AIMessageChunk(
+            content="",
+            id="ai-before-name",
+            tool_call_chunks=[{"id": "call-before-name", "index": 0, "name": None, "args": "BEFORE_NAME_SQL_SENTINEL"}],
+        )
+        await _publish_stream_item(
+            bridge=bridge,
+            run_id="run-1",
+            mode="messages",
+            chunk=uncorrelated,
+            namespace=(),
+            file_tool_chunk_batcher=None,
+            subagent_events=_FakeSubagentEvents(),
+            analytics_chunk_projector=projector,
+        )
+        await _publish_stream_item(
+            bridge=bridge,
+            run_id="run-1",
+            mode="messages",
+            chunk=before_name,
+            namespace=(),
+            file_tool_chunk_batcher=None,
+            subagent_events=_FakeSubagentEvents(),
+            analytics_chunk_projector=projector,
+        )
+
+        payloads = [payload for _run, _event, payload in bridge.published]
+        assert len(payloads) == 3
+        assert payloads[1]["tool_call_chunks"][0]["args"] == ""
+        assert payloads[1]["invalid_tool_calls"][0]["args"] == ""
+        assert payloads[2]["tool_call_chunks"][0]["args"] == ""
+        assert payloads[2]["invalid_tool_calls"][0]["args"] == ""
+        assert not any(marker in json.dumps(bridge.published) for marker in ("UNMATCHED_SQL_SENTINEL", "BEFORE_NAME_SQL_SENTINEL"))
+        assert uncorrelated.tool_call_chunks[0]["args"] == "UNMATCHED_SQL_SENTINEL"
+        assert before_name.tool_call_chunks[0]["args"] == "BEFORE_NAME_SQL_SENTINEL"
+
+    def test_ambiguous_shell_is_masked_without_scrubbing_named_search_arguments(self):
+        import json
+
+        projector = AnalyticsToolCallChunkProjector()
+        mixed = AIMessageChunk(
+            content="",
+            id="ai-mixed-shells",
+            tool_call_chunks=[
+                {"id": None, "index": None, "name": None, "args": '"sql":"MIXED_SQL_SENTINEL'},
+                {"id": "call-search", "index": 1, "name": "web_search", "args": '"query":"ORDINARY_SEARCH_SENTINEL'},
+            ],
+        )
+
+        payload = _serialize_and_project_stream_payload(
+            (mixed, {"langgraph_node": "model"}),
+            mode="messages",
+            analytics_chunk_projector=projector,
+        )
+
+        assert payload[0]["tool_call_chunks"][0]["args"] == ""
+        assert payload[0]["invalid_tool_calls"][0]["args"] == ""
+        assert "ORDINARY_SEARCH_SENTINEL" in json.dumps(payload)
+        assert "MIXED_SQL_SENTINEL" not in json.dumps(payload)
+        assert "MIXED_SQL_SENTINEL" in mixed.tool_call_chunks[0]["args"]
+
+    def test_query_business_data_export_suffix_stops_being_analytics(self):
+        projector = AnalyticsToolCallChunkProjector()
+        first = AIMessageChunk(
+            content="",
+            id="ai-export-suffix",
+            tool_call_chunks=[{"id": "call-export", "index": 0, "name": "query_business_data", "args": '"sql":"PREFIX_SQL_SENTINEL'}],
+        )
+        suffix = AIMessageChunk(
+            content="",
+            id="ai-export-suffix",
+            tool_call_chunks=[{"index": 0, "name": "_export", "args": '"query":"ORDINARY_SUFFIX_SENTINEL'}],
+        )
+
+        first_payload = _serialize_and_project_stream_payload(first, mode="messages", analytics_chunk_projector=projector)
+        suffix_payload = _serialize_and_project_stream_payload(suffix, mode="messages", analytics_chunk_projector=projector)
+
+        assert first_payload["tool_call_chunks"][0]["args"] == ""
+        assert "PREFIX_SQL_SENTINEL" not in str(first_payload)
+        assert suffix_payload["tool_call_chunks"][0]["args"] == suffix.tool_call_chunks[0]["args"]
+        assert "ORDINARY_SUFFIX_SENTINEL" in str(suffix_payload)
+        assert "query_business_data_export" not in str(first_payload)
+        assert suffix.tool_call_chunks[0]["args"] == '"query":"ORDINARY_SUFFIX_SENTINEL'
+
+    @pytest.mark.asyncio
+    async def test_ambiguous_tool_chunks_do_not_abort_a_worker_run_or_leak_history(self):
+        import json
+        from uuid import uuid4
+
+        from langchain_core.outputs import ChatGeneration, LLMResult
+
+        from deerflow.runtime.events.store.memory import MemoryRunEventStore
+        from deerflow.runtime.runs.manager import RunManager
+
+        no_name_with_other_tool = AIMessageChunk(
+            content="",
+            id="worker-ambiguous-ai",
+            tool_call_chunks=[
+                {"id": None, "index": None, "name": None, "args": '"sql":"WORKER_AMBIGUOUS_SQL_SENTINEL'},
+                {"id": "worker-search-call", "index": 1, "name": "web_search", "args": '"query":"WORKER_SEARCH_VISIBLE_SENTINEL'},
+            ],
+        )
+        no_stable_identity = AIMessageChunk(
+            content="",
+            id=None,
+            tool_call_chunks=[{"id": None, "index": None, "name": None, "args": "WORKER_NO_ID_SQL_SENTINEL"}],
+        )
+        before_name_identity = AIMessageChunk(
+            content="",
+            id="worker-before-name-ai",
+            tool_call_chunks=[{"id": "worker-before-name-call", "index": 0, "name": None, "args": "WORKER_BEFORE_NAME_SQL_SENTINEL"}],
+        )
+        exact_name = AIMessageChunk(
+            content="",
+            id="worker-export-ai",
+            tool_call_chunks=[{"id": "worker-export-call", "index": 0, "name": "query_business_data", "args": '"sql":"WORKER_PREFIX_SQL_SENTINEL'}],
+        )
+        name_suffix = AIMessageChunk(
+            content="",
+            id="worker-export-ai",
+            tool_call_chunks=[{"index": 0, "name": "_export", "args": '"query":"WORKER_SUFFIX_VISIBLE_SENTINEL'}],
+        )
+        suffix_continuation = AIMessageChunk(
+            content="",
+            id="worker-export-ai",
+            tool_call_chunks=[{"index": 0, "name": None, "args": "WORKER_SUFFIX_CONTINUATION_VISIBLE_SENTINEL"}],
+        )
+        history_ai = AIMessage(
+            content="",
+            id="worker-history-ai",
+            tool_calls=[
+                {
+                    "id": "worker-history-call",
+                    "name": "query_business_data",
+                    "args": {"datasource_id": "ds-1", "sql": "WORKER_HISTORY_SQL_SENTINEL"},
+                }
+            ],
+        )
+        history_tool = ToolMessage(
+            content=json.dumps({"code": "executed", "rows": [["WORKER_HISTORY_ROW_SENTINEL"]]}),
+            tool_call_id="worker-history-call",
+            name="query_business_data",
+        )
+
+        class StreamingAgent:
+            def __init__(self):
+                self.metadata = {}
+                self.checkpointer = None
+                self.store = None
+                self.interrupt_before_nodes = []
+                self.interrupt_after_nodes = []
+
+            def astream(self, _input, *, config, stream_mode, subgraphs=False):
+                journal = config["configurable"]["__pregel_runtime"].context["__run_journal"]
+                journal.on_llm_end(LLMResult(generations=[[ChatGeneration(message=history_ai)]]), run_id=uuid4(), tags=["lead_agent"])
+                journal.on_tool_end(history_tool, run_id=uuid4())
+
+                async def stream():
+                    yield ("messages", (no_name_with_other_tool, {"langgraph_node": "model"}))
+                    yield ("messages", (no_stable_identity, {"langgraph_node": "model"}))
+                    yield ("messages", (before_name_identity, {"langgraph_node": "model"}))
+                    yield ("messages", (exact_name, {"langgraph_node": "model"}))
+                    yield ("messages", (name_suffix, {"langgraph_node": "model"}))
+                    yield ("messages", (suffix_continuation, {"langgraph_node": "model"}))
+                    yield ("values", {"messages": [history_ai, history_tool]})
+
+                return stream()
+
+        run_manager = RunManager()
+        record = await run_manager.create("thread-ambiguous-analytics-stream", assistant_id="lead-agent")
+        record.model_name = "test-model"
+        record.abort_event = asyncio.Event()
+        bridge = _RecordingStreamBridge()
+        event_store = MemoryRunEventStore()
+
+        await worker.run_agent(
+            bridge,
+            run_manager,
+            record,
+            ctx=worker.RunContext(checkpointer=None, event_store=event_store),
+            agent_factory=lambda config: StreamingAgent(),
+            graph_input={"messages": [HumanMessage(content="ordinary chat")]},
+            config={"configurable": {"thread_id": record.thread_id}},
+            stream_modes=["messages-tuple", "values"],
+        )
+
+        published = json.dumps(bridge.published, ensure_ascii=False)
+        history = await event_store.list_events(record.thread_id, record.run_id)
+        persisted = json.dumps(history, ensure_ascii=False)
+        event_types = {event["event_type"] for event in history}
+        assert record.status == RunStatus.success
+        assert {"messages", "values"} <= {event for event, _payload in bridge.published}
+        assert {"llm.ai.response", "llm.tool.result"} <= event_types
+        assert not any(
+            sentinel in published + persisted
+            for sentinel in (
+                "WORKER_AMBIGUOUS_SQL_SENTINEL",
+                "WORKER_NO_ID_SQL_SENTINEL",
+                "WORKER_BEFORE_NAME_SQL_SENTINEL",
+                "WORKER_PREFIX_SQL_SENTINEL",
+                "WORKER_HISTORY_SQL_SENTINEL",
+                "WORKER_HISTORY_ROW_SENTINEL",
             )
-        assert "UNMATCHED_SQL_SENTINEL" not in json.dumps(bridge.published)
+        )
+        assert "WORKER_SEARCH_VISIBLE_SENTINEL" in published
+        assert "WORKER_SUFFIX_VISIBLE_SENTINEL" in published
+        assert "WORKER_SUFFIX_CONTINUATION_VISIBLE_SENTINEL" in published
+        assert no_name_with_other_tool.tool_call_chunks[0]["args"].endswith("WORKER_AMBIGUOUS_SQL_SENTINEL")
+        assert no_stable_identity.tool_call_chunks[0]["args"] == "WORKER_NO_ID_SQL_SENTINEL"
+        assert before_name_identity.tool_call_chunks[0]["args"] == "WORKER_BEFORE_NAME_SQL_SENTINEL"
+        assert exact_name.tool_call_chunks[0]["args"].endswith("WORKER_PREFIX_SQL_SENTINEL")
+        assert name_suffix.tool_call_chunks[0]["args"].endswith("WORKER_SUFFIX_VISIBLE_SENTINEL")
+        assert history_ai.tool_calls[0]["args"]["sql"] == "WORKER_HISTORY_SQL_SENTINEL"
+        assert "WORKER_HISTORY_ROW_SENTINEL" in history_tool.content
 
     def test_single_mode_messages_tuple_serializer_projects_analytics_deltas(self):
         import json
