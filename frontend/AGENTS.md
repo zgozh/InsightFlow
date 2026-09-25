@@ -88,6 +88,9 @@ Streamdown 样式。认证 locale provider 由登录和工作台布局负责。�
 ## 提交前检查
 
 1. 遵循目标目录最近的 `AGENTS.md`。
-2. 行为变更补充或更新 `tests/unit/`、`tests/e2e/` 测试。
-3. 运行 `pnpm format:write`、`pnpm check`、相关测试和 `pnpm build`。
+2. 按根目录比例工程策略选择 V0–V3；可观察行为、重要契约或确认的回归需要持久保护时，补充或更新
+   `tests/unit/`、`tests/e2e/` 测试，不为机械改名或已有覆盖重复加测试。
+3. 先对受影响文件做格式与定点检查。共享类型/接口/配置按 V2 检查受影响模块；启动、路由、依赖、构建
+   行为或里程碑集成按 V3 运行相应的 `pnpm check`、`pnpm build`、E2E。纯文档变更按 V0 回读与检查 diff；
+   不把 `pnpm format:write`、全量检查和生产构建当作每次提交的固定仪式。适用的显式 CI 门禁仍须满足。
 4. 路由、命令或模块边界变化时同步更新本文件。

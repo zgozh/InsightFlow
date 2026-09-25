@@ -81,8 +81,9 @@ regression exercises the production extractor under a generous process deadline.
 ## Important Development Guidelines
 
 ### Documentation Update Policy
-Every code change must keep docs accurate and current: update `README.md` for
-user-facing behavior and the relevant `AGENTS.md` for development changes.
+Keep docs accurate when a change affects user-visible behavior or development guidance:
+update the corresponding `README.md` or `AGENTS.md` in the same change. Do not add
+documentation for a localized change with no documentation impact.
 `CLAUDE.md` imports `AGENTS.md`; do not edit the shim.
 
 ### Backend Benchmarks
@@ -236,15 +237,20 @@ decisions — and `disable_clarification` is no milder than `non_interactive`.
 
 ## Development Workflow
 
-### Test-Driven Development (TDD) — MANDATORY
+### Proportional Tests and Validation
 
-**Every new feature or bug fix MUST be accompanied by unit tests. No exceptions.**
+Follow the root `AGENTS.md` proportional engineering policy. Use regression-first tests for
+confirmed bugs, important invariants, and sensitive contracts; straightforward changes
+may be implemented first and checked with a focused test. Add permanent tests when they
+protect meaningful behavior, not for every mechanical edit or trivial wrapper.
 
-- Write tests in `backend/tests/` following the existing naming convention `test_<feature>.py`
-- Run both offline targets before and after your change: `make test` and `make test-blocking-io`
-- Tests must pass before a feature is considered complete
-- For lightweight config/utility modules, prefer pure unit tests with no external dependencies
-- If a module causes circular import issues in tests, add a `sys.modules` mock in `tests/conftest.py` (see existing example for `deerflow.subagents.executor`)
+- Put durable backend tests in `backend/tests/` using the existing `test_<feature>.py` convention.
+- Start with the smallest directly affected check. Run `make test` or `make test-blocking-io`
+  when the affected boundary, milestone, or an explicit gate calls for that suite; neither
+  is a universal before-and-after requirement.
+- For lightweight config/utility modules, prefer pure unit tests with no external dependencies.
+- If collection has a demonstrated circular import issue, use the narrowest suitable test
+  fixture rather than adding a speculative global mock.
 
 ```bash
 # Run default offline tests

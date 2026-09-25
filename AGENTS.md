@@ -204,6 +204,11 @@ cd frontend && pnpm rstest run <pattern>     # e.g. pnpm rstest run my-component
 
 These apply repo-wide; module guides own the module-specific detail.
 
+- **比例工程与验证优先级** — 本仓库采用本机 Codex 全局 `AGENTS.md` 的
+  Global Proportional Engineering Policy。按变更面选择 V0/V1/V2/V3，用足以证明正确性的最小上下文、
+  实现和验证；不因“保险起见”机械跑全量测试、构建、E2E 或反复复验仍有效的证据。本仓库任何旧的
+  “每次必跑全套”“每次必须先 RED”类泛化表述，均按此规则解释；明确适用于当前改动的用户要求、
+  安全/发布/集成门禁仍必须执行，不能借比例原则绕过。非平凡任务说明验证级别、具体检查与升级条件。
 - **本项目的 AI 分工与额度纪律** — 当主会话被指定为总体规划/架构审查员时，主会话只负责
   方案、实施提示词、必要的只读复验与阶段裁决；生产实现、测试编写、门禁和修复默认交给
   `gpt-6-luna`、`reasoning_effort=max` 的实施子 Agent。提示词先写入文档，再让实施者读取，
@@ -218,14 +223,13 @@ These apply repo-wide; module guides own the module-specific detail.
   加逐行翻译式注释。不批量翻译未修改的 DeerFlow 上游文件，旧代码在后续真实修改时逐步本地化。
   稳定错误码、机器日志字段、测试函数标识符保持英文，面向用户显示时经 i18n 翻译。前端细则见
   [frontend/AGENTS.md](frontend/AGENTS.md)。
-- **Documentation update policy** — keep docs in sync with code: update `README.md` for
-  user-facing changes and the relevant `AGENTS.md` for development/architecture changes in
-  the same change set.
-- **Test-driven development** — features and bug fixes ship with tests. Backend tests live
-  in `backend/tests/` (TDD is mandatory there; see [backend/AGENTS.md](backend/AGENTS.md));
-  frontend tests live in `frontend/tests/`.
-- **Format before pushing** — run `make format` (backend) / `pnpm check` (frontend). Backend
-  CI enforces `ruff format --check`, so formatting must be clean before a push.
+- **Documentation update policy** — 用户可见行为或开发/架构约定实际变化时，在同一变更中更新
+  对应 `README.md` 或 `AGENTS.md`；不为无文档影响的局部改动追加仪式性文档。
+- **Selective TDD and durable tests** — 确认的缺陷、关键不变量、安全与持久化等边界优先先写回归测试；
+  直观的普通改动可先实现再做定点验证。只有测试能长期保护可观察行为或契约时才新增永久测试。
+  后端测试位于 `backend/tests/`，前端测试位于 `frontend/tests/`。
+- **Formatting and checks** — 对受影响文件做格式与静态检查；推送前须满足适用的 CI 门禁（包括后端
+  `ruff format --check`），但不因纯文档或局部无关改动机械执行整仓 `make format`、`pnpm check` 或构建。
 - **Skill text encoding** — treat `SKILL.md` and other textual skill resources as UTF-8;
   Python utilities that read or write them must pass `encoding="utf-8"` rather than
   relying on the platform locale.
