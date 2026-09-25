@@ -23,6 +23,7 @@ from deerflow.tools import tools as tools_module
 _ALLOWED_SOURCES = {
     "inspect_business_catalog": "app.analytics.agent.tools:inspect_business_catalog",
     "query_business_data": "app.analytics.agent.tools:query_business_data",
+    "write_analysis_report": "app.analytics.agent.reports:write_analysis_report",
 }
 
 
@@ -74,7 +75,13 @@ def _app_config(tools: list[ToolConfig]) -> AppConfig:
 
 
 def _analysis_tool_configs() -> list[ToolConfig]:
-    return [ToolConfig(name=name, group="analytics", use=source) for name, source in _ALLOWED_SOURCES.items()]
+    return [ToolConfig(name=name, group="analytics", use=source) for name, source in _ALLOWED_SOURCES.items() if name in {"inspect_business_catalog", "query_business_data"}]
+
+
+@tool("write_analysis_report")
+def _synthetic_report_writer(title: str, markdown: str, evidence_ids: list[str]) -> str:
+    """返回合成报告 writer 结果。"""
+    return "synthetic report result"
 
 
 def _poison_tool(name: str, calls: list[str]) -> BaseTool:
@@ -126,6 +133,7 @@ async def test_analysis_assembly_uses_server_context_and_one_set_for_model_and_d
     resolved_tools = {
         _ALLOWED_SOURCES["inspect_business_catalog"]: inspect_catalog,
         _ALLOWED_SOURCES["query_business_data"]: query_data,
+        _ALLOWED_SOURCES["write_analysis_report"]: _synthetic_report_writer,
         **{poison_sources[name]: poison_tools[name] for name in denied_names},
     }
 
@@ -154,7 +162,7 @@ async def test_analysis_assembly_uses_server_context_and_one_set_for_model_and_d
     )
     result = await assembly.graph.ainvoke({"messages": [HumanMessage(content="inspect synthetic data")]})
 
-    expected = {"inspect_business_catalog", "query_business_data"}
+    expected = {"inspect_business_catalog", "query_business_data", "write_analysis_report"}
     assert resolve_calls == list(_ALLOWED_SOURCES.values())
     assert model.bound_tool_names and all(set(names) == expected for names in model.bound_tool_names)
     assert calls == ["inspect_business_catalog"]
@@ -198,6 +206,7 @@ def test_analysis_tool_loader_ignores_later_catalog_and_mcp_updates(monkeypatch)
         return {
             _ALLOWED_SOURCES["inspect_business_catalog"]: inspect_catalog,
             _ALLOWED_SOURCES["query_business_data"]: query_data,
+            _ALLOWED_SOURCES["write_analysis_report"]: _synthetic_report_writer,
         }[source]
 
     monkeypatch.setattr(tools_module, "resolve_variable", resolve_source)
@@ -209,7 +218,7 @@ def test_analysis_tool_loader_ignores_later_catalog_and_mcp_updates(monkeypatch)
     app_config.tools.append(ToolConfig(name="new_dynamic_tool", group="analytics", use="untrusted.plugin:tool"))
     second = tools_module.get_available_tools(analysis_mode=True, include_mcp=True, app_config=app_config)
 
-    expected = ["inspect_business_catalog", "query_business_data"]
+    expected = ["inspect_business_catalog", "query_business_data", "write_analysis_report"]
     assert [item.name for item in first] == expected
     assert [item.name for item in second] == expected
     assert resolve_calls == [*_ALLOWED_SOURCES.values(), *_ALLOWED_SOURCES.values()]
@@ -258,7 +267,34 @@ def test_ordinary_tool_loader_keeps_synthetic_mcp_tools(monkeypatch):
     loaded = tools_module.get_available_tools(
         include_mcp=True,
         model_name="synthetic-model",
-        app_config=_app_config([]),
+        app_config=_app_config(
+            [
+                ToolConfig(
+                    name="write_analysis_report",
+                    group="analytics",
+                    use=_ALLOWED_SOURCES["write_analysis_report"],
+                )
+            ]
+        ),
     )
 
     assert "synthetic_operator_mcp" in {item.name for item in loaded}
+    assert "write_analysis_report" not in {item.name for item in loaded}
+
+
+def test_ordinary_tool_loader_skips_report_writer_source_even_if_aliased(monkeypatch):
+    report_source = _ALLOWED_SOURCES["write_analysis_report"]
+
+    def resolve_source(source: str, target: type[BaseTool]):
+        assert target is BaseTool
+        if source == report_source:
+            return _synthetic_report_writer
+        pytest.fail("unexpected source resolution")
+
+    monkeypatch.setattr(tools_module, "resolve_variable", resolve_source)
+    loaded = tools_module.get_available_tools(
+        include_mcp=False,
+        app_config=_app_config([ToolConfig(name="report_alias", group="analytics", use=report_source)]),
+    )
+
+    assert "write_analysis_report" not in {item.name for item in loaded}

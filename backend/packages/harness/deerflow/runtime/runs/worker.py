@@ -40,7 +40,12 @@ from deerflow.agents.goal_state import GoalEvaluation, GoalState
 from deerflow.agents.middlewares.input_sanitization_middleware import neutralize_untrusted_tags
 from deerflow.config.app_config import AppConfig
 from deerflow.config.database_config import CheckpointChannelMode
-from deerflow.constants import CONVERSATION_READER_CONTEXT_KEY, TOOL_RESULTS_DIRNAME
+from deerflow.constants import (
+    ANALYSIS_REPORT_STAGING_DIRNAME,
+    ANALYSIS_REPORT_WRITER_CONTEXT_KEY,
+    CONVERSATION_READER_CONTEXT_KEY,
+    TOOL_RESULTS_DIRNAME,
+)
 from deerflow.runtime.checkpoint_mode import (
     aensure_checkpoint_mode_compatible,
     inject_checkpoint_mode,
@@ -202,6 +207,7 @@ def _release_run_scoped_references(
         "__run_journal",
         CURRENT_RUN_PRE_EXISTING_MESSAGE_IDS_KEY,
         CONVERSATION_READER_CONTEXT_KEY,
+        ANALYSIS_REPORT_WRITER_CONTEXT_KEY,
     }
     try:
         from deerflow.extensions import EXTENSION_SNAPSHOT_CONTEXT_KEY
@@ -226,6 +232,7 @@ def _release_run_scoped_references(
         if isinstance(configurable, dict):
             configurable.pop("__pregel_runtime", None)
             configurable.pop(CONVERSATION_READER_CONTEXT_KEY, None)
+            configurable.pop(ANALYSIS_REPORT_WRITER_CONTEXT_KEY, None)
         context = runnable_config.get("context")
         if isinstance(context, dict):
             for key in internal_context_keys:
@@ -324,6 +331,8 @@ def _presented_path_covers_output(presented_path: str, produced_path: str) -> bo
 def _delivery_content_with_outputs(
     content: dict[str, Any],
     produced_paths: list[str],
+    *,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
     """Attach a delivery verdict when this run created or modified outputs."""
     if not produced_paths:
@@ -331,12 +340,20 @@ def _delivery_content_with_outputs(
 
     presented_paths = content.get("by_tool", {}).get("present_files", [])
     matched_paths = [produced_path for produced_path in produced_paths if any(_presented_path_covers_output(presented_path, produced_path) for presented_path in presented_paths)]
+    requirement = "present_files_matches_produced_output"
+    if isinstance(run_id, str) and run_id and run_id.isascii() and len(run_id) <= 64 and all(character.isalnum() or character in "_-" for character in run_id):
+        expected_report = f"/mnt/user-data/outputs/analysis-report-{run_id}.md"
+        report_receipts = content.get("by_tool", {}).get("write_analysis_report", [])
+        if isinstance(report_receipts, list) and expected_report in produced_paths and expected_report in report_receipts:
+            if expected_report not in matched_paths:
+                matched_paths.append(expected_report)
+            requirement = "present_files_or_bound_analysis_report"
     satisfied = bool(matched_paths)
     return {
         **content,
         "verification": {
             "source": "outputs_changed",
-            "requirement": "present_files_matches_produced_output",
+            "requirement": requirement,
         },
         "produced_paths": produced_paths,
         "presented_paths": presented_paths,
@@ -368,7 +385,7 @@ def _workspace_excluded_dir_names(app_config: AppConfig | None) -> frozenset[str
     diffs stay consistent.
     """
     storage_subdir = app_config.tool_output.storage_subdir if app_config is not None else TOOL_RESULTS_DIRNAME
-    return frozenset({storage_subdir})
+    return frozenset({storage_subdir, ANALYSIS_REPORT_STAGING_DIRNAME})
 
 
 async def _produced_output_paths(
@@ -522,6 +539,7 @@ _SERVER_OWNED_RUNTIME_CONTEXT_KEYS: Final[frozenset[str]] = (
             CURRENT_RUN_PRE_EXISTING_MESSAGE_IDS_KEY,
             DEERFLOW_TRACE_METADATA_KEY,
             CONVERSATION_READER_CONTEXT_KEY,
+            ANALYSIS_REPORT_WRITER_CONTEXT_KEY,
             "is_subagent",
             "agent_id",
             "__run_loop_detection_recorder",
@@ -545,6 +563,7 @@ def _build_runtime_context(
     task_store: Any | None = None,
     extensions: Any | None = None,
     conversation_reader: Any | None = None,
+    analysis_report_writer: Any | None = None,
 ) -> dict[str, Any]:
     """Build the dict that becomes ``ToolRuntime.context`` for the run.
 
@@ -568,6 +587,8 @@ def _build_runtime_context(
         runtime_ctx["app_config"] = app_config
     if conversation_reader is not None:
         runtime_ctx[CONVERSATION_READER_CONTEXT_KEY] = conversation_reader
+    if analysis_report_writer is not None:
+        runtime_ctx[ANALYSIS_REPORT_WRITER_CONTEXT_KEY] = analysis_report_writer
     if task_store is not None:
         from deerflow_extension_api import EXTENSION_TASK_STORE_KEY
 
@@ -627,6 +648,8 @@ class RunContext:
     on_run_completed: Any | None = field(default=None)
     # The host binds this capability to one run's authenticated reader and references.
     conversation_reader: Any | None = field(default=None)
+    # Gateway 仅为经过认证的 analysis run 签发此单 run writer。
+    analysis_report_writer: Any | None = field(default=None)
 
 
 def _install_runtime_context(config: dict, runtime_context: dict[str, Any]) -> None:
@@ -635,6 +658,7 @@ def _install_runtime_context(config: dict, runtime_context: dict[str, Any]) -> N
     configurable = config.get("configurable")
     if isinstance(configurable, dict):
         configurable.pop(CONVERSATION_READER_CONTEXT_KEY, None)
+        configurable.pop(ANALYSIS_REPORT_WRITER_CONTEXT_KEY, None)
     existing_context = config.get("context")
     if isinstance(existing_context, dict):
         existing_context.setdefault("thread_id", runtime_context["thread_id"])
@@ -1080,6 +1104,7 @@ async def run_agent(
             task_store,
             extensions,
             ctx.conversation_reader,
+            ctx.analysis_report_writer,
         )
         # Bind every checkpoint produced by this run to the effective agent
         # identity that produced its state. Manual compaction uses only this
@@ -1433,6 +1458,7 @@ async def run_agent(
             delivery_content = _delivery_content_with_outputs(
                 journal.get_delivery_content() if journal is not None else _empty_delivery_content(),
                 produced_output_paths,
+                run_id=record.run_id,
             )
             delivery_error = _delivery_error(delivery_content)
             cancel_action = await run_manager.set_status_if_not_cancelled(
@@ -1539,7 +1565,11 @@ async def run_agent(
                             user_id=workspace_changes_user_id,
                             extra_excluded_dir_names=workspace_excluded_dir_names,
                         )
-                    delivery_content = _delivery_content_with_outputs(journal.get_delivery_content(), produced_output_paths)
+                    delivery_content = _delivery_content_with_outputs(
+                        journal.get_delivery_content(),
+                        produced_output_paths,
+                        run_id=record.run_id,
+                    )
                 receipt_persisted = await _persist_delivery_receipt(
                     event_store,
                     thread_id=thread_id,

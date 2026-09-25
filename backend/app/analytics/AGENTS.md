@@ -194,8 +194,15 @@ Lead-only 与 subagent 隔离：DeerFlow 会把父级 tool group 原样继承给
 - 读取侧对损坏行整体失败：状态、evidence JSON、路径或标题被绕过领域层改写时，整页返回稳定错误，
   绝不返回"部分正确"的证据。
 
-`agent/reports.py` 与 `agent/tools.py` 一样，不得 import 文件系统、sandbox、SQLAlchemy 或驱动；
-它只调用 `AnalyticsServices.publish_report`。
+`agent/reports.py` 与 `agent/tools.py` 一样，不得直接 import 文件系统、sandbox、SQLAlchemy 或驱动。
+旧 `publish_analysis_report` 只登记索引，合同不变。`write_analysis_report` 是仅供 Gateway
+composition 使用的窄适配器：模型 schema 只有标题、Markdown 正文和 evidence ID；它必须从受信
+runtime 同时取得身份与 Gateway 签发的本 run writer 能力，先通过领域预检，再由能力写入固定
+`analysis-report-{run_id}.md`，最后才调用同一个 `AnalyticsServices.publish_report` 用例。
+文件与索引没有共同事务；索引失败时返回稳定失败、不发成功 artifact 回执，允许同正文重试复用孤儿文件。
+正文仍是受线程所有者保护的 artifact，不代表自动脱敏；消息、事件与历史副本必须由 Harness 精确
+工具投影遮盖 `markdown`，不得把正文搬入索引或回执。工具正向白名单和 Gateway 的
+`analysis_mode_unavailable` 门禁由各自模块约定，writer 合成测试不代表分析入口已启用。
 
 ## 语言规范
 

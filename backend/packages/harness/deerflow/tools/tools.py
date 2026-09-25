@@ -26,7 +26,11 @@ logger = logging.getLogger(__name__)
 _ANALYSIS_TOOL_SOURCES = (
     ("inspect_business_catalog", "analytics", "app.analytics.agent.tools:inspect_business_catalog"),
     ("query_business_data", "analytics", "app.analytics.agent.tools:query_business_data"),
+    ("write_analysis_report", "analytics", "app.analytics.agent.reports:write_analysis_report"),
 )
+_ANALYSIS_CONFIGURED_TOOL_NAMES = frozenset({"inspect_business_catalog", "query_business_data"})
+_ANALYSIS_ONLY_TOOL_NAMES = frozenset({"write_analysis_report"})
+_ANALYSIS_ONLY_TOOL_USES = frozenset({"app.analytics.agent.reports:write_analysis_report"})
 
 BUILTIN_TOOLS = [
     present_file_tool,
@@ -70,12 +74,14 @@ def _ensure_sync_invocable_tool(tool: BaseTool) -> BaseTool:
 
 
 def _get_analysis_tools(config: AppConfig) -> list[BaseTool]:
-    """只从固定配置来源解析受控分析工具，并拒绝缺失或歧义配置。"""
+    """按代码固定来源组装分析工具，并校验可配置来源无缺失或歧义。"""
     approved_sources: list[tuple[str, str]] = []
     for expected_name, expected_group, expected_use in _ANALYSIS_TOOL_SOURCES:
-        matches = [item for item in config.tools if item.name == expected_name and item.group == expected_group and item.use == expected_use]
-        if len(matches) != 1:
-            raise RuntimeError("analysis_tool_allowlist_incomplete")
+        if expected_name in _ANALYSIS_CONFIGURED_TOOL_NAMES:
+            matches = [item for item in config.tools if item.name == expected_name and item.group == expected_group and item.use == expected_use]
+            if len(matches) != 1:
+                raise RuntimeError("analysis_tool_allowlist_incomplete")
+        # writer 由代码白名单固定，不加入普通聊天可见的 config.tools。
         approved_sources.append((expected_name, expected_use))
 
     tools: list[BaseTool] = []
@@ -123,7 +129,7 @@ def get_available_tools(
     if analysis_mode:
         return _get_analysis_tools(config)
 
-    tool_configs = [tool for tool in config.tools if groups is None or tool.group in groups]
+    tool_configs = [tool for tool in config.tools if (groups is None or tool.group in groups) and tool.name not in _ANALYSIS_ONLY_TOOL_NAMES and tool.use not in _ANALYSIS_ONLY_TOOL_USES]
     if not include_conversation_reader:
         tool_configs = [tool for tool in tool_configs if tool.use != CONVERSATION_TOOL_USE]
 

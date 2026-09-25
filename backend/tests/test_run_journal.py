@@ -550,6 +550,58 @@ class TestLlmCallbacks:
         assert tool_call["args"]["sql"] == "SELECT SQL_SENTINEL"
 
     @pytest.mark.anyio
+    async def test_analysis_report_markdown_is_projected_from_journal_message_events(self, journal_setup):
+        import json
+
+        from langchain_core.messages import ToolMessage
+
+        j, store = journal_setup
+        markdown = "JOURNAL_REPORT_MARKDOWN_SENTINEL"
+        evidence_id = "a" * 64
+        tool_call = {
+            "id": "report-writer-call",
+            "name": "write_analysis_report",
+            "args": {"title": "Synthetic report", "markdown": markdown, "evidence_ids": [evidence_id]},
+        }
+        j.on_llm_end(_make_llm_response("", tool_calls=[tool_call]), run_id=uuid4(), tags=["lead_agent"])
+        result_content = json.dumps(
+            {
+                "code": "published",
+                "report_id": "report-1",
+                "artifact_path": "/mnt/user-data/outputs/analysis-report-run_1.md",
+                "evidence_ids": [evidence_id],
+                "markdown": markdown,
+                "principal_id": "JOURNAL_PRINCIPAL_SENTINEL",
+            }
+        )
+        tool_message = ToolMessage(
+            content=result_content,
+            tool_call_id="report-writer-call",
+            name="write_analysis_report",
+            artifact={"markdown": markdown},
+        )
+        j.on_tool_end(tool_message, run_id=uuid4())
+        await j.flush()
+
+        events = await store.list_events("t1", "r1")
+        relevant = [event for event in events if event["event_type"] in {"llm.ai.response", "llm.tool.result"}]
+        encoded = json.dumps(relevant, ensure_ascii=False)
+        assert "JOURNAL_REPORT_MARKDOWN_SENTINEL" not in encoded
+        assert "JOURNAL_PRINCIPAL_SENTINEL" not in encoded
+        ai_event = next(event for event in relevant if event["event_type"] == "llm.ai.response")
+        assert ai_event["content"]["tool_calls"][0]["args"] == {"title": "Synthetic report", "evidence_ids": [evidence_id]}
+        tool_event = next(event for event in relevant if event["event_type"] == "llm.tool.result")
+        assert json.loads(tool_event["content"]["content"]) == {
+            "code": "published",
+            "report_id": "report-1",
+            "artifact_path": "/mnt/user-data/outputs/analysis-report-run_1.md",
+            "evidence_ids": [evidence_id],
+        }
+        assert tool_call["args"]["markdown"] == markdown
+        assert tool_message.content == result_content
+        assert tool_message.artifact == {"markdown": markdown}
+
+    @pytest.mark.anyio
     async def test_on_llm_end_subagent_no_ai_message(self, journal_setup):
         j, store = journal_setup
         run_id = uuid4()
@@ -2325,6 +2377,86 @@ class TestDeliveryTracking:
             ],
             "by_tool": {},
         }
+
+    @pytest.mark.anyio
+    async def test_report_writer_receipt_requires_a_success_message_and_run_bound_path(self, journal_setup):
+        import json
+
+        from langchain_core.messages import ToolMessage
+        from langgraph.types import Command
+
+        j, store = journal_setup
+        path = "/mnt/user-data/outputs/analysis-report-r1.md"
+        self._register_tool_call(j, "call_writer", "write_analysis_report")
+        callback_run_id = uuid4()
+        j.on_tool_start({"name": "write_analysis_report"}, "", run_id=callback_run_id)
+        j.on_tool_end(
+            Command(
+                update={
+                    "artifacts": [path],
+                    "messages": [
+                        ToolMessage(
+                            json.dumps(
+                                {
+                                    "code": "published",
+                                    "report_id": "report-1",
+                                    "artifact_path": path,
+                                    "evidence_ids": ["a" * 64],
+                                }
+                            ),
+                            tool_call_id="call_writer",
+                            name="write_analysis_report",
+                        )
+                    ],
+                }
+            ),
+            run_id=callback_run_id,
+        )
+        j.record_delivery()
+        await j.flush()
+
+        events = await store.list_events("t1", "r1")
+        content = next(e for e in events if e["event_type"] == "run.delivery")["content"]
+        assert content == {
+            "presented": 1,
+            "paths": [path],
+            "by_tool": {"write_analysis_report": [path]},
+        }
+
+    def test_report_writer_cannot_mint_receipt_from_failure_or_wrong_path(self, journal_setup):
+        import json
+
+        from langchain_core.messages import ToolMessage
+        from langgraph.types import Command
+
+        j, _store = journal_setup
+        self._register_tool_call(j, "call_writer", "write_analysis_report")
+        callback_run_id = uuid4()
+        j.on_tool_start({"name": "write_analysis_report"}, "", run_id=callback_run_id)
+        j.on_tool_end(
+            Command(
+                update={
+                    "artifacts": ["/mnt/user-data/outputs/other.md"],
+                    "messages": [
+                        ToolMessage(
+                            json.dumps(
+                                {
+                                    "code": [],
+                                    "report_id": "report-1",
+                                    "artifact_path": "/mnt/user-data/outputs/other.md",
+                                    "evidence_ids": ["a" * 64],
+                                }
+                            ),
+                            tool_call_id="call_writer",
+                            name="write_analysis_report",
+                        )
+                    ],
+                }
+            ),
+            run_id=callback_run_id,
+        )
+
+        assert j.get_delivery_content() == {"presented": 0, "paths": [], "by_tool": {}}
 
     @pytest.mark.anyio
     async def test_error_command_without_artifacts_not_recorded(self, journal_setup):

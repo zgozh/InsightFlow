@@ -193,6 +193,8 @@ def test_the_example_config_parses_and_declares_the_analytics_group():
     # Phase 4：Lead-only 的报告发布工具也在同一个 group 里。
     assert tools["publish_analysis_report"].group == "analytics"
     assert tools["publish_analysis_report"].use == "app.analytics.agent.reports:publish_analysis_report"
+    # 该 writer 是代码内固定的 analysis-only 来源，不属于常规 config.tools 列表。
+    assert "write_analysis_report" not in tools
 
 
 def test_the_lead_sees_the_analytics_tools_and_the_subagent_schema_does_not():
@@ -206,6 +208,7 @@ def test_the_lead_sees_the_analytics_tools_and_the_subagent_schema_does_not():
     lead_names = {tool.name for tool in lead_tools}
 
     assert {"inspect_business_catalog", "query_business_data", "publish_analysis_report"} <= lead_names
+    assert "write_analysis_report" not in lead_names
 
     # general-purpose 继承 Lead 的 groups，因此同一份小组也会到它手里……
     subagent_groups = None
@@ -233,6 +236,6 @@ def test_the_bash_subagent_also_loses_the_lead_only_analytics_tools():
     filtered = _real_filter_tools()(inherited, bash_agent.tools, bash_agent.disallowed_tools)
     names = {tool.name for tool in filtered}
 
-    for denied in ("inspect_business_catalog", "query_business_data", "publish_analysis_report"):
+    for denied in ("inspect_business_catalog", "query_business_data", "publish_analysis_report", "write_analysis_report"):
         assert denied not in names
     assert names, "the bash subagent must still get its ordinary tools"

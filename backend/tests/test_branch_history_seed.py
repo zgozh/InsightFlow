@@ -12,7 +12,7 @@ import asyncio
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from deerflow.runtime.events.store.memory import MemoryRunEventStore
-from deerflow.runtime.journal import build_branch_history_seed_events
+from deerflow.runtime.journal import build_branch_history_seed_events, build_checkpoint_history_seed_events
 
 
 def _seed(messages):
@@ -143,6 +143,55 @@ def test_seed_projects_analytics_structures_without_mutating_checkpoint_messages
     assert not any(sentinel in json.dumps(events) for sentinel in ("SEED_SQL_SENTINEL", "SEED_TOKEN_SENTINEL", "SEED_COLUMN_SENTINEL", "SEED_ROW_SENTINEL"))
     assert ai_message.tool_calls[0]["args"]["sql"] == "SEED_SQL_SENTINEL"
     assert tool_message.content == result_content
+
+
+def test_checkpoint_seed_projects_report_markdown_without_mutating_checkpoint_messages() -> None:
+    import json
+
+    markdown = "CHECKPOINT_REPORT_MARKDOWN_SENTINEL"
+    evidence_id = "f" * 64
+    ai_message = AIMessage(
+        id="report-ai",
+        content="",
+        tool_calls=[
+            {
+                "id": "report-call",
+                "name": "write_analysis_report",
+                "args": {"title": "Synthetic report", "markdown": markdown, "evidence_ids": [evidence_id]},
+            }
+        ],
+    )
+    tool_result = ToolMessage(
+        id="report-result",
+        content=json.dumps(
+            {
+                "code": "published",
+                "report_id": "report-1",
+                "artifact_path": "/mnt/user-data/outputs/analysis-report-run_1.md",
+                "evidence_ids": [evidence_id],
+                "markdown": markdown,
+            }
+        ),
+        tool_call_id="report-call",
+        name="write_analysis_report",
+    )
+
+    events = build_checkpoint_history_seed_events(
+        [ai_message, tool_result],
+        thread_id="thread-1",
+        run_id_prefix="checkpoint-seed-thread-1",
+    )
+
+    assert events[0]["content"]["tool_calls"][0]["args"] == {"title": "Synthetic report", "evidence_ids": [evidence_id]}
+    assert json.loads(events[1]["content"]["content"]) == {
+        "code": "published",
+        "report_id": "report-1",
+        "artifact_path": "/mnt/user-data/outputs/analysis-report-run_1.md",
+        "evidence_ids": [evidence_id],
+    }
+    assert markdown not in json.dumps(events)
+    assert ai_message.tool_calls[0]["args"]["markdown"] == markdown
+    assert markdown in tool_result.content
 
 
 def test_seed_drops_unparseable_dict_message() -> None:

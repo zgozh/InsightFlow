@@ -124,6 +124,14 @@ one accumulated receipt across multiple goal-continuation `_stream_once` calls;
 journal tests drive LangChain's real async callback dispatcher against a single
 journal to pin serialized, deduplicated parallel tool callbacks.
 
+**受控报告 writer 回执与正文投影**：`write_analysis_report` 只能用 Gateway 注入的 run 能力写固定
+报告路径；RunJournal 仅在精确工具名、当前 run 的 tool-call ID、固定 run 文件名及成功 JSON 回执
+全部匹配时，把该报告路径归因到 `by_tool.write_analysis_report`。worker 仅将“本 run 确实产生的同一
+报告路径 + 该成功回执”作为自包含交付，不放宽 `present_files` 对普通 outputs 的证明规则。临时
+staging 目录不计入 workspace/output 扫描。模型内部调用仍保留完整 Markdown；SSE 增量 chunk、消息与
+event 历史/seed 投影只按精确工具身份遮盖 `markdown`，回执仅保留允许字段。该投影只约束平台派生副本，
+不声称报告 artifact 正文已脱敏；正文仍受线程 owner 检查保护。
+
 **Deferred-tool promotion event deduplication** (`runtime/journal.py`): one
 `RunJournal` owns the lead graph's run-scoped atomic promotion claim. Parallel
 `tool_search` Sends read the same pre-step state, so state diffing alone can

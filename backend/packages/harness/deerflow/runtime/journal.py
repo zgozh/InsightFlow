@@ -18,7 +18,9 @@ Key design decisions:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import re
 import threading
 import time
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
@@ -55,6 +57,9 @@ logger = logging.getLogger(__name__)
 
 _LEGACY_SUMMARY_MESSAGE_NAME = "summary"
 _PERSISTED_HIDDEN_HUMAN_INPUT_RESPONSE_SOURCES = frozenset({"ask_clarification", "sandbox_network"})
+_ANALYSIS_REPORT_WRITER_TOOL_NAME = "write_analysis_report"
+_ANALYSIS_REPORT_RECEIPT_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_ANALYSIS_REPORT_EVIDENCE_ID = re.compile(r"^[0-9a-f]{64}$")
 
 
 @dataclass
@@ -616,7 +621,11 @@ class RunJournal(BaseCallbackHandler):
                     artifact_tool_name = active_tool_name
                     if artifact_tool_name is None and len(artifact_tool_names) == 1:
                         artifact_tool_name = next(iter(artifact_tool_names))
-                    self._record_produced_artifacts(artifacts, artifact_tool_name)
+                    if artifact_tool_name == _ANALYSIS_REPORT_WRITER_TOOL_NAME:
+                        if active_tool_name == _ANALYSIS_REPORT_WRITER_TOOL_NAME and self._valid_analysis_report_command(cmd):
+                            self._record_produced_artifacts(artifacts, artifact_tool_name)
+                    else:
+                        self._record_produced_artifacts(artifacts, artifact_tool_name)
             else:
                 logger.warning(f"on_tool_end {run_id}: output is not ToolMessage: {type(output)}")
         finally:
@@ -1102,6 +1111,39 @@ class RunJournal(BaseCallbackHandler):
             if key not in self._produced_artifact_keys:
                 self._produced_artifact_keys.add(key)
                 self._produced_artifacts.append(key)
+
+    def _valid_analysis_report_command(self, command: Command) -> bool:
+        """仅接受与本 run 固定路径相符的已发布报告 writer 回执。"""
+
+        run_id = self.run_id
+        if not isinstance(run_id, str) or not _ANALYSIS_REPORT_RECEIPT_ID.fullmatch(run_id):
+            return False
+        expected_path = f"/mnt/user-data/outputs/analysis-report-{run_id}.md"
+        update = command.update
+        if update.get("artifacts") != [expected_path]:
+            return False
+        messages = update.get("messages", [])
+        if not isinstance(messages, list) or len(messages) != 1:
+            return False
+        message = messages[0]
+        if not isinstance(message, ToolMessage) or message.name != _ANALYSIS_REPORT_WRITER_TOOL_NAME:
+            return False
+        tool_call_id = getattr(message, "tool_call_id", None)
+        if not isinstance(tool_call_id, str) or self._current_run_tool_call_names.get(tool_call_id) != _ANALYSIS_REPORT_WRITER_TOOL_NAME:
+            return False
+        if not isinstance(message.content, str):
+            return False
+        try:
+            payload = json.loads(message.content)
+        except (TypeError, ValueError):
+            return False
+        code = payload.get("code") if isinstance(payload, dict) else None
+        if not isinstance(code, str) or code not in ("published", "existing"):
+            return False
+        if payload.get("artifact_path") != expected_path or not isinstance(payload.get("report_id"), str) or not _ANALYSIS_REPORT_RECEIPT_ID.fullmatch(payload["report_id"]):
+            return False
+        evidence_ids = payload.get("evidence_ids")
+        return isinstance(evidence_ids, list) and 0 < len(evidence_ids) <= 20 and all(isinstance(value, str) and _ANALYSIS_REPORT_EVIDENCE_ID.fullmatch(value) for value in evidence_ids)
 
     def get_delivery_content(self) -> dict[str, Any]:
         """Return the terminal delivery fact accumulated for this run.

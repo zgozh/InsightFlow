@@ -17,7 +17,7 @@ from deerflow.runtime.events.store.memory import MemoryRunEventStore
 from deerflow.runtime.runs.manager import RunManager
 from deerflow.runtime.runs.schemas import RunStatus
 from deerflow.runtime.runs.store.memory import MemoryRunStore
-from deerflow.runtime.runs.worker import RunContext, _delivery_content_with_outputs, run_agent
+from deerflow.runtime.runs.worker import RunContext, _build_runtime_context, _delivery_content_with_outputs, _install_runtime_context, run_agent
 from deerflow.runtime.user_context import get_effective_user_id
 
 
@@ -50,6 +50,45 @@ def test_delivery_verification_treats_presented_directory_as_covering_produced_f
         "/mnt/user-data/outputs/site/assets/style.css",
     ]
     assert delivery["satisfied"] is True
+
+
+def test_delivery_verification_accepts_only_the_run_bound_report_writer_receipt():
+    run_id = "run_123"
+    path = f"/mnt/user-data/outputs/analysis-report-{run_id}.md"
+    content = {
+        "presented": 1,
+        "paths": [path],
+        "by_tool": {"write_analysis_report": [path]},
+    }
+
+    delivery = _delivery_content_with_outputs(content, [path], run_id=run_id)
+
+    assert delivery["matched_paths"] == [path]
+    assert delivery["satisfied"] is True
+    assert delivery["verification"]["requirement"] == "present_files_or_bound_analysis_report"
+
+    forged = _delivery_content_with_outputs(content, ["/mnt/user-data/outputs/another.md"], run_id=run_id)
+    assert forged["matched_paths"] == []
+    assert forged["satisfied"] is False
+
+
+def test_runtime_context_rejects_a_caller_forged_report_writer_capability():
+    forged = object()
+    runtime_context = _build_runtime_context(
+        "thread_1",
+        "run_1",
+        {"__analysis_report_writer": forged},
+    )
+    config = {
+        "context": {"__analysis_report_writer": forged},
+        "configurable": {"__analysis_report_writer": forged},
+    }
+
+    _install_runtime_context(config, runtime_context)
+
+    assert "__analysis_report_writer" not in runtime_context
+    assert "__analysis_report_writer" not in config["context"]
+    assert "__analysis_report_writer" not in config["configurable"]
 
 
 @pytest.mark.anyio

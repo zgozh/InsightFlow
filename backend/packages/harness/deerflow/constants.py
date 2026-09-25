@@ -9,6 +9,11 @@ CONVERSATION_TOOL_USE = "deerflow.tools.conversation:read_conversation"
 # The Gateway sizes reader pages by this tool's tool-output budget entry.
 CONVERSATION_TOOL_NAME = "read_conversation"
 
+# Host-only per-run capability for the dedicated analysis report writer.
+# Caller context with this key is rejected by both Gateway and worker layers.
+ANALYSIS_REPORT_WRITER_CONTEXT_KEY = "__analysis_report_writer"
+ANALYSIS_REPORT_STAGING_DIRNAME = ".analysis-report-staging"
+
 # Hidden subdirectory (under a thread's outputs dir) that holds the browser
 # tools' per-step screenshots. These are transient live-progress frames, not
 # deliverables, so the workspace-changes scanner excludes this directory. Both

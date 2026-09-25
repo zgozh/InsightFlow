@@ -338,6 +338,68 @@ class TestPublishStreamItem:
         assert first.tool_call_chunks[0]["args"].endswith("SQL_SENTINEL")
         assert continuation.tool_call_chunks[0]["args"] == ' CONTINUATION_SENTINEL"}'
 
+    @pytest.mark.asyncio
+    async def test_analysis_report_writer_chunks_never_stream_markdown(self):
+        import json
+
+        projector = AnalyticsToolCallChunkProjector()
+        bridge = _FakeBridge()
+        partial = AIMessageChunk(
+            content="",
+            id="ai-report-writer",
+            tool_call_chunks=[
+                {
+                    "id": "call-report-writer",
+                    "index": 0,
+                    "name": "write_analysis_",
+                    "args": '{"markdown":"REPORT_CHUNK_SENTINEL',
+                }
+            ],
+        )
+        continuation = AIMessageChunk(
+            content="",
+            id="ai-report-writer",
+            tool_call_chunks=[{"index": 0, "name": "report", "args": '"}'}],
+        )
+
+        for chunk in (partial, continuation):
+            await _publish_stream_item(
+                bridge=bridge,
+                run_id="run-1",
+                mode="messages",
+                chunk=chunk,
+                namespace=(),
+                file_tool_chunk_batcher=None,
+                subagent_events=_FakeSubagentEvents(),
+                analytics_chunk_projector=projector,
+            )
+
+        payloads = [payload for _run, _event, payload in bridge.published]
+        assert all(payload["tool_call_chunks"][0]["args"] == "" for payload in payloads)
+        assert "REPORT_CHUNK_SENTINEL" not in json.dumps(payloads)
+        assert partial.tool_call_chunks[0]["args"].endswith("REPORT_CHUNK_SENTINEL")
+
+        complete = AIMessageChunk(
+            content="",
+            id="ai-report-complete",
+            tool_call_chunks=[
+                {
+                    "id": "call-report-complete",
+                    "index": 0,
+                    "name": "write_analysis_report",
+                    "args": json.dumps({"title": "Synthetic report", "markdown": "REPORT_COMPLETE_SENTINEL", "evidence_ids": ["f" * 64]}),
+                }
+            ],
+        )
+        payload = _serialize_and_project_stream_payload(
+            complete,
+            mode="messages",
+            analytics_chunk_projector=AnalyticsToolCallChunkProjector(),
+        )
+        assert payload["tool_call_chunks"][0]["args"] == ""
+        assert "REPORT_COMPLETE_SENTINEL" not in json.dumps(payload)
+        assert complete.tool_call_chunks[0]["args"].find("REPORT_COMPLETE_SENTINEL") >= 0
+
     # ---------------------------------------------------------------------------
     # Ambiguous argument deltas are masked on detached output without aborting the run.
     # ---------------------------------------------------------------------------

@@ -2139,6 +2139,28 @@ def test_inject_authenticated_user_context_overrides_client_user_id():
     assert config["context"]["user_id"] == "auth-user-42"
 
 
+def test_gateway_scrubs_forged_analysis_report_writer_from_both_context_sections():
+    from types import SimpleNamespace
+
+    from app.gateway.services import build_run_config, inject_authenticated_user_context
+    from deerflow.constants import ANALYSIS_REPORT_WRITER_CONTEXT_KEY
+
+    config = build_run_config(
+        "thread-1",
+        {
+            "context": {ANALYSIS_REPORT_WRITER_CONTEXT_KEY: {"forged": "context"}},
+            "configurable": {ANALYSIS_REPORT_WRITER_CONTEXT_KEY: {"forged": "configurable"}},
+        },
+        None,
+    )
+    request = SimpleNamespace(state=SimpleNamespace(user=SimpleNamespace(id="auth-user-42")))
+
+    inject_authenticated_user_context(config, request)
+
+    assert ANALYSIS_REPORT_WRITER_CONTEXT_KEY not in config["context"]
+    assert ANALYSIS_REPORT_WRITER_CONTEXT_KEY not in config["configurable"]
+
+
 def test_merge_run_context_overrides_propagates_user_id():
     """Regression for PR #3294: ``user_id`` from ``body.context`` must land in
     ``config['context']`` so non-web callers (e.g. IM channels) keep their identity

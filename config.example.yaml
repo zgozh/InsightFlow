@@ -1065,11 +1065,13 @@ subagents:
         - inspect_business_catalog
         - query_business_data
         - publish_analysis_report
+        - write_analysis_report
     bash:
       disallowed_tools:
         - inspect_business_catalog
         - query_business_data
         - publish_analysis_report
+        - write_analysis_report
 
 # ============================================================================
 # Tool Result Verification

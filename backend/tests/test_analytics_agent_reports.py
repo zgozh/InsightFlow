@@ -151,6 +151,131 @@ def test_the_tool_is_registered_under_a_stable_name():
     assert agent_reports.publish_analysis_report.name == "publish_analysis_report"
 
 
+def test_report_writer_schema_has_only_content_and_evidence_fields():
+    schema = agent_reports.write_analysis_report.tool_call_schema
+
+    assert set(schema.model_fields) == {"title", "markdown", "evidence_ids"}
+    assert set(schema.model_json_schema()["properties"]) == {"title", "markdown", "evidence_ids"}
+
+
+def _writer_runtime(capability=None, *, user_id="user-1", thread_id="thread-1", run_id="run-1"):
+    runtime = _runtime(user_id=user_id, thread_id=thread_id, run_id=run_id)
+    if capability is not None:
+        from deerflow.constants import ANALYSIS_REPORT_WRITER_CONTEXT_KEY
+
+        runtime.context[ANALYSIS_REPORT_WRITER_CONTEXT_KEY] = capability
+    return runtime
+
+
+def _writer_capability(monkeypatch, tmp_path, *, principal_id="user-1", thread_id="thread-1", run_id="run-1"):
+    from app.gateway import path_utils
+    from app.gateway.analysis_report_writer import create_analysis_report_writer_capability
+    from deerflow.config import paths as paths_module
+    from deerflow.config.paths import Paths
+
+    paths = Paths(tmp_path)
+    monkeypatch.setattr(paths_module, "get_paths", lambda: paths)
+    monkeypatch.setattr(path_utils, "get_paths", lambda: paths)
+    return create_analysis_report_writer_capability(
+        principal_id=principal_id,
+        thread_id=thread_id,
+        run_id=run_id,
+        paths=paths,
+    )
+
+
+@pytest.mark.asyncio
+async def test_report_writer_writes_then_indexes_and_returns_only_a_safe_receipt(monkeypatch, tmp_path):
+    from langgraph.types import Command
+
+    capability = _writer_capability(monkeypatch, tmp_path)
+    runtime = _writer_runtime(capability)
+    markdown = "# Synthetic\n\nREPORT_BODY_SENTINEL SELECT SQL_SENTINEL\n"
+    repo = _Repo()
+    _bind(repo)
+
+    command = await agent_reports.write_analysis_report.coroutine(
+        title=_TITLE,
+        markdown=markdown,
+        evidence_ids=[_HASH_A],
+        runtime=runtime,
+        tool_call_id="call-report-writer",
+    )
+
+    assert isinstance(command, Command)
+    expected_path = "/mnt/user-data/outputs/analysis-report-run-1.md"
+    assert capability.output_path.read_text(encoding="utf-8") == markdown
+    assert command.update["artifacts"] == [expected_path]
+    assert len(repo.reports) == 1
+    assert repo.reports[0].artifact_path == expected_path
+    receipt = json.loads(command.update["messages"][0].content)
+    assert receipt == {
+        "code": "published",
+        "report_id": "report-1",
+        "artifact_path": expected_path,
+        "evidence_ids": [_HASH_A],
+    }
+    assert "REPORT_BODY_SENTINEL" not in json.dumps([message.model_dump() for message in command.update["messages"]])
+    assert "principal_id" not in receipt and "thread_id" not in receipt and "run_id" not in receipt
+
+
+@pytest.mark.asyncio
+async def test_report_writer_index_failure_leaves_reusable_file_but_no_success_receipt(monkeypatch, tmp_path):
+    from langgraph.types import Command
+
+    capability = _writer_capability(monkeypatch, tmp_path)
+    runtime = _writer_runtime(capability)
+    markdown = "# Retry after index failure\n"
+    failing_repo = _Repo(error=RuntimeError("dsn=synthetic-secret"))
+    _bind(failing_repo)
+
+    failed = await agent_reports.write_analysis_report.coroutine(
+        title=_TITLE,
+        markdown=markdown,
+        evidence_ids=[_HASH_A],
+        runtime=runtime,
+        tool_call_id="call-failed",
+    )
+    assert isinstance(failed, str)
+    assert _body(failed) == {"code": "analytics_unavailable"}
+    assert capability.output_path.read_text(encoding="utf-8") == markdown
+
+    clear_analytics_services()
+    successful_repo = _Repo()
+    _bind(successful_repo)
+    retried = await agent_reports.write_analysis_report.coroutine(
+        title=_TITLE,
+        markdown=markdown,
+        evidence_ids=[_HASH_A],
+        runtime=runtime,
+        tool_call_id="call-retry",
+    )
+    assert isinstance(retried, Command)
+    assert json.loads(retried.update["messages"][0].content)["code"] == "published"
+    assert len(successful_repo.reports) == 1
+
+
+@pytest.mark.asyncio
+async def test_report_writer_fails_closed_without_matching_gateway_capability(monkeypatch, tmp_path):
+    capability = _writer_capability(monkeypatch, tmp_path, thread_id="other-thread")
+    runtime = _writer_runtime(capability)
+    repo = _Repo()
+    _bind(repo)
+
+    result = await agent_reports.write_analysis_report.coroutine(
+        title=_TITLE,
+        markdown="# Must not be written\n",
+        evidence_ids=[_HASH_A],
+        runtime=runtime,
+        tool_call_id="call-mismatch",
+    )
+
+    assert isinstance(result, str)
+    assert _body(result) == {"code": "analytics_unavailable"}
+    assert repo.reports == []
+    assert not capability.output_path.exists()
+
+
 # --- fail closed ------------------------------------------------------------
 
 

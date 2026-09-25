@@ -463,3 +463,75 @@ def test_analytics_message_projection_keeps_model_state_and_non_analytics_messag
     assert json.loads(provider_shape["messages"][1]["content"]) == {"code": "executed"}
     assert "PROVIDER_SQL_SENTINEL" not in json.dumps(provider_shape)
     assert "PROVIDER_ROW_SENTINEL" not in json.dumps(provider_shape)
+
+
+def test_analysis_report_writer_projection_hides_markdown_and_projects_receipt_fields():
+    import json
+
+    from langchain_core.messages import AIMessage, ToolMessage
+
+    from deerflow.runtime.serialization import project_analytics_event_rows, serialize_channel_values_for_api
+
+    markdown = "REPORT_MARKDOWN_SQL_SENTINEL"
+    evidence_id = "e" * 64
+    writer_call = AIMessage(
+        content="",
+        id="ai-report-writer",
+        tool_calls=[
+            {
+                "id": "call-report-writer",
+                "name": "write_analysis_report",
+                "args": {"title": "Synthetic report", "markdown": markdown, "evidence_ids": [evidence_id]},
+            }
+        ],
+    )
+    writer_result = ToolMessage(
+        content=json.dumps(
+            {
+                "code": "published",
+                "report_id": "report-1",
+                "artifact_path": "/mnt/user-data/outputs/analysis-report-run_1.md",
+                "evidence_ids": [evidence_id],
+                "markdown": markdown,
+                "principal_id": "PRINCIPAL_SENTINEL",
+                "thread_id": "THREAD_SENTINEL",
+                "run_id": "RUN_SENTINEL",
+            }
+        ),
+        tool_call_id="call-report-writer",
+        name="write_analysis_report",
+    )
+
+    projected = serialize_channel_values_for_api({"messages": [writer_call, writer_result]})
+    projected_call, projected_result = projected["messages"]
+    assert projected_call["tool_calls"][0]["args"] == {"title": "Synthetic report", "evidence_ids": [evidence_id]}
+    assert json.loads(projected_result["content"]) == {
+        "code": "published",
+        "report_id": "report-1",
+        "artifact_path": "/mnt/user-data/outputs/analysis-report-run_1.md",
+        "evidence_ids": [evidence_id],
+    }
+    assert markdown not in json.dumps(projected)
+    assert writer_call.tool_calls[0]["args"]["markdown"] == markdown
+    assert markdown in writer_result.content
+
+    event_rows = project_analytics_event_rows(
+        [
+            {
+                "run_id": "run_1",
+                "event_type": "subagent.step",
+                "content": {
+                    "kind": "ai",
+                    "tool_calls": [
+                        {
+                            "id": "child-report-call",
+                            "name": "write_analysis_report",
+                            "args": {"title": "Synthetic report", "markdown": markdown, "evidence_ids": [evidence_id]},
+                        }
+                    ],
+                },
+            }
+        ]
+    )
+    assert event_rows[0]["content"]["tool_calls"][0]["args"] == {"title": "Synthetic report", "evidence_ids": [evidence_id]}
+    assert markdown not in json.dumps(event_rows)

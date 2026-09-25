@@ -16,7 +16,10 @@ from copy import deepcopy
 from typing import Any
 
 _ANALYTICS_QUERY_TOOL = "query_business_data"
+_ANALYSIS_REPORT_WRITER_TOOL = "write_analysis_report"
+_ANALYTICS_SENSITIVE_TOOL_NAMES = frozenset({_ANALYTICS_QUERY_TOOL, _ANALYSIS_REPORT_WRITER_TOOL})
 _ANALYTICS_RESULT_FALLBACK_CODE = "analytics_result_unavailable"
+_ANALYSIS_REPORT_RESULT_FALLBACK_CODE = "analysis_report_result_unavailable"
 _SAFE_ANALYTICS_CODES = frozenset(
     {
         "analytics_unavailable",
@@ -70,6 +73,9 @@ _SAFE_ANALYTICS_CODES = frozenset(
     }
 )
 _ANALYTICS_DIGEST = re.compile(r"^[0-9a-f]{64}$")
+_ANALYSIS_REPORT_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_ANALYSIS_REPORT_PATH = re.compile(r"^/mnt/user-data/outputs/analysis-report-[A-Za-z0-9_-]{1,64}\.md$")
+_SAFE_ANALYSIS_REPORT_CODES = frozenset({"published", "existing", "report_conflict", "invalid_request", "analytics_unavailable", "analysis_report_result_unavailable"})
 
 
 def _analytics_tool_name(value: Any) -> str | None:
@@ -122,10 +128,21 @@ def _is_analytics_call(call: Any, tool_names: dict[str, str]) -> bool:
     if not isinstance(call, dict):
         return False
     tool_name = _analytics_tool_name(call)
-    if tool_name == _ANALYTICS_QUERY_TOOL:
+    if tool_name in _ANALYTICS_SENSITIVE_TOOL_NAMES:
         return True
     tool_id = call.get("id")
-    return isinstance(tool_id, str) and tool_names.get(tool_id) == _ANALYTICS_QUERY_TOOL
+    return isinstance(tool_id, str) and tool_names.get(tool_id) in _ANALYTICS_SENSITIVE_TOOL_NAMES
+
+
+def _resolved_analytics_tool_name(call: Any, tool_names: dict[str, str]) -> str | None:
+    if not isinstance(call, dict):
+        return None
+    direct = _analytics_tool_name(call)
+    if direct in _ANALYTICS_SENSITIVE_TOOL_NAMES:
+        return direct
+    tool_id = call.get("id")
+    resolved = tool_names.get(tool_id) if isinstance(tool_id, str) else None
+    return resolved if resolved in _ANALYTICS_SENSITIVE_TOOL_NAMES else None
 
 
 def _safe_analytics_tool_args(args: Any) -> dict[str, Any] | str:
@@ -140,6 +157,26 @@ def _safe_analytics_tool_args(args: Any) -> dict[str, Any] | str:
         datasource_id = args.get("datasource_id")
         if isinstance(datasource_id, str) and len(datasource_id) <= 64:
             safe["datasource_id"] = datasource_id
+    if was_json_text:
+        return json.dumps(safe, ensure_ascii=False, separators=(",", ":"))
+    return safe
+
+
+def _safe_analysis_report_tool_args(args: Any) -> dict[str, Any] | str:
+    was_json_text = isinstance(args, str)
+    if was_json_text:
+        try:
+            args = json.loads(args)
+        except (TypeError, ValueError):
+            args = None
+    safe: dict[str, Any] = {}
+    if isinstance(args, dict):
+        title = args.get("title")
+        if isinstance(title, str) and len(title) <= 200 and not any(ord(character) < 32 or ord(character) == 127 for character in title):
+            safe["title"] = title
+        evidence_ids = args.get("evidence_ids")
+        if isinstance(evidence_ids, list) and 0 < len(evidence_ids) <= 20 and all(isinstance(item, str) and _ANALYTICS_DIGEST.fullmatch(item) for item in evidence_ids):
+            safe["evidence_ids"] = evidence_ids
     if was_json_text:
         return json.dumps(safe, ensure_ascii=False, separators=(",", ":"))
     return safe
@@ -200,6 +237,30 @@ def _project_analytics_result_content(content: Any) -> str:
     return json.dumps(safe, ensure_ascii=False, separators=(",", ":"))
 
 
+def _project_analysis_report_result_content(content: Any) -> str:
+    if not isinstance(content, str):
+        return json.dumps({"code": _ANALYSIS_REPORT_RESULT_FALLBACK_CODE}, separators=(",", ":"))
+    try:
+        payload = json.loads(content)
+    except (TypeError, ValueError):
+        payload = None
+    if not isinstance(payload, dict):
+        payload = {"code": _ANALYSIS_REPORT_RESULT_FALLBACK_CODE}
+
+    candidate_code = payload.get("code")
+    safe: dict[str, Any] = {"code": candidate_code if isinstance(candidate_code, str) and candidate_code in _SAFE_ANALYSIS_REPORT_CODES else _ANALYSIS_REPORT_RESULT_FALLBACK_CODE}
+    report_id = payload.get("report_id")
+    if isinstance(report_id, str) and _ANALYSIS_REPORT_ID.fullmatch(report_id):
+        safe["report_id"] = report_id
+    artifact_path = payload.get("artifact_path")
+    if isinstance(artifact_path, str) and _ANALYSIS_REPORT_PATH.fullmatch(artifact_path):
+        safe["artifact_path"] = artifact_path
+    evidence_ids = payload.get("evidence_ids")
+    if isinstance(evidence_ids, list) and 0 < len(evidence_ids) <= 20 and all(isinstance(item, str) and _ANALYTICS_DIGEST.fullmatch(item) for item in evidence_ids):
+        safe["evidence_ids"] = evidence_ids
+    return json.dumps(safe, ensure_ascii=False, separators=(",", ":"))
+
+
 def _project_analytics_message(value: dict[str, Any], tool_names: dict[str, str]) -> dict[str, Any]:
     message_type = value.get("type")
     if isinstance(message_type, str) and message_type in {"ai", "AIMessage", "AIMessageChunk"}:
@@ -210,11 +271,14 @@ def _project_analytics_message(value: dict[str, Any], tool_names: dict[str, str]
             for call in calls:
                 if not _is_analytics_call(call, tool_names):
                     continue
+                tool_name = _resolved_analytics_tool_name(call, tool_names)
                 if key == "tool_call_chunks":
                     call["args"] = ""
                 elif key == "invalid_tool_calls":
                     call["args"] = ""
                     call["error"] = "invalid_arguments"
+                elif tool_name == _ANALYSIS_REPORT_WRITER_TOOL:
+                    call["args"] = _safe_analysis_report_tool_args(call.get("args"))
                 else:
                     call["args"] = _safe_analytics_tool_args(call.get("args"))
 
@@ -225,20 +289,35 @@ def _project_analytics_message(value: dict[str, Any], tool_names: dict[str, str]
                 for call in raw_calls:
                     if not _is_analytics_call(call, tool_names):
                         continue
+                    tool_name = _resolved_analytics_tool_name(call, tool_names)
                     function = call.get("function") if isinstance(call, dict) else None
                     if isinstance(function, dict):
-                        function["arguments"] = _safe_analytics_tool_args(function.get("arguments"))
+                        if tool_name == _ANALYSIS_REPORT_WRITER_TOOL:
+                            function["arguments"] = _safe_analysis_report_tool_args(function.get("arguments"))
+                        else:
+                            function["arguments"] = _safe_analytics_tool_args(function.get("arguments"))
                     elif isinstance(call, dict):
-                        call["args"] = _safe_analytics_tool_args(call.get("args"))
+                        if tool_name == _ANALYSIS_REPORT_WRITER_TOOL:
+                            call["args"] = _safe_analysis_report_tool_args(call.get("args"))
+                        else:
+                            call["args"] = _safe_analytics_tool_args(call.get("args"))
             raw_call = additional_kwargs.get("function_call")
-            if isinstance(raw_call, dict) and _analytics_tool_name(raw_call) == _ANALYTICS_QUERY_TOOL:
-                raw_call["arguments"] = _safe_analytics_tool_args(raw_call.get("arguments"))
+            if isinstance(raw_call, dict):
+                raw_call_name = _analytics_tool_name(raw_call)
+                if raw_call_name == _ANALYTICS_QUERY_TOOL:
+                    raw_call["arguments"] = _safe_analytics_tool_args(raw_call.get("arguments"))
+                elif raw_call_name == _ANALYSIS_REPORT_WRITER_TOOL:
+                    raw_call["arguments"] = _safe_analysis_report_tool_args(raw_call.get("arguments"))
     elif isinstance(message_type, str) and message_type in {"tool", "ToolMessage"}:
         tool_id = value.get("tool_call_id")
         tool_name = value.get("name")
-        if tool_name != _ANALYTICS_QUERY_TOOL and not (isinstance(tool_id, str) and tool_names.get(tool_id) == _ANALYTICS_QUERY_TOOL):
+        if tool_name not in _ANALYTICS_SENSITIVE_TOOL_NAMES and not (isinstance(tool_id, str) and tool_names.get(tool_id) in _ANALYTICS_SENSITIVE_TOOL_NAMES):
             return value
-        value["content"] = _project_analytics_result_content(value.get("content"))
+        resolved_name = tool_name if tool_name in _ANALYTICS_SENSITIVE_TOOL_NAMES else tool_names.get(tool_id)
+        if resolved_name == _ANALYSIS_REPORT_WRITER_TOOL:
+            value["content"] = _project_analysis_report_result_content(value.get("content"))
+        else:
+            value["content"] = _project_analytics_result_content(value.get("content"))
         value["artifact"] = None
         additional_kwargs = value.get("additional_kwargs")
         safe_additional_kwargs: dict[str, Any] = {}
@@ -313,9 +392,17 @@ def project_analytics_event_rows(events: list[Any]) -> list[Any]:
             if isinstance(calls, list):
                 for call in calls:
                     if _is_analytics_call(call, tool_names):
-                        call["args"] = _safe_analytics_tool_args(call.get("args"))
-        elif content.get("kind") == "tool" and content.get("tool_name") == _ANALYTICS_QUERY_TOOL:
-            content["text"] = _project_analytics_result_content(content.get("text"))
+                        tool_name = _resolved_analytics_tool_name(call, tool_names)
+                        if tool_name == _ANALYSIS_REPORT_WRITER_TOOL:
+                            call["args"] = _safe_analysis_report_tool_args(call.get("args"))
+                        else:
+                            call["args"] = _safe_analytics_tool_args(call.get("args"))
+        elif content.get("kind") == "tool":
+            tool_name = content.get("tool_name")
+            if tool_name == _ANALYSIS_REPORT_WRITER_TOOL:
+                content["text"] = _project_analysis_report_result_content(content.get("text"))
+            elif tool_name == _ANALYTICS_QUERY_TOOL:
+                content["text"] = _project_analytics_result_content(content.get("text"))
     return projected
 
 
@@ -347,10 +434,10 @@ class AnalyticsToolCallChunkProjector:
             return previous
         if not isinstance(delta, str) or not delta:
             return previous
-        combined = f"{previous}{delta}" if previous and _ANALYTICS_QUERY_TOOL.startswith(previous) else delta
-        if combined == _ANALYTICS_QUERY_TOOL:
-            return _ANALYTICS_QUERY_TOOL
-        if _ANALYTICS_QUERY_TOOL.startswith(combined):
+        combined = f"{previous}{delta}" if previous and any(name.startswith(previous) for name in _ANALYTICS_SENSITIVE_TOOL_NAMES) else delta
+        if combined in _ANALYTICS_SENSITIVE_TOOL_NAMES:
+            return combined
+        if any(name.startswith(combined) for name in _ANALYTICS_SENSITIVE_TOOL_NAMES):
             return combined
         return "__other_tool__"
 
@@ -395,7 +482,7 @@ class AnalyticsToolCallChunkProjector:
             # 工具名仍是 Analytics 名称前缀时身份尚未确定；完成判定前不外发参数增量。
             if key is not None:
                 self._names_by_index[key] = state
-            if state != _ANALYTICS_QUERY_TOOL:
+            if state not in _ANALYTICS_SENSITIVE_TOOL_NAMES:
                 has_ambiguous_chunk = True
                 if has_args:
                     chunk["args"] = ""
@@ -427,7 +514,7 @@ class AnalyticsToolCallChunkProjector:
                 # 不把同帧中有明确名称的普通工具参数一起清空。
                 if not direct_analytics and not call_name and not call_id and len(calls) == 1 and len(chunks) == 1 and has_ambiguous_chunk:
                     direct_analytics = True
-                possible_analytics = isinstance(call_name, str) and call_name != _ANALYTICS_QUERY_TOOL and _ANALYTICS_QUERY_TOOL.startswith(call_name)
+                possible_analytics = isinstance(call_name, str) and any(name.startswith(call_name) for name in _ANALYTICS_SENSITIVE_TOOL_NAMES)
                 direct_analytics = direct_analytics or possible_analytics
                 if not direct_analytics:
                     explicit_other = isinstance(call_name, str) and bool(call_name)
@@ -437,6 +524,8 @@ class AnalyticsToolCallChunkProjector:
                 if field == "invalid_tool_calls":
                     call["args"] = ""
                     call["error"] = "invalid_arguments"
+                elif _resolved_analytics_tool_name(call, tool_names) == _ANALYSIS_REPORT_WRITER_TOOL:
+                    call["args"] = _safe_analysis_report_tool_args(call.get("args"))
                 else:
                     call["args"] = _safe_analytics_tool_args(call.get("args"))
 

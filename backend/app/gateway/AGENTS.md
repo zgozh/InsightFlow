@@ -175,3 +175,9 @@ PATCH、分支请求和 run 的 `context` / `configurable` 均不能设置或清
 记录缺失或标记损坏时拒绝，分析线程在解析 Lead Agent 工厂之前以稳定的
 `analysis_mode_unavailable` 错误拒绝。只有 Gateway 新生成、未绑定既有线程的 stateless
 聊天可在元数据行建立前运行。6E2B 完成工具隔离前，不得移除此门禁或回退到普通聊天。
+
+报告 writer 的 Gateway 能力是服务端内部上下文，不是请求参数：只有持久化 analysis 标记已解析、
+认证 principal 与 run owner 一致且线程元数据检查成功后，Gateway 才能为当前 run 创建能力；能力
+固定 owner/thread/run、outputs 根目录和唯一 `.md` 路径。`__analysis_report_writer` 必须与其他
+服务端键一样从客户端 `context`/`configurable` 清除，并由 worker 再次拒绝 caller forged 值、在 run
+终结清理。此切片保留上述 `analysis_mode_unavailable` admission 门禁，当前 analysis 运行仍不可用。
