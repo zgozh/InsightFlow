@@ -51,14 +51,26 @@ Lead Agent 生命周期。队列超时、并发数和轮询间隔在 `scheduler`
 ### Local
 
 Local sandbox 在 Gateway 主机进程中执行命令，仅适用于可信开发环境。它不是安全隔离
-边界。
+边界。其命令子进程只继承固定的精确环境变量白名单：`PATH`、`PATHEXT`、`COMSPEC`、
+`SYSTEMROOT`、`WINDIR`（命令查找和 Windows 进程启动）；`HOME`、`USERPROFILE`、
+`HOMEDRIVE`、`HOMEPATH`、`PWD`（用户目录与当前目录）；`TMP`、`TEMP`、`TMPDIR`（临时
+文件）；`SHELL`、`VIRTUAL_ENV`（shell 与 Python 虚拟环境识别）；`LANG`、`LANGUAGE`、
+`LC_ALL`、`LC_COLLATE`、`LC_CTYPE`、`LC_MESSAGES`、`LC_MONETARY`、`LC_NUMERIC`、
+`LC_TIME`（本地化）；`TERM`、`COLORTERM`（终端行为）。Windows 名称匹配不区分大小写，
+POSIX 名称匹配大小写精确。其他 Gateway 变量按名称默认全部排除；HTTP/HTTPS/ALL proxy
+变量可能携带凭据，因此不继承。`NO_PROXY` 同样不继承：它会改变代理绕过路由，启动命令
+不需要该设置。技能需要的凭据必须通过 `required-secrets` 和本次请求的 `context.secrets`
+显式注入；注入值不会从同名的 Gateway 环境变量自动取得。
 
 ### AIO
 
 AIO sandbox 在独立容器中运行 Agent 命令。设置 `sandbox.use` 为
 `deerflow.community.aio_sandbox:AioSandboxProvider`，并按
 `config.example.yaml` 中的 Option 2 配置 Docker socket、镜像和资源限制。容器网络策略
-需要受支持的 Docker Engine；外部网络访问应按业务需要限制。
+需要受支持的 Docker Engine；外部网络访问应按业务需要限制。容器环境只由显式配置的
+`sandbox.environment` 构造；值写成 `$NAME` 时会从 Gateway 环境解析。该配置是运维主动
+授权将指定值传入 AIO 容器，平台无法阻止运维主动映射 Analytics 数据源凭据；除非这种
+暴露确有意图且已单独控制，不要配置此类映射。
 
 仓库也保留 AIO 外部 provisioner 的客户端配置。配置 `provisioner_url` 表示 Gateway
 连接使用方单独部署的兼容服务；本仓库不包含、不启动也不提供该服务端。服务端的部署、

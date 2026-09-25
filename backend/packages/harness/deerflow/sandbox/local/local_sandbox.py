@@ -516,9 +516,7 @@ class LocalSandbox(Sandbox):
         if timeout is None:
             timeout = DEFAULT_COMMAND_TIMEOUT_SECONDS
 
-        # Inherit os.environ minus platform secrets, then layer any injected
-        # request-scoped secrets on top (#3861). An explicit env is always passed
-        # so platform credentials never leak into skill subprocesses.
+        # 子进程仅继承运行时白名单，再叠加获准的本次请求值；不透传任意 Gateway 变量。
         sandbox_env = build_sandbox_env(env)
         timed_out = False
         if os.name == "nt":

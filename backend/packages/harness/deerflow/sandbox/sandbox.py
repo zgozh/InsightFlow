@@ -86,7 +86,9 @@ class Sandbox(ABC):
                 short-lived end-user token for skill scripts, issue #3861, or a
                 GitHub App installation token for ``git push`` / ``gh``) without
                 placing them in the prompt, tool arguments, or the command
-                string. When ``None`` the sandbox uses its default environment.
+                string. When ``None`` the provider uses its default environment.
+                LocalSandbox 只继承 ``sandbox/env_policy.py`` 文档化的精确运行时白名单；
+                远端 provider 使用各自配置。
                 Keys must be valid POSIX environment-variable names
                 (``^[A-Za-z_][A-Za-z0-9_]*$``); implementations validate
                 via :func:`_validate_extra_env` before use. Values are

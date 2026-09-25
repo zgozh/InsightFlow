@@ -1,15 +1,8 @@
-"""Environment-variable policy for sandbox command execution (issue #3861).
+"""沙箱命令子进程的环境变量策略。
 
-Skill scripts run as sandbox subprocesses. By default a subprocess inherits the
-Gateway process's entire ``os.environ`` — which holds platform credentials
-(``OPENAI_API_KEY``, tracing keys, community-provider keys, ...). That makes any
-scoped request-secret injection pointless: a script could simply read those
-inherited platform secrets. This module scrubs secret-looking variables from the
-inherited environment before request-scoped secrets are layered on top.
-
-The pattern set mirrors codex's ``*KEY*/*SECRET*/*TOKEN*`` default excludes and
-hermes's fixed provider blocklist; unlike codex (which defaults the exclude
-*off*), DeerFlow scrubs by default — security first.
+LocalSandbox 只继承下方明确列出的运行时白名单。Gateway 凭据和其他运维变量不会自动进
+入子进程；只有调用方通过 request-scoped ``injected`` 参数显式传递时才会加入。
+``is_blocked_env_name`` 是配置投影使用的独立凭据名称分类器，不决定子进程继承范围。
 """
 
 from __future__ import annotations
@@ -17,52 +10,37 @@ from __future__ import annotations
 import fnmatch
 import os
 
-# Case-insensitive wildcard patterns for secret-looking variable names. Matched
-# against the upper-cased variable name. Benign system vars (PATH, HOME, SHELL,
-# LANG, PWD, TMPDIR, VIRTUAL_ENV, PYTHONPATH, ...) contain none of these tokens
-# and are therefore preserved.
+# 配置投影使用的凭据名称分类规则，按不区分大小写的方式匹配大写名称。
+# 未命中规则只表示该字段名未被分类为凭据，不代表 LocalSandbox 会继承它；
+# 子进程继承范围由下方独立的精确白名单控制。
 _SECRET_NAME_PATTERNS: tuple[str, ...] = (
     "*KEY*",
     "*SECRET*",
     "*TOKEN*",
-    # ``*PASS*`` subsumes the full ``PASSWORD``/``PASSWD`` spellings *and* the
-    # ubiquitous abbreviated form (``DB_PASS``, ``SMTP_PASS``, ``MYSQL_PASS``, ...),
-    # whose plaintext value is the password itself. It also covers ``PGPASSFILE``
-    # (libpq's ``.pgpass`` locator).
+    # ``*PASS*`` 覆盖 ``PASSWORD``/``PASSWD`` 全称和 ``DB_PASS``、``SMTP_PASS``、
+    # ``MYSQL_PASS`` 等缩写；``PGPASSFILE`` 也因此被分类为凭据字段。
     #
-    # It deliberately also catches the ``*_ASKPASS`` credential helpers
-    # (``GIT_ASKPASS``, ``SSH_ASKPASS``, ``SUDO_ASKPASS``). Those name a *program*
-    # rather than a secret, but that program exists to hand the caller a
-    # credential — inheriting the pointer is the same leak class this module
-    # closes, so scrubbing them is intended, not incidental.
+    # ``GIT_ASKPASS``、``SSH_ASKPASS``、``SUDO_ASKPASS`` 表示凭据助手程序而非秘密值，
+    # 但助手可代表调用者提供凭据，因此配置投影也应将这些字段按凭据处理。
     #
-    # Incidental names that merely contain ``PASS`` (``COMPASS_*``, ``BYPASS_*``)
-    # are scrubbed too. That is the fail-safe direction for this module: a skill
-    # that genuinely needs any scrubbed name declares it via required-secrets.
-    # Benign ``PWD``/``OLDPWD`` carry no ``PASS`` substring and are unaffected.
+    # 即使名称只是偶然包含 ``PASS``（如 ``COMPASS_*``、``BYPASS_*``）也会分类为凭据，
+    # 以避免把可能的敏感配置投影给模型。``PWD``/``OLDPWD`` 不含该子串，不受此规则影响。
     "*PASS*",
     "*CREDENTIAL*",
     "*DSN*",  # data source name — almost always a connection string with a password
 )
 
-# Connection-string / credential-bearing variable names that carry no
-# KEY/SECRET/TOKEN/DSN substring but routinely embed a password (e.g.
-# ``postgresql://user:pw@host/db``). A blanket ``*URL*`` block is intentionally
-# avoided — it would strip benign service URLs a skill may legitimately read.
-# A skill that genuinely needs one of these must declare it via required-secrets
-# (the caller then supplies it through context.secrets, and injection wins).
+# 这些连接串或凭据字段名不含 KEY/SECRET/TOKEN/DSN，但值通常内嵌密码（如
+# ``postgresql://user:pw@host/db``）。不屏蔽所有 ``*URL*``，以免把无害服务 URL
+# 从配置投影中误删。技能若确实需要某项凭据，必须通过 ``required-secrets`` 声明，
+# 再由调用者通过 ``context.secrets`` 提供，最后经显式注入传递。
 #
-# The same reasoning covers the credential sources those clients read directly.
-# ``MYSQL_PWD`` and ``REDISCLI_AUTH`` are the documented no-flag credential
-# sources for ``mysql`` and ``redis-cli``. ``REDIS_AUTH`` is *not* canonical for
-# any standard Redis client — it is blocked defensively because client libraries
-# and deployment charts commonly set it. ``PGSERVICEFILE`` is the Postgres analog:
-# libpq reads the ``pg_service.conf`` it points at (which may carry a password
-# field) with no flag; its sibling ``PGPASSFILE`` is already caught by ``*PASS*``.
-# These need exact entries: ``PWD``/``AUTH``/``SERVICEFILE`` cannot be wildcarded,
-# since ``*PWD*`` would strip ``PWD``/``OLDPWD`` and no shared token is unique to
-# them. (``*PASS*`` already covers ``PGPASSWORD``, ``MYSQL_PASSWORD``, ``DB_PASS``,
-# ``PGPASSFILE``, ...)
+# 同一原则也适用于客户端直接读取的凭据来源：``MYSQL_PWD`` 和 ``REDISCLI_AUTH``
+# 是对应客户端支持的无参数凭据变量；``REDIS_AUTH`` 虽不是 Redis 客户端标准名，
+# 仍按凭据分类，因为客户端库和部署模板常设置它。Postgres 的 ``PGSERVICEFILE``
+# 指向可能含密码的 ``pg_service.conf``；其兄弟 ``PGPASSFILE`` 已被 ``*PASS*`` 覆盖。
+# 这些名称必须精确列举：通配 ``*PWD*`` 会误伤 ``PWD``/``OLDPWD``，而 ``AUTH``/
+# ``SERVICEFILE`` 没有可安全使用的共同标记。
 _BLOCKED_EXACT_NAMES: frozenset[str] = frozenset(
     {
         "DATABASE_URL",
@@ -84,21 +62,56 @@ _BLOCKED_EXACT_NAMES: frozenset[str] = frozenset(
         "REDISCLI_AUTH",
         "REDIS_AUTH",
         "PGSERVICEFILE",
-        # ``SSH_AUTH_SOCK`` points at the host's ssh-agent socket. A sandbox
-        # subprocess that inherits it can sign and authenticate with every key
-        # the agent holds (git push, ssh logins) without ever reading a key
-        # file — the same credential-*pointer* leak class as the ``*_ASKPASS``
-        # helpers deliberately scrubbed by ``*PASS*`` above. No wildcard fits
-        # (``*AUTH*`` would strip benign names and ``SOCK`` is not unique to
-        # credentials), so it needs an exact entry.
+        # ``SSH_AUTH_SOCK`` 指向宿主 ssh-agent；持有该 socket 的进程可调用其中密钥签名，
+        # 无需读取密钥文件。配置投影将其视为凭据指针；子进程是否继承则独立由白名单决定。
+        # ``*AUTH*`` 会误伤无害字段，``SOCK`` 也不专属于凭据，因此这里使用精确名称。
         "SSH_AUTH_SOCK",
     }
 )
 
 
+# 仅保留查找命令、常规主目录和临时目录、启动 Windows 进程，以及本地化和终端行为
+# 所需的变量。此处使用精确名称；应用配置、凭据、代理和未知的新变量必须由请求显式注入。
+_INHERITED_ENV_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "PATH",
+        "PATHEXT",
+        "COMSPEC",
+        "SYSTEMROOT",
+        "WINDIR",
+        "HOME",
+        "USERPROFILE",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "TMP",
+        "TEMP",
+        "TMPDIR",
+        "PWD",
+        "SHELL",
+        "VIRTUAL_ENV",
+        "LANG",
+        "LANGUAGE",
+        "LC_ALL",
+        "LC_COLLATE",
+        "LC_CTYPE",
+        "LC_MESSAGES",
+        "LC_MONETARY",
+        "LC_NUMERIC",
+        "LC_TIME",
+        "TERM",
+        "COLORTERM",
+    }
+)
+
+
+def _is_allowlisted_env_name(name: str) -> bool:
+    """按宿主平台的环境变量大小写语义匹配精确白名单。"""
+    candidate = name.upper() if os.name == "nt" else name
+    return candidate in _INHERITED_ENV_ALLOWLIST
+
+
 def is_blocked_env_name(name: str) -> bool:
-    """Return True if ``name`` looks like a credential that must not be inherited
-    by a sandbox subprocess."""
+    """分类配置投影中类似凭据的字段名称。"""
     upper = name.upper()
     if upper in _BLOCKED_EXACT_NAMES:
         return True
@@ -106,15 +119,12 @@ def is_blocked_env_name(name: str) -> bool:
 
 
 def build_sandbox_env(injected: dict[str, str] | None = None) -> dict[str, str]:
-    """Build the environment dict for a sandbox subprocess.
+    """构造沙箱子进程环境：先继承精确白名单，再合并显式注入的请求值。
 
-    Inherits ``os.environ`` minus any secret-looking variables, then layers the
-    explicitly injected request-scoped secrets on top. An injected secret wins
-    even if its name matches a blocked pattern, because injection is authorized
-    upstream (the skill declared it and the value came from the request, not from
-    the host environment).
+    注入值即使名称不在白名单中也会保留，因为该请求值已由调用链授权；此操作不会自动
+    复制 Gateway 中的同名变量。
     """
-    env = {key: value for key, value in os.environ.items() if not is_blocked_env_name(key)}
+    env = {key: value for key, value in os.environ.items() if _is_allowlisted_env_name(key)}
     if injected:
         env.update(injected)
     return env

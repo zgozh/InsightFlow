@@ -49,6 +49,28 @@ def test_load_config_preserves_thread_data_mounts_override(sandbox_overrides, ex
     assert "MAX_SHELL_SESSIONS" not in loaded["environment"]
 
 
+def test_aio_environment_uses_only_operator_configured_mappings(monkeypatch):
+    """AIO 只接收显式配置映射；解析主机变量属于运维主动授权。"""
+    aio_mod = importlib.import_module("deerflow.community.aio_sandbox.aio_sandbox_provider")
+    monkeypatch.setattr(
+        aio_mod.os,
+        "environ",
+        {
+            "BUSINESS_ACCESS": "synthetic-explicit-mapping",
+            "UNMAPPED_ACCESS": "synthetic-unmapped-value",
+        },
+    )
+    sandbox_config = SandboxConfig(
+        use="deerflow.community.aio_sandbox:AioSandboxProvider",
+        environment={"DECLARED_ACCESS": "$BUSINESS_ACCESS"},
+    )
+    app_config = SimpleNamespace(sandbox=sandbox_config, stream_bridge=None)
+    monkeypatch.setattr(aio_mod, "get_app_config", lambda: app_config)
+    provider = aio_mod.AioSandboxProvider.__new__(aio_mod.AioSandboxProvider)
+
+    assert provider._load_config()["environment"] == {"DECLARED_ACCESS": "synthetic-explicit-mapping"}
+
+
 def test_load_config_snapshots_custom_skills_container_path(monkeypatch):
     aio_mod = importlib.import_module("deerflow.community.aio_sandbox.aio_sandbox_provider")
     sandbox_config = SandboxConfig(

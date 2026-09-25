@@ -51,12 +51,13 @@ class TestLocalSandboxEnvInjection:
         )
         assert "s3cret-value" in out
 
-    def test_env_none_keeps_inherited_environment(self, monkeypatch):
-        """env=None preserves the legacy inherited-os.environ behaviour."""
-        monkeypatch.setenv("DEERFLOW_INHERITED_VAR", "inherited-value")
+    def test_env_none_does_not_inherit_unlisted_gateway_environment(self, monkeypatch):
+        """真实 LocalSandbox 子进程不得接收未列入白名单的 Gateway 变量。"""
+        monkeypatch.setenv("BUSINESS_ACCESS", "synthetic-gateway-sentinel")
         sandbox = LocalSandbox(id="local")
-        out = sandbox.execute_command(_echo_env_probe("DEERFLOW_INHERITED_VAR"))
-        assert "inherited-value" in out
+        out = sandbox.execute_command(_echo_env_probe("BUSINESS_ACCESS"))
+        if "synthetic-gateway-sentinel" in out:
+            raise AssertionError("synthetic Gateway sentinel was inherited by LocalSandbox")
 
     def test_injected_env_is_per_call_only(self):
         """Injected env must not leak into a subsequent call that does not pass it."""
@@ -65,25 +66,24 @@ class TestLocalSandboxEnvInjection:
         out = sandbox.execute_command(_echo_env_probe("DEERFLOW_EPHEMERAL"))
         assert "leaky" not in out
 
-    def test_platform_secret_scrubbed_from_inherited_env(self, monkeypatch):
-        """A platform credential present in os.environ must NOT reach the sandbox
-        subprocess (the baseline-env leak surface). Without this, scoped injection
-        is security theatre — a skill script could simply read $OPENAI_API_KEY."""
-        monkeypatch.setenv("OPENAI_API_KEY", "sk-platform-should-not-leak")
+    def test_platform_secret_not_inherited_by_local_subprocess(self, monkeypatch):
+        """平台凭据即使存在于 Gateway 环境，也不能进入本地命令子进程。"""
+        monkeypatch.setenv("OPENAI_API_KEY", "synthetic-platform-key")
         sandbox = LocalSandbox(id="local")
         out = sandbox.execute_command(_echo_env_probe("OPENAI_API_KEY"))
-        assert "sk-platform-should-not-leak" not in out
+        if "synthetic-platform-key" in out:
+            raise AssertionError("synthetic platform sentinel was inherited by LocalSandbox")
 
-    def test_benign_env_still_inherited_after_scrub(self, monkeypatch):
-        """Scrubbing platform secrets must not strip harmless vars that skills rely on."""
-        monkeypatch.setenv("DEERFLOW_PLAIN_VAR", "harmless-value")
+    def test_unlisted_deerflow_variable_is_not_inherited(self, monkeypatch):
+        """名称看似普通的自定义变量也默认排除。"""
+        monkeypatch.setenv("DEERFLOW_PLAIN_VAR", "synthetic-custom-value")
         sandbox = LocalSandbox(id="local")
         out = sandbox.execute_command(_echo_env_probe("DEERFLOW_PLAIN_VAR"))
-        assert "harmless-value" in out
+        if "synthetic-custom-value" in out:
+            raise AssertionError("synthetic custom sentinel was inherited by LocalSandbox")
 
-    def test_injected_secret_survives_scrub(self, monkeypatch):
-        """An explicitly injected secret must win even if its name matches a blocked
-        pattern — injection happens after scrubbing the inherited environment."""
+    def test_injected_secret_survives_allowlist(self, monkeypatch):
+        """显式注入值在继承白名单之后合并，并遵循既有技能授权契约。"""
         sandbox = LocalSandbox(id="local")
         out = sandbox.execute_command(
             _echo_env_probe("INJECTED_API_KEY"),
@@ -155,7 +155,7 @@ class TestAioSandboxEnvInjection:
 
 
 class TestEnvPolicy:
-    """Platform-secret scrubbing policy for sandbox subprocesses (delta 1)."""
+    """沙箱子进程继承白名单与凭据名称分类策略。"""
 
     @pytest.mark.parametrize(
         "name",
@@ -213,7 +213,7 @@ class TestEnvPolicy:
             "SSH_AUTH_SOCK",
         ],
     )
-    def test_secret_like_names_are_blocked(self, name):
+    def test_credential_names_are_classified_for_projection(self, name):
         from deerflow.sandbox.env_policy import is_blocked_env_name
 
         assert is_blocked_env_name(name) is True
@@ -239,17 +239,8 @@ class TestEnvPolicy:
             "SERVICE_ENDPOINT",
         ],
     )
-    def test_benign_names_are_allowed(self, name):
-        """Names here must survive the scrub.
-
-        Note what this list does *not* contain: any name carrying a ``PASS``
-        substring. That is deliberate, not an oversight — ``*PASS*`` scrubs every
-        such name, including the ``*_ASKPASS`` credential helpers pinned in
-        ``test_secret_like_names_are_blocked`` above. Over-scrubbing is this
-        module's fail-safe direction; a skill that needs a scrubbed name declares
-        it via ``required-secrets``. ``PWD``/``OLDPWD`` are the boundary this list
-        does pin: they carry no ``PASS`` substring and must never be stripped.
-        """
+    def test_non_credential_names_are_not_classified_as_secrets(self, name):
+        """分类结果只服务配置投影；通过此分类不代表允许继承。"""
         from deerflow.sandbox.env_policy import is_blocked_env_name
 
         assert is_blocked_env_name(name) is False
@@ -261,17 +252,23 @@ class TestEnvPolicy:
         password with no further configuration, so inheriting them hands a skill
         subprocess the credential the connection-string block already withholds.
         """
-        from deerflow.sandbox.env_policy import build_sandbox_env
+        from deerflow.sandbox import env_policy
 
-        monkeypatch.setenv("MYSQL_URL", "mysql://user:pw@host/db")
-        monkeypatch.setenv("PWD", "/repo")  # POSIX hosts set PWD themselves; plant it so the survival check runs on Windows too
-        monkeypatch.setenv("MYSQL_PWD", "prod-db-password")
-        monkeypatch.setenv("REDISCLI_AUTH", "prod-redis-auth")
-        env = build_sandbox_env()
-        assert "MYSQL_URL" not in env
-        assert "MYSQL_PWD" not in env
-        assert "REDISCLI_AUTH" not in env
-        assert env.get("PWD")  # the working directory must survive the added entries
+        monkeypatch.setattr(
+            env_policy.os,
+            "environ",
+            {
+                "MYSQL_URL": "mysql://synthetic-user:synthetic-pass@db.invalid/app",
+                "PWD": "synthetic-working-directory",
+                "MYSQL_PWD": "synthetic-mysql-password",
+                "REDISCLI_AUTH": "synthetic-redis-auth",
+            },
+        )
+        env = env_policy.build_sandbox_env()
+        if any(env.get(name) is not None for name in ("MYSQL_URL", "MYSQL_PWD", "REDISCLI_AUTH")):
+            raise AssertionError("synthetic database credential variable unexpectedly inherited")
+        if env.get("PWD") != "synthetic-working-directory":
+            raise AssertionError("allowed working-directory variable was not preserved")
 
     def test_injection_still_wins_for_the_newly_blocked_names(self, monkeypatch):
         """``required-secrets`` stays the escape hatch for the names added here.
@@ -279,29 +276,124 @@ class TestEnvPolicy:
         The request-scoped value must also override the host's, which is the
         per-user-key-overrides-shared-key case from #3861.
         """
-        from deerflow.sandbox.env_policy import build_sandbox_env
+        from deerflow.sandbox import env_policy
 
-        monkeypatch.setenv("MYSQL_PWD", "host-value-must-not-leak")
-        env = build_sandbox_env(injected={"MYSQL_PWD": "request-scoped-value"})
-        assert env["MYSQL_PWD"] == "request-scoped-value"
+        monkeypatch.setattr(env_policy.os, "environ", {"MYSQL_PWD": "synthetic-host-password"})
+        env = env_policy.build_sandbox_env(injected={"MYSQL_PWD": "synthetic-request-value"})
+        if env.get("MYSQL_PWD") != "synthetic-request-value":
+            raise AssertionError("explicit request-scoped injection did not override the host value")
 
-    def test_build_sandbox_env_scrubs_inherited_and_layers_injected(self, monkeypatch):
-        from deerflow.sandbox.env_policy import build_sandbox_env
+    def test_build_sandbox_env_filters_inherited_and_layers_injected(self, monkeypatch):
+        from deerflow.sandbox import env_policy
 
-        monkeypatch.setenv("OPENAI_API_KEY", "platform-key-should-vanish")
-        monkeypatch.setenv("HARMLESS_PLAIN", "ok")
-        env = build_sandbox_env(injected={"SCOPED_TOKEN": "v"})
-        assert "OPENAI_API_KEY" not in env  # platform secret scrubbed
-        assert env.get("HARMLESS_PLAIN") == "ok"  # benign preserved
-        assert env.get("SCOPED_TOKEN") == "v"  # injected layered on top
-        assert env.get("PATH")  # core var preserved
+        monkeypatch.setattr(
+            env_policy.os,
+            "environ",
+            {
+                "OPENAI_API_KEY": "synthetic-platform-key",
+                "BUSINESS_ACCESS": "synthetic-gateway-sentinel",
+                "PATH": "synthetic-path",
+            },
+        )
+        env = env_policy.build_sandbox_env(injected={"SCOPED_TOKEN": "synthetic-request-value"})
+        if env.get("OPENAI_API_KEY") is not None or env.get("BUSINESS_ACCESS") is not None:
+            raise AssertionError("a synthetic unapproved Gateway variable was inherited")
+        if env.get("SCOPED_TOKEN") != "synthetic-request-value":
+            raise AssertionError("explicit request-scoped injection was not retained")
+        if env.get("PATH") != "synthetic-path":
+            raise AssertionError("the required path variable was not preserved")
 
-    def test_build_sandbox_env_none_injection_still_scrubs(self, monkeypatch):
-        from deerflow.sandbox.env_policy import build_sandbox_env
+    @pytest.mark.parametrize(
+        ("platform", "host_env", "expected"),
+        [
+            (
+                "posix",
+                {
+                    "PATH": "synthetic-posix-path",
+                    "HOME": "synthetic-home",
+                    "TMPDIR": "synthetic-temp",
+                    "LANG": "synthetic-locale",
+                    "LC_ALL": "synthetic-locale-all",
+                    "TERM": "synthetic-terminal",
+                    "path": "synthetic-lowercase-path",
+                    "BUSINESS_ACCESS": "synthetic-gateway-sentinel",
+                },
+                {
+                    "PATH": "synthetic-posix-path",
+                    "HOME": "synthetic-home",
+                    "TMPDIR": "synthetic-temp",
+                    "LANG": "synthetic-locale",
+                    "LC_ALL": "synthetic-locale-all",
+                    "TERM": "synthetic-terminal",
+                },
+            ),
+            (
+                "nt",
+                {
+                    "path": "synthetic-windows-path",
+                    "SystemRoot": "synthetic-system-root",
+                    "TEMP": "synthetic-temp",
+                    "USERPROFILE": "synthetic-profile",
+                    "business_access": "synthetic-gateway-sentinel",
+                },
+                {
+                    "path": "synthetic-windows-path",
+                    "SystemRoot": "synthetic-system-root",
+                    "TEMP": "synthetic-temp",
+                    "USERPROFILE": "synthetic-profile",
+                },
+            ),
+        ],
+        ids=["posix-case-sensitive", "windows-case-insensitive"],
+    )
+    def test_build_sandbox_env_uses_platform_allowlist(self, monkeypatch, platform, host_env, expected):
+        from deerflow.sandbox import env_policy
 
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "leak")
-        env = build_sandbox_env()
-        assert "ANTHROPIC_API_KEY" not in env
+        monkeypatch.setattr(env_policy.os, "name", platform)
+        monkeypatch.setattr(env_policy.os, "environ", host_env)
+
+        assert env_policy.build_sandbox_env() == expected
+
+    def test_build_sandbox_env_does_not_inherit_proxy_configuration(self, monkeypatch):
+        from deerflow.sandbox import env_policy
+
+        monkeypatch.setattr(env_policy.os, "name", "posix")
+        monkeypatch.setattr(
+            env_policy.os,
+            "environ",
+            {
+                "PATH": "synthetic-posix-path",
+                "HTTP_PROXY": "http://synthetic-user:synthetic-pass@proxy.invalid:8080",
+                "HTTPS_PROXY": "https://synthetic-user:synthetic-pass@proxy.invalid:8443",
+                "ALL_PROXY": "socks5://synthetic-user:synthetic-pass@proxy.invalid:1080",
+                "NO_PROXY": "localhost,.internal.invalid",
+            },
+        )
+
+        assert env_policy.build_sandbox_env() == {"PATH": "synthetic-posix-path"}
+
+    def test_build_sandbox_env_does_not_inherit_business_access_but_layers_explicit_injection(self, monkeypatch):
+        from deerflow.sandbox import env_policy
+
+        monkeypatch.setattr(
+            env_policy.os,
+            "environ",
+            {"BUSINESS_ACCESS": "synthetic-gateway-sentinel", "PATH": "synthetic-path"},
+        )
+        inherited = env_policy.build_sandbox_env()
+        injected = env_policy.build_sandbox_env(injected={"BUSINESS_ACCESS": "synthetic-request-sentinel"})
+        if inherited.get("BUSINESS_ACCESS") is not None:
+            raise AssertionError("synthetic unlisted Gateway variable unexpectedly inherited")
+        if injected.get("BUSINESS_ACCESS") != "synthetic-request-sentinel":
+            raise AssertionError("explicit synthetic request value was not injected")
+
+    def test_build_sandbox_env_excludes_unapproved_values_without_injection(self, monkeypatch):
+        from deerflow.sandbox import env_policy
+
+        monkeypatch.setattr(env_policy.os, "environ", {"ANTHROPIC_API_KEY": "synthetic-platform-key"})
+        env = env_policy.build_sandbox_env()
+        if env.get("ANTHROPIC_API_KEY") is not None:
+            raise AssertionError("synthetic platform credential unexpectedly inherited")
 
 
 class TestRequiredSecretsParsing:
@@ -524,15 +616,11 @@ class TestActivationBindsSecrets:
         assert read_active_secrets(context) == {}
 
     def test_caller_secret_wins_over_host_value_of_same_name(self, tmp_path, monkeypatch):
-        """A skill may declare a name that also exists in the host env (e.g. a
-        per-user key overriding a shared platform key — the #3861 use case). The
-        skill receives the CALLER's value (from context.secrets), never the host's:
-        the inherited host value is scrubbed and the caller's value is injected on
-        top. There is therefore no host-credential harvest to guard against."""
+        """技能声明的名称即使也存在于主机环境中，也只收到请求提供的值。"""
         from deerflow.runtime.secret_context import read_active_secrets
-        from deerflow.sandbox.env_policy import build_sandbox_env
+        from deerflow.sandbox import env_policy
 
-        monkeypatch.setenv("MEMOS_API_KEY", "host-shared-key-MUST-NOT-LEAK")
+        monkeypatch.setenv("MEMOS_API_KEY", "synthetic-host-shared-key")
         skill = _make_secret_skill(tmp_path, "memos", [SecretRequirement("MEMOS_API_KEY")])
         context = {"secrets": {"MEMOS_API_KEY": "caller-per-user-key"}}
         self._activate(tmp_path, monkeypatch, skill, context)
@@ -540,19 +628,20 @@ class TestActivationBindsSecrets:
         injected = read_active_secrets(context)
         assert injected == {"MEMOS_API_KEY": "caller-per-user-key"}  # caller's value injected
 
-        # The subprocess env gets the caller's value; the host's value is scrubbed.
-        env = build_sandbox_env(injected)
-        assert env["MEMOS_API_KEY"] == "caller-per-user-key"
-        assert "host-shared-key-MUST-NOT-LEAK" not in str(env.values())
+        # 子进程只得到调用者提供的值，不会自动复制同名主机环境变量。
+        monkeypatch.setattr(env_policy.os, "environ", {"MEMOS_API_KEY": "synthetic-host-value"})
+        env = env_policy.build_sandbox_env(injected)
+        if env.get("MEMOS_API_KEY") != "caller-per-user-key":
+            raise AssertionError("caller-scoped synthetic value was not preferred")
 
-    def test_undeclared_host_secret_is_scrubbed_not_harvested(self, tmp_path, monkeypatch):
-        """If a skill does NOT declare a host credential, the inherited value is
-        scrubbed — a skill can never read a platform credential it wasn't given."""
-        from deerflow.sandbox.env_policy import build_sandbox_env
+    def test_undeclared_host_secret_is_not_inherited(self, tmp_path, monkeypatch):
+        """未声明的主机凭据不会自动传入沙箱子进程。"""
+        from deerflow.sandbox import env_policy
 
-        monkeypatch.setenv("OPENAI_API_KEY", "host-key-do-not-harvest")
-        env = build_sandbox_env(None)
-        assert "OPENAI_API_KEY" not in env
+        monkeypatch.setattr(env_policy.os, "environ", {"OPENAI_API_KEY": "synthetic-host-key"})
+        env = env_policy.build_sandbox_env(None)
+        if env.get("OPENAI_API_KEY") is not None:
+            raise AssertionError("synthetic undeclared platform credential unexpectedly inherited")
 
     def test_activation_fires_after_input_sanitization_wrapping(self, tmp_path, monkeypatch):
         """Integration: in the real chain InputSanitizationMiddleware wraps the user

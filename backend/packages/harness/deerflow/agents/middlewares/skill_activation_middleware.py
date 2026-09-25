@@ -386,10 +386,9 @@ Follow this skill before choosing a general workflow. Load supporting resources 
 
         The set is recomputed and REPLACED each call, so a skill evicted from
         skill_context, or a caller that stops supplying a value, loses its
-        injection on the next call automatically. Injected values always come
-        from the caller's request (``context.secrets``) — never the host
-        environment, which ``env_policy.build_sandbox_env`` scrubs before
-        injection — so a skill can never harvest a host platform credential.
+        injection on the next call automatically. 注入值只来自调用者本次请求的
+        ``context.secrets``；``env_policy.build_sandbox_env`` 先筛选运行时白名单，
+        再叠加本次请求值，不会自动继承同名的 Gateway 环境变量。
         Secret *values* are never logged; the audit journal records names only.
         """
         runtime = getattr(request, "runtime", None)

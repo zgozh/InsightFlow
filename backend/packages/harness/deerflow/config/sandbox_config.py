@@ -147,7 +147,7 @@ class SandboxConfig(BaseModel):
             workers when ownership uses Redis; other modes/providers keep
             process-local accounting.
         idle_timeout: Idle timeout in seconds before released warm sandboxes/VMs are stopped (default: 600 = 10 minutes). Set to 0 to disable.
-        environment: Environment variables to inject into the sandbox (values starting with $ are resolved from host env)
+        environment: AIO 专用的显式容器映射；以 $ 开头的值从 Gateway 环境解析
 
     BoxliteProvider specific options:
         health_check_skip_seconds: Optional reclaim-time skip window in seconds for recently released warm VMs. Default behavior is 0.0 = always validate before reuse.
@@ -236,7 +236,7 @@ class SandboxConfig(BaseModel):
     )
     environment: dict[str, str] = Field(
         default_factory=dict,
-        description="Environment variables to inject into the sandbox container. Values starting with $ will be resolved from host environment variables.",
+        description="AIO 容器环境映射。值以 $ 开头时从 Gateway 环境解析，并主动授权将该值传入容器；除非暴露已获准且有独立控制，不要映射 Analytics 数据源凭据。",
     )
     network: SandboxNetworkConfig = Field(
         default_factory=SandboxNetworkConfig,

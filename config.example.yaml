@@ -889,8 +889,9 @@ sandbox:
 #   #   # DeerFlow will surface configured container_path values to the agent,
 #   #   # so it can directly read/write mounted directories such as /home/user/shared
 #
-#   # Optional: Environment variables to inject into the sandbox container
-#   # Values starting with $ will be resolved from host environment variables
+#   # Optional: AIO 容器环境映射。以 $ 开头的值会从 Gateway 环境解析，并主动将该值传入容器。
+#   # 除非确有意图且已单独控制，不要映射 Analytics 数据源凭据；平台无法阻止运维主动授权此映射。
+#   # LocalSandbox 使用独立的固定子进程白名单；此字段不会扩大其环境继承范围。
 #   # AIO semver images default MAX_SHELL_SESSIONS to 10. DeerFlow leaves that
 #   # image default unchanged while subagent_runtime.max_running + 1 fits, and
 #   # otherwise injects the required value for local and AIO sandboxes.
@@ -899,8 +900,8 @@ sandbox:
 #   #   MAX_SHELL_SESSIONS: "13"  # Example for subagent_runtime.max_running: 12
 #   #   NODE_ENV: production
 #   #   DEBUG: "false"
-#   #   API_KEY: $MY_API_KEY        # Reads from host's MY_API_KEY env var
-#   #   DATABASE_URL: $DATABASE_URL  # Reads from host's DATABASE_URL env var
+#   #   API_KEY: $MY_API_KEY        # 显式把 Gateway 的值传入 AIO 容器
+#   #   DATABASE_URL: $DATABASE_URL  # 显式把 Gateway 的值传入 AIO 容器
 #   #   # Required when using the OpenAI-compatible image-generation provider:
 #
 #   # Optional: Cross-instance container ownership (issue #4206).

@@ -251,9 +251,8 @@ def test_execute_command_uses_powershell_command_mode_on_windows(monkeypatch):
     output = LocalSandbox("t").execute_command("Write-Output hello")
 
     assert output == "ok"
-    # Platform secrets are scrubbed from the inherited environment even on the
-    # Windows PowerShell path (#3861); benign PATH is preserved and the env is an
-    # explicit scrubbed dict, no longer None.
+    # Windows PowerShell also receives the explicit runtime allowlist, including
+    # PATH, while the unrelated platform credential is excluded.
     assert calls == [
         (
             [
