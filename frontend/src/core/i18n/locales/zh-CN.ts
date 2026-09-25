@@ -12,10 +12,18 @@ export const zhCN: Translations = {
   ...analyticsZhCN,
 
   analysisUnavailable: {
-    title: "受控分析暂不可用",
-    description:
-      "受控分析运行环境尚未通过安全验证。此页面不会创建普通聊天，也不会启动聊天任务。",
-    goToChat: "前往普通聊天",
+    title: "受控经营分析",
+    description: "分析线程需要经过服务端验证。普通聊天不会升级为分析线程。",
+    goToNewAnalysis: "新建分析线程",
+    loading: "正在验证分析线程的服务端标记……",
+    unavailable:
+      "无法验证此分析线程或分析服务暂不可用。没有启动运行；请新建分析线程。",
+    missingThread: "找不到此分析线程。没有启动运行；可以新建分析线程。",
+    wrongThread:
+      "此 ID 属于普通聊天线程，不会被提升为分析线程。请新建分析线程。",
+    kindConflict: "此线程已属于其他类型，本次没有发送消息。请新建分析线程。",
+    startFailed:
+      "未能创建并验证受控分析线程，本次没有发送消息。请重试或新建分析线程。",
   },
 
   // Locale meta

@@ -50,6 +50,21 @@ run_events:
   backend: memory
 """
 
+_MINIMAL_ANALYSIS_CONFIG_YAML = (
+    _MINIMAL_CONFIG_YAML
+    + """\
+tools:
+  - name: inspect_business_catalog
+    group: analytics
+    use: app.analytics.agent.tools:inspect_business_catalog
+  - name: query_business_data
+    group: analytics
+    use: app.analytics.agent.tools:query_business_data
+analytics:
+  enabled: false
+"""
+)
+
 
 class _RunController:
     """Cross-thread controls for the fake async agent."""
@@ -292,6 +307,25 @@ def isolated_app_with_title(isolated_deer_flow_home: Path, monkeypatch: pytest.M
 
     cfg = app_config_module.get_app_config()
     cfg.database.sqlite_dir = str(isolated_deer_flow_home / "db")
+
+    from app.gateway.app import create_app
+
+    return create_app()
+
+
+@pytest.fixture
+def isolated_analysis_app(isolated_deer_flow_home: Path, monkeypatch: pytest.MonkeyPatch):
+    config_path = isolated_deer_flow_home.parent / "analysis-config.yaml"
+    config_path.write_text(_MINIMAL_ANALYSIS_CONFIG_YAML, encoding="utf-8")
+    monkeypatch.setenv("DEER_FLOW_CONFIG_PATH", str(config_path))
+
+    _preserve_process_config_singletons(monkeypatch)
+    _reset_process_singletons(monkeypatch)
+
+    from deerflow.config import app_config as app_config_module
+
+    cfg = app_config_module.get_app_config()
+    cfg.database.sqlite_dir = str(isolated_deer_flow_home / "analysis-db")
 
     from app.gateway.app import create_app
 
@@ -783,3 +817,257 @@ def test_cancel_rollback_restores_pre_run_checkpoint(isolated_app):
         assert after.status_code == 200, after.text
         assert after.json()["values"]["title"] == "Before rollback"
         assert after.json()["values"]["messages"] == [{"type": "human", "content": "before"}]
+
+
+def test_analysis_gateway_admission_runs_catalog_query_writer_and_owner_scoped_artifact_get(
+    isolated_analysis_app,
+):
+    """Exercise the analysis trust boundary through the real lead graph and artifact route."""
+    from datetime import UTC, datetime, timedelta
+    from decimal import Decimal
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from _agent_e2e_helpers import FakeToolCallingModel
+    from langchain_core.messages import AIMessage
+    from starlette.testclient import TestClient
+
+    from app.analytics.agent.evidence import AnalyticsQueryEvidence
+    from app.analytics.agent.runtime import bind_analytics_services, clear_analytics_services
+    from app.analytics.application.delivery import QueryPlanDelivery, QueryPlanDeliveryMetadata
+    from app.analytics.application.report_ports import ReportPublication
+    from app.analytics.application.reports import PublishAnalysisReport
+    from app.analytics.domain import (
+        AnalysisReport,
+        DatasourceDefinition,
+        DatasourceEngine,
+        DatasourceStatus,
+        ExecutionDecisionCode,
+        QueryCostEstimate,
+        QueryExecutionDecision,
+        QueryExecutionResult,
+        QueryPlanReceipt,
+        QueryRisk,
+        ReportPublishCode,
+    )
+
+    now = datetime.now(UTC)
+    datasource_id = "synthetic-datasource"
+    query_hash = "a" * 64
+    estimate = QueryCostEstimate(
+        engine=DatasourceEngine.POSTGRESQL,
+        estimated_rows=1,
+        engine_cost=Decimal("1"),
+        plan_digest="c" * 64,
+    )
+    metadata = QueryPlanDeliveryMetadata(
+        datasource_id=datasource_id,
+        query_hash=query_hash,
+        risk=QueryRisk.LOW,
+        schema_version="synthetic-schema-v1",
+        policy_version="synthetic-policy-v1",
+    )
+    query_result = QueryExecutionResult(
+        columns=("amount",),
+        rows=((42,),),
+        row_count=1,
+        byte_count=2,
+        truncated=False,
+    )
+    evidence = AnalyticsQueryEvidence.build(
+        datasource_id=datasource_id,
+        query_hash=query_hash,
+        risk=QueryRisk.LOW,
+        schema_version=metadata.schema_version,
+        policy_version=metadata.policy_version,
+        estimate=estimate,
+        result=query_result,
+    )
+
+    class _Catalog:
+        def __init__(self, rows=()):
+            self.rows = rows
+            self.principals: list[str] = []
+
+        async def list_accessible(self, *, principal_id):
+            self.principals.append(principal_id)
+            return self.rows
+
+    class _PlanQuery:
+        def __init__(self):
+            self.calls: list[dict[str, str]] = []
+
+        async def execute(self, *, principal_id, datasource_id, raw_sql):
+            self.calls.append({"principal_id": principal_id, "datasource_id": datasource_id, "raw_sql": raw_sql})
+            return QueryPlanDelivery(
+                code=ExecutionDecisionCode.PLAN_CREATED.value,
+                receipt=QueryPlanReceipt(
+                    plan_id="synthetic-one-shot-token",
+                    expires_at=now + timedelta(seconds=60),
+                    estimate=estimate,
+                ),
+                metadata=metadata,
+            )
+
+    class _ExecuteQuery:
+        def __init__(self):
+            self.calls: list[dict[str, str]] = []
+
+        async def execute(self, *, principal_id, plan_id):
+            self.calls.append({"principal_id": principal_id, "plan_id": plan_id})
+            return QueryExecutionDecision(
+                code=ExecutionDecisionCode.EXECUTED,
+                result=query_result,
+            )
+
+    class _ReportRepository:
+        def __init__(self):
+            self.reports: list[AnalysisReport] = []
+
+        async def publish(self, report):
+            self.reports.append(report)
+            return ReportPublication(code=ReportPublishCode.PUBLISHED, report=report)
+
+        async def list_for_principal(self, **_kwargs):
+            return ()
+
+    class _Clock:
+        def now(self):
+            return now
+
+    datasources = _Catalog(
+        [
+            DatasourceDefinition(
+                id=datasource_id,
+                owner_id="synthetic-owner",
+                name="Synthetic data source",
+                engine=DatasourceEngine.POSTGRESQL,
+                secret_ref="synthetic://credential-reference",
+                default_schema="public",
+                status=DatasourceStatus.ACTIVE,
+            )
+        ]
+    )
+    metrics = _Catalog()
+    plan_query = _PlanQuery()
+    execute_query = _ExecuteQuery()
+    report_repository = _ReportRepository()
+    services = SimpleNamespace(
+        config=SimpleNamespace(enabled=True),
+        datasources=datasources,
+        metrics=metrics,
+        plan_query=plan_query,
+        execute_query=execute_query,
+        publish_report=PublishAnalysisReport(
+            repository=report_repository,
+            clock=_Clock(),
+            id_issuer=lambda: "synthetic-report-id",
+        ),
+    )
+    report_markdown = "# Synthetic report\n\nSynthetic result: 42.\n"
+    model = FakeToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "inspect_business_catalog", "args": {}, "id": "call-catalog", "type": "tool_call"}],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "query_business_data",
+                        "args": {"datasource_id": datasource_id, "sql": "SELECT amount FROM synthetic_table"},
+                        "id": "call-query",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "write_analysis_report",
+                        "args": {
+                            "title": "Synthetic analysis",
+                            "markdown": report_markdown,
+                            "evidence_ids": [evidence.evidence_id],
+                        },
+                        "id": "call-report",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(content=f"Synthetic analysis is complete. Evidence: {evidence.evidence_id}"),
+        ]
+    )
+
+    try:
+        with (
+            patch("deerflow.agents.lead_agent.agent.create_chat_model", return_value=model),
+            TestClient(isolated_analysis_app) as client,
+        ):
+            isolated_analysis_app.state.analytics_services = services
+            bind_analytics_services(services)
+            csrf_token = _register_user(client, email="analysis-e2e@example.com")
+            thread_id = str(uuid.uuid4())
+            created = client.post(
+                "/api/threads",
+                json={"thread_id": thread_id, "kind": "analysis"},
+                headers={"X-CSRF-Token": csrf_token},
+            )
+            assert created.status_code == 200, created.text
+            assert created.json()["metadata"]["analysis_mode"] is True
+
+            # The frontend SDK also POSTs its caller-selected ID before the
+            # first run. Model that exact duplicate Gateway route call and
+            # pin that only the matching persisted kind is idempotent.
+            sdk_thread_create = client.post(
+                "/api/threads",
+                json={"thread_id": thread_id, "kind": "analysis"},
+                headers={"X-CSRF-Token": csrf_token},
+            )
+            assert sdk_thread_create.status_code == 200, sdk_thread_create.text
+            assert sdk_thread_create.json()["thread_id"] == thread_id
+            assert sdk_thread_create.json()["metadata"]["analysis_mode"] is True
+            wrong_kind_retry = client.post(
+                "/api/threads",
+                json={"thread_id": thread_id},
+                headers={"X-CSRF-Token": csrf_token},
+            )
+            assert wrong_kind_retry.status_code == 409
+            assert wrong_kind_retry.json() == {"detail": {"code": "thread_kind_conflict"}}
+
+            with client.stream(
+                "POST",
+                f"/api/threads/{thread_id}/runs/stream",
+                json=_run_body(),
+                headers={"X-CSRF-Token": csrf_token},
+            ) as response:
+                assert response.status_code == 200, response.read().decode()
+                run_id = _run_id_from_response(response)
+                transcript = _drain_stream(response)
+
+            assert "event: end" in transcript
+            run = _wait_for_status(client, thread_id, run_id, "success")
+            assert run["status"] == "success"
+            assert len(plan_query.calls) == 1
+            assert len(execute_query.calls) == 1
+            assert len(report_repository.reports) == 1
+            report = report_repository.reports[0]
+            assert report.identity == (
+                datasources.principals[0],
+                thread_id,
+                run_id,
+                f"/mnt/user-data/outputs/analysis-report-{run_id}.md",
+            )
+            assert report.evidence_ids == (evidence.evidence_id,)
+
+            artifact_path = f"mnt/user-data/outputs/analysis-report-{run_id}.md"
+            artifact = client.get(f"/api/threads/{thread_id}/artifacts/{artifact_path}")
+            cross_thread = client.get(f"/api/threads/another-thread/artifacts/{artifact_path}")
+
+            assert artifact.status_code == 200, artifact.text
+            assert artifact.text == report_markdown
+            assert cross_thread.status_code == 404
+    finally:
+        clear_analytics_services()

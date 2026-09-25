@@ -12,10 +12,21 @@ export const enUS: Translations = {
   ...analyticsEnUS,
 
   analysisUnavailable: {
-    title: "Controlled analysis is temporarily unavailable",
+    title: "Controlled business analysis",
     description:
-      "The controlled-analysis runtime has not completed its safety review. This page will not create an ordinary chat or start a chat run.",
-    goToChat: "Go to regular chat",
+      "Analysis threads must be verified by the server. A regular chat is never upgraded into an analysis thread.",
+    goToNewAnalysis: "Start a new analysis thread",
+    loading: "Verifying the server-owned analysis marker…",
+    unavailable:
+      "This analysis thread or its service could not be verified. No run was started; create a new analysis thread.",
+    missingThread:
+      "This analysis thread was not found. No run was started; you can create a new one.",
+    wrongThread:
+      "This ID belongs to a regular chat and will not be upgraded. Create a new analysis thread.",
+    kindConflict:
+      "This thread already has a different kind. No message was sent; create a new analysis thread.",
+    startFailed:
+      "The controlled analysis thread could not be created and verified, so this message was not sent. Retry or create a new analysis thread.",
   },
 
   // Locale meta

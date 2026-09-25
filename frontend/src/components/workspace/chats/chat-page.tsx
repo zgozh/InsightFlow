@@ -1,6 +1,6 @@
 "use client";
 
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -46,6 +46,7 @@ import { useModels } from "@/core/models/hooks";
 import { useNotification } from "@/core/notification/hooks";
 import { useLocalSettings, useThreadSettings } from "@/core/settings";
 import { resolveThreadContext } from "@/core/settings/store";
+import { createThread } from "@/core/threads/api";
 import {
   useBranchThread,
   useThreadMetadata,
@@ -62,15 +63,18 @@ import { cn } from "@/lib/utils";
 
 import { ChatBox } from "./chat-box";
 import { useThreadChat } from "./use-thread-chat";
-export default function ChatPage() {
+
+type ChatPageProps = {
+  mode?: "chat" | "analysis";
+};
+
+export default function ChatPage({ mode = "chat" }: ChatPageProps) {
   const { t } = useI18n();
   const { user } = useAuth();
   const canStopStreaming = hasPermission(user, PERMISSIONS.RUNS_CANCEL);
   const router = useRouter();
-  // 分析路由只在既有 chat 主链上加一个纯投影面板：不复制 streaming 状态机，也不改
-  // `/workspace/chats/**` 的行为。
-  const pathname = usePathname();
-  const analyticsTraceEnabled = pathname.startsWith("/workspace/analysis");
+  const analysisMode = mode === "analysis";
+  const analyticsTraceEnabled = analysisMode;
   const { threadId, setThreadId, isNewThread, setIsNewThread, isMock } =
     useThreadChat();
   // `isNewThread` tracks whether the backend has the thread yet — gates the
@@ -79,6 +83,9 @@ export default function ChatPage() {
   // the moment the user submits so the UI animates immediately, even though
   // `isNewThread` stays true until the backend actually creates the thread.
   const [isWelcomeMode, setIsWelcomeMode] = useState(isNewThread);
+  const [analysisSubmitIssue, setAnalysisSubmitIssue] = useState<
+    "conflict" | "failed" | null
+  >(null);
   const [settings, setSettings] = useThreadSettings(threadId);
   const [localSettings, setLocalSettings] = useLocalSettings();
   const { tokenUsageEnabled } = useModels();
@@ -121,6 +128,7 @@ export default function ChatPage() {
   } = useThreadStream({
     threadId: isNewThread ? undefined : threadId,
     displayThreadId: threadId,
+    threadKind: analysisMode ? "analysis" : undefined,
     context: settings.context,
     isMock,
     // onSend only animates the UI; do NOT flip `isNewThread` here — the
@@ -131,7 +139,11 @@ export default function ChatPage() {
     },
     onStart: (createdThreadId) => {
       // ! Important: Never use next.js router for navigation in this case, otherwise it will cause the thread to re-mount and lose all states. Use native history API instead.
-      history.replaceState(null, "", `/workspace/chats/${createdThreadId}`);
+      history.replaceState(
+        null,
+        "",
+        `${analysisMode ? "/workspace/analysis" : "/workspace/chats"}/${createdThreadId}`,
+      );
       setThreadId(createdThreadId);
       setIsNewThread(false);
     },
@@ -182,13 +194,33 @@ export default function ChatPage() {
 
   const handleSubmit = useCallback(
     async (message: PromptInputMessage, options?: InputBoxSubmitOptions) => {
+      setAnalysisSubmitIssue(null);
+      if (analysisMode && isNewThread) {
+        try {
+          const created = await createThread(threadId, undefined, "analysis");
+          if (
+            created.thread_id !== threadId ||
+            created.metadata?.analysis_mode !== true
+          ) {
+            setAnalysisSubmitIssue("failed");
+            return;
+          }
+        } catch (error) {
+          setAnalysisSubmitIssue(
+            error instanceof Error && error.message === "thread_kind_conflict"
+              ? "conflict"
+              : "failed",
+          );
+          return;
+        }
+      }
       const sendPromise = sendMessage(threadId, message, undefined, options);
       if (message.files.length > 0) {
         return sendPromise;
       }
       void sendPromise;
     },
-    [sendMessage, threadId],
+    [analysisMode, isNewThread, sendMessage, threadId],
   );
   const handleSubmitHumanInput = useCallback(
     async (request: HumanInputRequest, response: HumanInputResponse) => {
@@ -428,44 +460,57 @@ export default function ChatPage() {
                         </div>
                       )}
                       {mountedRef.current ? (
-                        <InputBox
-                          className={cn(
-                            "bg-background/5 w-full",
-                            isWelcomeMode && "-translate-y-2 sm:-translate-y-4",
+                        <>
+                          {analysisMode && analysisSubmitIssue && (
+                            <p
+                              className="text-destructive mb-2 text-sm"
+                              role="alert"
+                            >
+                              {analysisSubmitIssue === "conflict"
+                                ? t.analysisUnavailable.kindConflict
+                                : t.analysisUnavailable.startFailed}
+                            </p>
                           )}
-                          isWelcomeMode={isWelcomeMode}
-                          threadId={threadId}
-                          draftThreadId={isNewThread ? "new" : threadId}
-                          autoFocus={isWelcomeMode}
-                          status={
-                            thread.error
-                              ? "error"
-                              : thread.isLoading
-                                ? "streaming"
-                                : "ready"
-                          }
-                          context={settings.context}
-                          extraHeader={
-                            isWelcomeMode &&
-                            !hasGoal &&
-                            !hasTodos && <Welcome />
-                          }
-                          disabled={
-                            isMock ||
-                            env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" ||
-                            isUploading ||
-                            (!isNewThread && isHistoryLoading)
-                          }
-                          onContextChange={(context, options) => {
-                            if (options?.automatic)
-                              resolveThreadContext(threadId, context);
-                            else setSettings("context", context);
-                          }}
-                          onGoalChange={setLocalGoal}
-                          onSubmit={handleSubmit}
-                          onStop={handleStop}
-                          canStopStreaming={canStopStreaming}
-                        />
+                          <InputBox
+                            className={cn(
+                              "bg-background/5 w-full",
+                              isWelcomeMode &&
+                                "-translate-y-2 sm:-translate-y-4",
+                            )}
+                            isWelcomeMode={isWelcomeMode}
+                            threadId={threadId}
+                            draftThreadId={isNewThread ? "new" : threadId}
+                            autoFocus={isWelcomeMode}
+                            status={
+                              thread.error
+                                ? "error"
+                                : thread.isLoading
+                                  ? "streaming"
+                                  : "ready"
+                            }
+                            context={settings.context}
+                            extraHeader={
+                              isWelcomeMode &&
+                              !hasGoal &&
+                              !hasTodos && <Welcome />
+                            }
+                            disabled={
+                              isMock ||
+                              env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" ||
+                              isUploading ||
+                              (!isNewThread && isHistoryLoading)
+                            }
+                            onContextChange={(context, options) => {
+                              if (options?.automatic)
+                                resolveThreadContext(threadId, context);
+                              else setSettings("context", context);
+                            }}
+                            onGoalChange={setLocalGoal}
+                            onSubmit={handleSubmit}
+                            onStop={handleStop}
+                            canStopStreaming={canStopStreaming}
+                          />
+                        </>
                       ) : (
                         <div
                           aria-hidden="true"

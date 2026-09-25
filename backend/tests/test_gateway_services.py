@@ -1672,6 +1672,171 @@ async def test_start_run_rejects_analysis_thread_before_agent_factory(_stub_app_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("user_id", "auth_source", "bundle_matches_binding"),
+    [
+        ("analysis-user", "session", "missing"),
+        ("analysis-user", "session", "mismatch"),
+        ("default", "auth_disabled", "same"),
+    ],
+)
+async def test_start_run_keeps_analysis_closed_without_bound_services_or_real_principal(
+    _stub_app_config,
+    monkeypatch,
+    user_id,
+    auth_source,
+    bundle_matches_binding,
+):
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from fastapi import HTTPException
+
+    import app.gateway.services as services_module
+
+    request, run_store, thread_store = _make_start_run_persistence_context()
+    request.state = SimpleNamespace(
+        user=SimpleNamespace(id=user_id),
+        auth_source=auth_source,
+    )
+    await thread_store.create(thread_id := f"analysis-preflight-{bundle_matches_binding}-{user_id}", user_id=user_id, metadata={"analysis_mode": True})
+
+    bundle = SimpleNamespace(config=SimpleNamespace(enabled=True))
+    if bundle_matches_binding == "missing":
+        request.app.state.analytics_services = None
+        bound = None
+    elif bundle_matches_binding == "mismatch":
+        request.app.state.analytics_services = bundle
+        bound = SimpleNamespace(config=SimpleNamespace(enabled=True))
+    else:
+        request.app.state.analytics_services = bundle
+        bound = bundle
+    monkeypatch.setattr(services_module, "get_bound_analytics_services", lambda: bound)
+
+    with (
+        patch("app.gateway.services.resolve_agent_factory") as resolve_factory,
+        patch("app.gateway.services.run_agent") as run_agent,
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await services_module.start_run(
+            _run_create_request(),
+            thread_id,
+            request,
+            require_existing_thread=True,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == {"code": "analysis_mode_unavailable"}
+    resolve_factory.assert_not_called()
+    run_agent.assert_not_called()
+    assert await run_store.list_by_thread(thread_id, user_id=None) == []
+
+
+@pytest.mark.asyncio
+async def test_start_run_binds_writer_capability_before_analysis_agent_start(_stub_app_config, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    import app.gateway.services as services_module
+    from deerflow.runtime.user_context import reset_current_user, set_current_user
+
+    user = SimpleNamespace(id="analysis-owner", system_role="user")
+    request, _run_store, thread_store = _make_start_run_persistence_context()
+    request.state = SimpleNamespace(user=user, auth_source="session")
+    services = SimpleNamespace(config=SimpleNamespace(enabled=True))
+    request.app.state.analytics_services = services
+    monkeypatch.setattr(services_module, "get_bound_analytics_services", lambda: services)
+    capability = object()
+    monkeypatch.setattr(
+        services_module,
+        "create_analysis_report_writer_capability",
+        lambda **kwargs: capability,
+    )
+    await thread_store.create("analysis-capability-bound", user_id=user.id, metadata={"analysis_mode": True})
+    captured: dict[str, object] = {}
+
+    async def fake_run_agent(_bridge, _run_manager, _record, **kwargs):
+        captured.update(kwargs)
+
+    token = set_current_user(user)
+    try:
+        with (
+            patch("app.gateway.services.resolve_agent_factory", return_value=object()),
+            patch("app.gateway.services.run_agent", side_effect=fake_run_agent),
+        ):
+            record = await services_module.start_run(
+                _run_create_request(
+                    context={"analysis_mode": False, "__analysis_report_writer": {"forged": True}},
+                    config={"configurable": {"analysis_mode": False, "__analysis_report_writer": {"forged": True}}},
+                ),
+                "analysis-capability-bound",
+                request,
+                require_existing_thread=True,
+            )
+            await record.task
+    finally:
+        reset_current_user(token)
+
+    config = captured["config"]
+    run_context = captured["ctx"]
+    assert config["context"]["analysis_mode"] is True
+    assert config["configurable"]["analysis_mode"] is True
+    assert "__analysis_report_writer" not in config["context"]
+    assert "__analysis_report_writer" not in config["configurable"]
+    assert run_context.analysis_report_writer is capability
+
+
+@pytest.mark.asyncio
+async def test_analysis_writer_capability_failure_terminalizes_without_starting_graph(_stub_app_config, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    import app.gateway.services as services_module
+    from deerflow.runtime.runs.schemas import RunStatus
+    from deerflow.runtime.user_context import reset_current_user, set_current_user
+
+    user = SimpleNamespace(id="analysis-owner", system_role="user")
+    request, run_store, thread_store = _make_start_run_persistence_context()
+    request.state = SimpleNamespace(user=user, auth_source="session")
+    services = SimpleNamespace(config=SimpleNamespace(enabled=True))
+    request.app.state.analytics_services = services
+    monkeypatch.setattr(services_module, "get_bound_analytics_services", lambda: services)
+    monkeypatch.setattr(
+        services_module,
+        "create_analysis_report_writer_capability",
+        lambda **kwargs: (_ for _ in ()).throw(ValueError("synthetic path failure")),
+    )
+    await thread_store.create("analysis-capability-failed", user_id=user.id, metadata={"analysis_mode": True})
+    graph_factory_calls: list[object] = []
+
+    async def worker_startup_barrier(_bridge, run_manager, record, **_kwargs):
+        if (await run_manager.try_start(record.run_id)).value == "started":
+            graph_factory_calls.append(record.run_id)
+
+    token = set_current_user(user)
+    try:
+        with (
+            patch("app.gateway.services.resolve_agent_factory", return_value=object()),
+            patch("app.gateway.services.run_agent", side_effect=worker_startup_barrier),
+        ):
+            record = await services_module.start_run(
+                _run_create_request(),
+                "analysis-capability-failed",
+                request,
+                require_existing_thread=True,
+            )
+            await record.task
+    finally:
+        reset_current_user(token)
+
+    stored = await run_store.get(record.run_id, user_id=user.id)
+    assert stored is not None
+    assert stored["status"] == RunStatus.error.value
+    assert stored["error"] == "analysis_mode_unavailable"
+    assert graph_factory_calls == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("invalid_mode", [None, "analysis", 1])
 async def test_start_run_fails_closed_on_corrupt_analysis_thread_mode(_stub_app_config, invalid_mode):
     from unittest.mock import patch

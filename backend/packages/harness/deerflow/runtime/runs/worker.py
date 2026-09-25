@@ -996,7 +996,12 @@ async def run_agent(
 
         start_outcome = await run_manager.try_start(run_id)
         if start_outcome is not RunStartOutcome.started:
-            if record.abort_event.is_set():
+            # A Gateway preflight can fail an admitted run while it is still
+            # pending, setting both its stable error status and abort event.
+            # Preserve that terminal error instead of rewriting it as an
+            # ordinary user interruption; the shared finally block still
+            # publishes the terminal stream/event receipt below.
+            if record.abort_event.is_set() and record.status is RunStatus.pending:
                 await _finish_cancellation(
                     record.abort_action,
                     restore_checkpoint=False,

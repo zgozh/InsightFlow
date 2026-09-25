@@ -56,6 +56,14 @@ async function readThreadAPIError(
     if (typeof body.detail === "string" && body.detail) {
       return body.detail;
     }
+    if (
+      typeof body.detail === "object" &&
+      body.detail !== null &&
+      "code" in body.detail &&
+      typeof body.detail.code === "string"
+    ) {
+      return body.detail.code;
+    }
   } catch {
     // Fall through to the caller-provided message.
   }
@@ -137,6 +145,7 @@ export async function patchThreadMetadata(
 export async function createThread(
   threadId: string,
   projectId?: string,
+  kind: "chat" | "analysis" = "chat",
 ): Promise<AgentThread> {
   const response = await fetchWithAuth(`${getBackendBaseURL()}/api/threads`, {
     method: "POST",
@@ -145,6 +154,7 @@ export async function createThread(
     },
     body: JSON.stringify({
       thread_id: threadId,
+      ...(kind === "analysis" ? { kind } : {}),
       ...(projectId ? { project_id: projectId } : {}),
     }),
   });

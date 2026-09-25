@@ -440,7 +440,10 @@ async function* handleInactiveRunStream({
   }
 }
 
-function createCompatibleClient(isMock?: boolean): LangGraphClient {
+function createCompatibleClient(
+  isMock?: boolean,
+  threadKind?: "analysis",
+): LangGraphClient {
   if (isStaticWebsiteOnly() && !isMock) {
     return createStaticClient();
   }
@@ -448,7 +451,31 @@ function createCompatibleClient(isMock?: boolean): LangGraphClient {
   const apiUrl = getLangGraphBaseURL(isMock);
   const client = new LangGraphClient({
     apiUrl,
-    onRequest: injectCsrfHeader,
+    onRequest(url, init) {
+      const request = injectCsrfHeader(url, init);
+      if (
+        threadKind !== "analysis" ||
+        request.method?.toUpperCase() !== "POST" ||
+        !url.pathname.endsWith("/threads") ||
+        typeof request.body !== "string"
+      ) {
+        return request;
+      }
+
+      try {
+        const body = JSON.parse(request.body) as Record<string, unknown>;
+        // LangGraph SDK's threads.create has no `kind` option. Preserve the
+        // Gateway's strict idempotency contract by echoing the already chosen
+        // kind on this analysis-only client; persisted server metadata remains
+        // the authority that admits the run.
+        return {
+          ...request,
+          body: JSON.stringify({ ...body, kind: "analysis" }),
+        };
+      } catch {
+        return request;
+      }
+    },
   });
 
   const originalRunStream = client.runs.stream.bind(client.runs);
@@ -604,12 +631,15 @@ function createStaticClient(): LangGraphClient {
 }
 
 const _clients = new Map<string, LangGraphClient>();
-export function getAPIClient(isMock?: boolean): LangGraphClient {
-  const cacheKey = isMock ? "mock" : "default";
+export function getAPIClient(
+  isMock?: boolean,
+  threadKind?: "analysis",
+): LangGraphClient {
+  const cacheKey = `${isMock ? "mock" : "default"}${threadKind ? ":analysis" : ""}`;
   let client = _clients.get(cacheKey);
 
   if (!client) {
-    client = createCompatibleClient(isMock);
+    client = createCompatibleClient(isMock, threadKind);
     _clients.set(cacheKey, client);
   }
 

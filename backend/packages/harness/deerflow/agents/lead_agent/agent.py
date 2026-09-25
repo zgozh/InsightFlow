@@ -77,6 +77,17 @@ logger = logging.getLogger(__name__)
 
 _NON_INTERACTIVE_DISABLED_TOOL_NAMES = frozenset({"ask_clarification"})
 
+_ANALYSIS_MODE_SYSTEM_INSTRUCTIONS = """\
+## 受控经营分析工作方式
+
+- 先确认用户的分析对象、口径和时间范围；信息不足时先说明假设或询问澄清。
+- 需要了解可用数据时调用 `inspect_business_catalog`，只使用其实际返回的数据源与指标。
+- 数据查询必须调用 `query_business_data`；不要猜测表名、字段、凭据或数据源，也不要把 SQL 当作结论。
+- 仅引用查询结果实际返回的 evidence ID 支撑数字和结论，并说明证据不足、查询限制与口径边界。
+- 用户需要可留存报告时，调用 `write_analysis_report` 写入 Markdown；只有工具确认成功后才称报告已保存。用户只需答案时可直接回答。
+
+这些文字只是工作指引，不授予额外工具或文件访问权限。"""
+
 
 def _is_trusted_analysis_mode(config: RunnableConfig) -> bool:
     """只读取 Gateway 清洗客户端输入后写入的运行 context 标记。"""
@@ -1100,6 +1111,8 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
         subagent_execution_capacity=subagent_execution_capacity,
         memory_enabled=memory_enabled,
     )
+    if analysis_mode:
+        system_prompt = f"{system_prompt}\n\n{_ANALYSIS_MODE_SYSTEM_INSTRUCTIONS}"
     graph = create_agent(
         model=create_chat_model(name=model_name, thinking_enabled=thinking_enabled, reasoning_effort=reasoning_effort, app_config=resolved_app_config, attach_tracing=False, model_overrides=agent_model_overrides),
         tools=final_tools,

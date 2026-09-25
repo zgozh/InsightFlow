@@ -1,39 +1,67 @@
 "use client";
 
 import Link from "next/link";
+import { useParams } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
+import ChatPage from "@/components/workspace/chats/chat-page";
 import { useI18n } from "@/core/i18n/hooks";
+import { useThreadMetadata } from "@/core/threads/hooks";
 
-/**
- * 受控分析后端及工具隔离尚未通过复验前，分析入口明确保持不可用；不能复用普通聊天运行链。
- */
-export default function AnalysisThreadPage() {
+function AnalysisRouteState({ message }: { message: string }) {
   const { t } = useI18n();
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-6">
       <section
-        aria-labelledby="analysis-unavailable-title"
+        aria-labelledby="analysis-state-title"
+        aria-live="polite"
         className="bg-card space-y-4 rounded-xl border p-6 shadow-sm"
+        role="status"
       >
         <div className="space-y-2">
           <h1
             className="text-2xl font-semibold tracking-tight"
-            id="analysis-unavailable-title"
+            id="analysis-state-title"
           >
             {t.analysisUnavailable.title}
           </h1>
-          <p className="text-muted-foreground">
-            {t.analysisUnavailable.description}
-          </p>
+          <p className="text-muted-foreground">{message}</p>
         </div>
         <Button asChild>
-          <Link href="/workspace/chats/new">
-            {t.analysisUnavailable.goToChat}
+          <Link href="/workspace/analysis/new">
+            {t.analysisUnavailable.goToNewAnalysis}
           </Link>
         </Button>
       </section>
     </main>
   );
+}
+
+function ExistingAnalysisThread({ threadId }: { threadId: string }) {
+  const { t } = useI18n();
+  const metadata = useThreadMetadata(threadId);
+
+  if (metadata.isLoading || metadata.isFetching) {
+    return <AnalysisRouteState message={t.analysisUnavailable.loading} />;
+  }
+  if (metadata.isError) {
+    return <AnalysisRouteState message={t.analysisUnavailable.unavailable} />;
+  }
+  if (metadata.data === null || metadata.data === undefined) {
+    return <AnalysisRouteState message={t.analysisUnavailable.missingThread} />;
+  }
+  if (metadata.data.metadata?.analysis_mode !== true) {
+    return <AnalysisRouteState message={t.analysisUnavailable.wrongThread} />;
+  }
+
+  return <ChatPage mode="analysis" />;
+}
+
+export default function AnalysisThreadPage() {
+  const params = useParams<{ thread_id: string }>();
+  if (params.thread_id === "new") {
+    return <ChatPage mode="analysis" />;
+  }
+  return <ExistingAnalysisThread threadId={params.thread_id} />;
 }

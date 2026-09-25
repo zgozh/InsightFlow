@@ -80,6 +80,7 @@ import {
 export type ThreadStreamOptions = {
   threadId?: string | null | undefined;
   displayThreadId?: string | null | undefined;
+  threadKind?: "analysis";
   context: LocalSettings["context"];
   isMock?: boolean;
   onSend?: (threadId: string) => void;
@@ -1721,6 +1722,7 @@ function isThreadMissingError(error: unknown): boolean {
 export function useThreadStream({
   threadId,
   displayThreadId,
+  threadKind,
   context,
   isMock,
   onSend,
@@ -1842,7 +1844,7 @@ export function useThreadStream({
   );
 
   const thread = useStream<AgentThreadState>({
-    client: getAPIClient(isMock),
+    client: getAPIClient(isMock, threadKind),
     assistantId: "lead_agent",
     threadId: onStreamThreadId,
     reconnectOnMount: true,

@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
+from uuid import UUID
 
 from deerflow_extension_api import PROVENANCE_KEYS
 from fastapi import HTTPException, Request
@@ -24,8 +25,9 @@ from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.messages.utils import convert_to_messages
 from langgraph.types import Command
 
+from app.analytics.agent.runtime import get_bound_analytics_services
 from app.gateway.analysis_report_writer import create_analysis_report_writer_capability
-from app.gateway.auth_disabled import AUTH_SOURCE_INTERNAL
+from app.gateway.auth_disabled import AUTH_SOURCE_INTERNAL, AUTH_SOURCE_PAT, AUTH_SOURCE_SESSION
 from app.gateway.authz import require_cancel_permission_if
 from app.gateway.deps import get_checkpointer, get_local_provider, get_run_context, get_run_manager, get_stream_bridge
 from app.gateway.internal_auth import (
@@ -112,6 +114,33 @@ def read_thread_analysis_mode(thread_record: Any) -> bool:
 def analysis_mode_unavailable_error(*, status_code: int = 409) -> HTTPException:
     """Return the stable, detail-free response used while analysis is gated."""
     return HTTPException(status_code=status_code, detail={"code": "analysis_mode_unavailable"})
+
+
+def _analysis_principal_id(request: Request, internal_owner_id: str | None) -> str | None:
+    """Return only a non-default identity stamped by a supported auth path."""
+
+    state = getattr(request, "state", None)
+    auth_source = getattr(state, "auth_source", None)
+    if auth_source == AUTH_SOURCE_INTERNAL:
+        principal_id = internal_owner_id
+    elif auth_source in {AUTH_SOURCE_SESSION, AUTH_SOURCE_PAT}:
+        authenticated_id = getattr(getattr(state, "user", None), "id", None)
+        principal_id = str(authenticated_id) if isinstance(authenticated_id, (str, UUID)) else None
+    else:
+        return None
+    if not isinstance(principal_id, str) or not principal_id or principal_id != principal_id.strip() or principal_id == "default":
+        return None
+    return principal_id
+
+
+def _analysis_services_available(request: Request) -> bool:
+    """Require the startup bundle and its runtime tool binding to match."""
+
+    try:
+        services = getattr(request.app.state, "analytics_services", None)
+        return services is not None and getattr(getattr(services, "config", None), "enabled", None) is True and get_bound_analytics_services() is services
+    except Exception:
+        return False
 
 
 @asynccontextmanager
@@ -1619,8 +1648,11 @@ async def start_run(
     # require a persisted row; only a server-generated stateless chat may
     # exist before its metadata row is created by the worker.
     analysis_mode = await persisted_analysis_mode()
+    analysis_principal_id = None
     if analysis_mode:
-        raise analysis_mode_unavailable_error()
+        analysis_principal_id = _analysis_principal_id(request, owner_user_id)
+        if analysis_principal_id is None or not _analysis_services_available(request):
+            raise analysis_mode_unavailable_error()
 
     owner_context_token = set_current_user(SimpleNamespace(id=owner_user_id)) if owner_user_id else None
     try:
@@ -1756,10 +1788,10 @@ async def start_run(
                 if not abort_task.done():
                     abort_task.cancel()
                     abort_task.add_done_callback(_consume_task_result)
-            if metadata_failure is not None and require_existing_thread:
+            if metadata_failure is not None and (require_existing_thread or analysis_mode):
                 await run_mgr.fail_start_if_pending(
                     record.run_id,
-                    error=str(metadata_failure),
+                    error="analysis_mode_unavailable" if analysis_mode else str(metadata_failure),
                 )
             # Continue through run_agent even after metadata abort, timeout,
             # or strict verification failure:
@@ -1768,17 +1800,26 @@ async def start_run(
             run_context_for_run = replace(run_ctx, analysis_report_writer=None)
             run_config_context = config.get("context")
             report_owner = run_config_context.get("user_id") if isinstance(run_config_context, Mapping) else None
-            if analysis_mode and metadata_failure is None and isinstance(report_owner, str) and report_owner == record.user_id:
+            if analysis_mode:
                 try:
-                    writer_capability = create_analysis_report_writer_capability(
-                        principal_id=report_owner,
-                        thread_id=thread_id,
-                        run_id=record.run_id,
+                    writer_capability = (
+                        create_analysis_report_writer_capability(
+                            principal_id=report_owner,
+                            thread_id=thread_id,
+                            run_id=record.run_id,
+                        )
+                        if metadata_failure is None and isinstance(report_owner, str) and report_owner == analysis_principal_id and report_owner == record.user_id
+                        else None
                     )
-                except ValueError:
-                    # 服务端身份缺失或非法时不回退到宽松路径。
+                except Exception:
+                    # 能力无法签发时，该 run 不得降级进入普通图。
                     writer_capability = None
-                if writer_capability is not None:
+                if writer_capability is None:
+                    await run_mgr.fail_start_if_pending(
+                        record.run_id,
+                        error="analysis_mode_unavailable",
+                    )
+                else:
                     run_context_for_run = replace(run_context_for_run, analysis_report_writer=writer_capability)
 
             await run_agent(
@@ -1810,8 +1851,10 @@ async def start_run(
                 # cannot both succeed across Gateway workers.
                 if require_existing_thread and not await thread_access_allowed():
                     raise HTTPException(status_code=404, detail=f"Thread {thread_id} not found")
-                analysis_mode = await persisted_analysis_mode()
-                if analysis_mode:
+                persisted_mode_before_admission = await persisted_analysis_mode()
+                if persisted_mode_before_admission is not analysis_mode:
+                    raise analysis_mode_unavailable_error()
+                if analysis_mode and (_analysis_principal_id(request, owner_user_id) != analysis_principal_id or not _analysis_services_available(request)):
                     raise analysis_mode_unavailable_error()
                 record = await run_mgr.create_or_reject(
                     thread_id,

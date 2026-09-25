@@ -664,20 +664,56 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
   // Thread create — called when user sends first message in a new chat
   void page.route("**/api/langgraph/threads", (route) => {
     if (route.request().method() === "POST") {
+      const body = route.request().postDataJSON() as {
+        kind?: "chat" | "analysis";
+        thread_id?: string;
+      };
+      const requestedThreadId = body.thread_id;
+      const requestedKind = body.kind ?? "chat";
+      const existing = threads.find(
+        (thread) => thread.thread_id === requestedThreadId,
+      );
+
+      if (
+        existing &&
+        (existing.metadata?.analysis_mode === true) !==
+          (requestedKind === "analysis")
+      ) {
+        return route.fulfill({
+          status: 409,
+          contentType: "application/json",
+          body: JSON.stringify({
+            detail: { code: "thread_kind_conflict" },
+          }),
+        });
+      }
+
+      const threadId = existing
+        ? requestedThreadId!
+        : requestedKind === "analysis" && requestedThreadId
+          ? requestedThreadId
+          : MOCK_THREAD_ID;
+      const metadata =
+        existing?.metadata ??
+        (requestedKind === "analysis" ? { analysis_mode: true } : undefined);
       upsertThread({
-        thread_id: MOCK_THREAD_ID,
-        title: "New Chat",
+        thread_id: threadId,
+        title: existing?.title ?? "New Chat",
         updated_at: new Date().toISOString(),
-        messages: options?.createdThreadMessages ?? mockStreamMessages(),
+        metadata,
+        messages:
+          existing?.messages ??
+          options?.createdThreadMessages ??
+          mockStreamMessages(),
       });
       return route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          thread_id: MOCK_THREAD_ID,
+          thread_id: threadId,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
-          metadata: {},
+          metadata: metadata ?? {},
           status: "idle",
           values: {},
         }),
@@ -742,9 +778,13 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
       const body = route.request().postDataJSON() as {
         thread_id?: string;
         metadata?: Record<string, unknown>;
+        kind?: "chat" | "analysis";
       };
       const threadId = body.thread_id ?? MOCK_SIDECAR_THREAD_ID;
-      const metadata = body.metadata ?? {};
+      const metadata = {
+        ...(body.metadata ?? {}),
+        ...(body.kind === "analysis" ? { analysis_mode: true } : {}),
+      };
       // Mirror the backend idempotency contract: a repeat POST for an
       // existing thread_id returns the record unchanged (goal and other
       // state intact) instead of resetting it.
@@ -1301,7 +1341,6 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
     }
     return route.fallback();
   });
-
 }
 
 // ---------------------------------------------------------------------------
@@ -1357,6 +1396,9 @@ export function handleRunStream(
   return route.fulfill({
     status: 200,
     contentType: "text/event-stream",
+    headers: {
+      "Content-Location": `/api/threads/${threadId}/runs/${MOCK_RUN_ID}`,
+    },
     body,
   });
 }

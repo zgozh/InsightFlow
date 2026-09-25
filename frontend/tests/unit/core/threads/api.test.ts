@@ -113,6 +113,50 @@ test("branchThreadFromTurn surfaces gateway detail on failure", async () => {
   ).rejects.toThrow("This turn can no longer be branched from.");
 });
 
+test("createThread can explicitly create a persisted analysis thread", async () => {
+  fetchWithAuth.mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      thread_id: "same-thread-id",
+      metadata: { analysis_mode: true },
+    }),
+  });
+
+  const { createThread } = await import("@/core/threads/api");
+
+  await expect(
+    createThread("same-thread-id", undefined, "analysis"),
+  ).resolves.toMatchObject({
+    thread_id: "same-thread-id",
+    metadata: { analysis_mode: true },
+  });
+  expect(fetchWithAuth).toHaveBeenCalledWith(
+    expect.stringContaining("/api/threads"),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        thread_id: "same-thread-id",
+        kind: "analysis",
+      }),
+    },
+  );
+});
+
+test("createThread exposes the stable thread kind conflict code", async () => {
+  fetchWithAuth.mockResolvedValue({
+    ok: false,
+    status: 409,
+    json: async () => ({ detail: { code: "thread_kind_conflict" } }),
+  });
+
+  const { createThread } = await import("@/core/threads/api");
+
+  await expect(
+    createThread("ordinary-thread", undefined, "analysis"),
+  ).rejects.toThrow("thread_kind_conflict");
+});
+
 test("compactThreadContext posts agent attribution and abort signal", async () => {
   const controller = new AbortController();
   fetchWithAuth.mockResolvedValue({

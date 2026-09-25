@@ -10,7 +10,13 @@ export interface Translations {
   analysisUnavailable: {
     title: string;
     description: string;
-    goToChat: string;
+    goToNewAnalysis: string;
+    loading: string;
+    unavailable: string;
+    missingThread: string;
+    wrongThread: string;
+    kindConflict: string;
+    startFailed: string;
   };
 
   // Locale meta

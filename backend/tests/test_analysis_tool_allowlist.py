@@ -224,6 +224,51 @@ def test_analysis_tool_loader_ignores_later_catalog_and_mcp_updates(monkeypatch)
     assert resolve_calls == [*_ALLOWED_SOURCES.values(), *_ALLOWED_SOURCES.values()]
 
 
+def test_analysis_assembly_adds_dedicated_chinese_work_instructions(monkeypatch):
+    from langchain_core.tools import tool
+
+    @tool("inspect_business_catalog")
+    def inspect_catalog() -> str:
+        """Synthetic catalog."""
+        return "{}"
+
+    @tool("query_business_data")
+    def query_data(datasource_id: str, sql: str) -> str:
+        """Synthetic query."""
+        return "{}"
+
+    resolved = {
+        _ALLOWED_SOURCES["inspect_business_catalog"]: inspect_catalog,
+        _ALLOWED_SOURCES["query_business_data"]: query_data,
+        _ALLOWED_SOURCES["write_analysis_report"]: _synthetic_report_writer,
+    }
+    monkeypatch.setattr(tools_module, "resolve_variable", lambda source, _target: resolved[source])
+    model = _SyntheticModel()
+    _wire_lead_assembly(monkeypatch, model=model)
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        lead_agent_module,
+        "create_agent",
+        lambda **kwargs: captured.update(kwargs) or object(),
+    )
+
+    lead_agent_module._assemble_lead_agent(
+        {"context": {"analysis_mode": True}},
+        app_config=_app_config(_analysis_tool_configs()),
+    )
+
+    prompt = captured["system_prompt"]
+    for required in (
+        "受控经营分析工作方式",
+        "inspect_business_catalog",
+        "query_business_data",
+        "evidence ID",
+        "write_analysis_report",
+        "只有工具确认成功后才称报告已保存",
+    ):
+        assert required in prompt
+
+
 def test_analysis_tool_loader_fails_closed_when_approved_source_is_missing(monkeypatch):
     monkeypatch.setattr(
         tools_module,

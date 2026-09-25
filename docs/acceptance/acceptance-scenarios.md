@@ -157,14 +157,16 @@
 - **And Given** 普通聊天启用了操作者配置的第三方 MCP
 - **Then** 普通聊天保留这些已配置工具；产品不承诺它们遵循平台 SQL Query Policy 或同等审计
 - **And Given** 一个受控分析运行
-- **Then** 模型工具 schema 与最终执行分发必须来自同一固定正向集合，且精确限于 `inspect_business_catalog`、`query_business_data`
+- **Then** 模型工具 schema 与最终执行分发必须来自同一固定正向集合，且精确限于 `inspect_business_catalog`、`query_business_data`、`write_analysis_report`
+- **And** `write_analysis_report` 只能由 Gateway 为已准入的分析 run 绑定的 server-owned capability 调用；它只写受控 Markdown artifact 并登记成功回执，不提供通用文件系统访问、HTML 执行或不受限直链
 - **And** 普通/durable MCP、bash/命令执行、任意文件工具、动态插件、`tool_search`、`task`/子 Agent、`publish_analysis_report` 与未知新工具均不可见且不可执行
 - **And** MCP 热更新、延迟发现和历史或伪造 `tool_call` 不得扩大该集合
-- **And** 只有报告 artifact 安全写入闭环及其余运行边界也经验证后，才可开放受控分析入口
+- **And** 首次分析消息先以同一 UUID 持久创建 `kind=analysis`；analysis 专属 SDK thread-create 请求仍携带该 kind，thread-scoped stream 必须使用同一 UUID；普通聊天请求形状不变
+- **And** 未认证/default 用户、不同所有者或普通线程、缺失/损坏标记、Analytics 服务不可用、writer capability 无法签发时必须 fail closed，不能降级为普通 Lead 图
 
 依据：已批准的 [Phase 6E2B 运行隔离边界](../prompts/phase-06e2b-controlled-analysis-runtime.md) 与 6E2B1 工具 allowlist 切片。本场景区分平台 Analytics 的 Query Policy 保证和普通聊天 operator MCP 的权限范围。
 
-现行状态：发布阻塞。6E2B1 的合成构图/执行测试只证明固定工具集合及普通聊天 MCP 保持原路径；Gateway 仍在 Agent/tool 构造前以 `analysis_mode_unavailable` 拒绝分析线程。安全 artifact 写入和完整受控运行均未验收，因此本切片不构成 AS-14 完成。
+现行状态：6E2B2B 已接通受控入口。Gateway 只接受持久化分析标记、受信用户、仍绑定的 Analytics services 与成功签发的 run-scoped writer；任何条件不成立都保持 `analysis_mode_unavailable`。定点合成 Gateway 生命周期测试使用 fake model 与合成数据，验证真实 Gateway admission→catalog/query/writer→artifact GET，并验证跨线程 artifact GET 为 404；定点前端 Playwright 证明自定义预创建与 SDK thread-create 的 kind/UUID 相同、stream URL 使用同一 UUID、冲突不启动流且普通聊天不进入分析页。真实 PostgreSQL/MySQL、真实模型与 Compose 用户验收仍未执行，故 AS-14 仍是发布阻塞，本切片不等于最终验收。
 
 ## AS-15 四服务默认 Compose 启动（four-service default Compose startup）
 

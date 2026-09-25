@@ -92,6 +92,31 @@ def test_runtime_context_rejects_a_caller_forged_report_writer_capability():
 
 
 @pytest.mark.anyio
+async def test_preflight_failure_stays_error_without_constructing_agent():
+    run_manager = RunManager()
+    record = await run_manager.create("thread-1")
+    assert await run_manager.fail_start_if_pending(record.run_id, error="analysis_mode_unavailable")
+    factory_calls: list[object] = []
+    bridge = _make_bridge()
+
+    await run_agent(
+        bridge,
+        run_manager,
+        record,
+        ctx=RunContext(checkpointer=None, event_store=MemoryRunEventStore()),
+        agent_factory=lambda **kwargs: factory_calls.append(kwargs),
+        graph_input={},
+        config={},
+    )
+
+    current = await run_manager.get(record.run_id)
+    assert current.status == RunStatus.error
+    assert current.error == "analysis_mode_unavailable"
+    assert factory_calls == []
+    bridge.publish_end.assert_awaited_once()
+
+
+@pytest.mark.anyio
 async def test_delivery_event_records_present_files_paths_on_success():
     run_manager = RunManager()
     record = await run_manager.create("thread-1")

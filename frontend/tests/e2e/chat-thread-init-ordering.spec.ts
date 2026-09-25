@@ -25,12 +25,19 @@ test.describe("Chat: thread API request ordering on first send", () => {
       seq: number;
     };
     const events: EventLog[] = [];
+    let sdkThreadCreateBody: Record<string, unknown> | undefined;
     // Monotonic sequence number — Date.now() is millisecond-resolution and
     // would let two requests share a timestamp, which would defeat the
     // strict-ordering assertions below.
     let nextSeq = 0;
 
     page.on("request", (req) => {
+      if (
+        req.method() === "POST" &&
+        new URL(req.url()).pathname.endsWith("/api/langgraph/threads")
+      ) {
+        sdkThreadCreateBody = req.postDataJSON() as Record<string, unknown>;
+      }
       events.push({
         phase: "sent",
         url: req.url(),
@@ -75,6 +82,8 @@ test.describe("Chat: thread API request ordering on first send", () => {
     await expect(page.getByText("Hello from DeerFlow!")).toBeVisible({
       timeout: 15_000,
     });
+    expect(sdkThreadCreateBody).toBeDefined();
+    expect(sdkThreadCreateBody).not.toHaveProperty("kind");
 
     const isHistory = (url: string) =>
       /\/api\/langgraph\/threads\/[^/]+\/history/.test(url);
