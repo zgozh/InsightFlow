@@ -77,7 +77,7 @@ ANALYTICS_DEMO_READER_CREDENTIAL=$readerCredential
 
 `.analytics-demo/` 保存 TLS 文件和独立 Gateway 本地状态，`.env.analytics-demo` 保存仅供本机演示的随机密码与只读凭证 JSON；这些路径均已加入 `.gitignore`。Gateway 的 runtime home 由 `DEER_FLOW_HOME` 指向该 project 独有的绝对路径，不会复用其他 DeerFlow/InsightFlow 栈的 SQLite 或认证状态。不要把凭证复制到数据源记录，那里只填 `env://ANALYTICS_DEMO_READER_CREDENTIAL`。
 
-需要 Docker Compose V2；双 `--env-file` 用法已用 v2.40.3 验证，后一个文件覆盖前一个文件中的同名变量。Compose shell 环境变量优先级高于 env 文件；每次启动或停止前都从本地文件重载专用变量，避免 PowerShell profile 中的同名值改写独立 home 或 loopback 端口：
+需要 Docker Compose V2；双 `--env-file` 用法已用 v2.40.3 验证，后一个文件覆盖前一个文件中的同名变量。Compose shell 环境变量优先级高于 env 文件；每次启动或停止前都从本地文件重载专用标量变量，避免 PowerShell profile 中的同名值改写独立 home 或 loopback 端口。只读凭证 JSON **不要**经 `ConvertFrom-StringData` 赋给 `$env:ANALYTICS_DEMO_READER_CREDENTIAL`：它含有 JSON 转义的 PEM 换行，PowerShell 会将 `\n` 解成实际换行，破坏 JSON。让 Compose 通过 `--env-file` 原样读取该单行值；若当前启动 shell 已有同名覆盖，只清除该进程中的覆盖，不改其他环境：
 
 ```powershell
 $demoEnvironment = Get-Content -Raw .env.analytics-demo | ConvertFrom-StringData
@@ -90,7 +90,7 @@ $env:BIND_HOST = $demoEnvironment["BIND_HOST"]
 $env:PORT = $demoEnvironment["PORT"]
 $env:ANALYTICS_DEMO_ADMIN_PASSWORD = $demoEnvironment["ANALYTICS_DEMO_ADMIN_PASSWORD"]
 $env:ANALYTICS_DEMO_DB_PASSWORD = $demoEnvironment["ANALYTICS_DEMO_DB_PASSWORD"]
-$env:ANALYTICS_DEMO_READER_CREDENTIAL = $demoEnvironment["ANALYTICS_DEMO_READER_CREDENTIAL"]
+Remove-Item Env:ANALYTICS_DEMO_READER_CREDENTIAL -ErrorAction SilentlyContinue
 ```
 
 ### 启动与停止
@@ -189,6 +189,10 @@ docker compose -p insightflow-analytics-demo `
 - 本地模型凭据未读取，未调用模型 API；没有运行全量 14k 后端或 Playwright。已运行的真实路径边界是 app service/tool 与 PostgreSQL，不代表 HTTP Agent、自然语言 SQL 生成、Reviewer 或报告生成全链路通过。第三方 MCP 的 AS-14 发布阻塞仍在，不能据本次样例宣称整体发布就绪。
 
 本指南描述 Windows PowerShell + Docker Desktop 的本机路径。容器能启动、页面能打开，不代表模型调用或业务数据分析已经端到端验证。
+
+## Phase 6F1：真实分析链路彩排
+
+2026-09-26 在独立 `insightflow-analytics-demo` project 上完成一次合成数据真实分析彩排。曾发现 PowerShell 演示步骤会解码凭据 JSON 中的 PEM 换行，且 shell 环境覆盖会优先于 Compose `--env-file`；现按上文“启动与停止”步骤只清除当前进程的 reader credential 覆盖，并让 Compose 原样读取单行 JSON，证书仍以 `verify_full` 校验。真实模型 run、持久线程身份、PostgreSQL evidence、报告写入/读取和拒绝结果详见[Phase 6F1 验收记录](acceptance/phase-06f1-real-analysis-rehearsal.md)。该 opt-in 演示不表示默认四服务 AS-15、AS-14 或 Phase 6 已验收；project 与合成数据库卷保留供操作者复验。
 
 ## 最短试用步骤
 

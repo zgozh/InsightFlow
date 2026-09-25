@@ -111,7 +111,7 @@
 
 依据：报告 §7、§8（Report Writer 能力边界）、§11（`analysis_reports`）、§14 E2E（下载报告）。
 
-现行状态边界：`publish_analysis_report` 只登记报告索引 metadata，不读取或校验 artifact 内容及其数字/evidence 对应关系。文件写入与 `present_files` 由 skill 指导 Lead 单独执行；完整链尚未真实端到端验收。
+现行状态边界：6F1 已在隔离合成 PostgreSQL/真实模型链中观察到 Gateway run-scoped writer 登记 `published` 索引、生成 Markdown artifact、按同一所有者读取 200，以及跨线程读取 404；该单次样例核对了预期合成数值与 evidence 关联。系统没有 Reviewer 复核或通用数字/evidence 校验机制，样例不代表 artifact 正文无敏感内容，完整 AS-10 仍未验收。细节见[6F1 彩排记录](phase-06f1-real-analysis-rehearsal.md)。
 
 ## AS-11 计划分析（scheduled analysis）
 
@@ -166,7 +166,7 @@
 
 依据：已批准的 [Phase 6E2B 运行隔离边界](../prompts/phase-06e2b-controlled-analysis-runtime.md) 与 6E2B1 工具 allowlist 切片。本场景区分平台 Analytics 的 Query Policy 保证和普通聊天 operator MCP 的权限范围。
 
-现行状态：6E2B2B 已接通受控入口。Gateway 只接受持久化分析标记、受信用户、仍绑定的 Analytics services 与成功签发的 run-scoped writer；任何条件不成立都保持 `analysis_mode_unavailable`。定点合成 Gateway 生命周期测试使用 fake model 与合成数据，验证真实 Gateway admission→catalog/query/writer→artifact GET，并验证跨线程 artifact GET 为 404；定点前端 Playwright 证明自定义预创建与 SDK thread-create 的 kind/UUID 相同、stream URL 使用同一 UUID、冲突不启动流且普通聊天不进入分析页。真实 PostgreSQL/MySQL、真实模型与 Compose 用户验收仍未执行，故 AS-14 仍是发布阻塞，本切片不等于最终验收。
+现行状态：6E2B2B 已接通受控入口。Gateway 只接受持久化分析标记、受信用户、仍绑定的 Analytics services 与成功签发的 run-scoped writer；任何条件不成立都保持 `analysis_mode_unavailable`。除合成 Gateway 生命周期和前端 Playwright 身份断言外，6F1 已在隔离 Compose/NGINX 与合成 PostgreSQL 上完成一次真实模型彩排，证明预建、SDK create、server record、stream 及报告读取使用同一 UUID，并产生受控 query/evidence 与 owner-scoped artifact；另一线程读取为 404。普通聊天路径未改。该单次链路不替代 AS-01 多主体隔离，也未完成 AS-14 全部边界；普通聊天 operator MCP 仍不受平台 Query Policy 保证，AS-14 仍是发布阻塞。详见[6F1 彩排记录](phase-06f1-real-analysis-rehearsal.md)。
 
 ## AS-15 四服务默认 Compose 启动（four-service default Compose startup）
 
@@ -181,7 +181,7 @@
 
 依据：报告 §1（四个默认容器预算）、§15（当前默认 Compose 拓扑与外部数据库边界）、§14 E2E。
 
-现行状态边界：2026-09-24 的本机记录验证了容器健康、入口 HTTP 路由和未登录保护，但没有创建管理员或完成认证后进入工作台；AS-01 的完整登录验收仍未完成。
+现行状态边界：2026-09-24 的默认 Compose 记录验证了容器健康、入口 HTTP 路由和未登录保护；6F1 另在 opt-in 五容器分析演示 overlay 完成了隔离管理员登录，但这不是默认四服务 Compose 验收。AS-01 多主体认证/授权和 AS-15 的默认 Compose 完整合同仍未完成。
 
 ---
 
