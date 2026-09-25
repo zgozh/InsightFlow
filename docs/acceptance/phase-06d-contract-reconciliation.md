@@ -38,4 +38,4 @@
 
 ## 本切片验证记录
 
-6D1 的实际命令、退出码、计数及失败 ID 见 `docs/LOCAL_TRIAL.md` 的“Phase 6D1 契约复核补记”；6F1 的真实隔离演示请求、运行、审计与报告证据见[彩排记录](phase-06f1-real-analysis-rehearsal.md)。历史 PostgreSQL/MySQL `82 passed` 未保存退出码，不推定为新运行或全链验收。6F1 没有运行全量后端、全量 Playwright 或 build；私有配置值与模型 key 未读取/回显，仅在隔离演示环境实际调用两次模型，其中一次前置失败发生在模型调用前。
+6D1 的实际命令、退出码、计数及失败 ID 见 `docs/LOCAL_TRIAL.md` 的“Phase 6D1 契约复核补记”；6F1 的真实隔离演示请求、运行、审计与报告证据见[彩排记录](phase-06f1-real-analysis-rehearsal.md)。历史 PostgreSQL/MySQL `82 passed` 未保存退出码，不推定为新运行或全链验收。6F1 没有运行全量后端、全量 Playwright 或 build；私有配置值与模型 key 未读取/回显。6F1 运行计数为：1 次模型调用前 fail-closed 的预检 run，另有 2 次带模型的 run 尝试；未记录模型 API 请求总数。

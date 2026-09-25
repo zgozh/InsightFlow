@@ -28,10 +28,10 @@
 
 通过 Chromium/Playwright 驱动的浏览器会话从 `http://127.0.0.1:2027` 进入 NGINX：根页、`/setup` 返回 200；未登录 Analytics/线程 API 返回 401；隔离演示管理员首次设置成功（201）并登录。页面为中文 locale，用户在 `/workspace/analysis/new` 提交一个对合成订单可确定性复算的问题。未用 fake model、直接文件写入或绕过 Gateway 的 Agent run。
 
-前置一次运行在模型调用前因演示配置缺少两个精确 allowlisted tool entry 而 fail closed；没有 LLM/tool/audit 事件。只在忽略的演示 `config.yaml` 中补齐 `inspect_business_catalog` 与 `query_business_data` 的本地工具声明后继续。之后真实模型调用最多两次：
+本次有 1 次模型调用前 fail-closed 的预检 run：因演示配置缺少两个精确 allowlisted tool entry 而失败，没有 LLM/tool/audit 事件。只在忽略的演示 `config.yaml` 中补齐 `inspect_business_catalog` 与 `query_business_data` 的本地工具声明后，另有 2 次带模型的 run 尝试；未记录模型 API 请求总数：
 
-1. 第一次模型-backed run `7b0ff6a7-0175-402e-a048-8621e595046b` 有模型与工具事件，但凭据解析仍失败，审计出现 `secret_unavailable`（3 条）与 `unknown_relation`（1 条），没有报告。根因为演示 CA JSON 序列化及 env 优先级覆盖，已按上节保留 TLS 的方式修复；没有放宽查询或失败关闭边界。
-2. 第二次且最后一次真实模型尝试成功。持久线程 UUID：`8f675187-c9f6-430b-acae-fe09f9153e69`；run UUID：`2295b2fa-1d9e-46ca-a462-662abbd91579`；运行状态 `success`。匿名化请求身份链如下：
+1. 第一次带模型的 run 尝试 `7b0ff6a7-0175-402e-a048-8621e595046b` 有模型与工具事件，但凭据解析仍失败，审计出现 `secret_unavailable`（3 条）与 `unknown_relation`（1 条），没有报告。根因为演示 CA JSON 序列化及 env 优先级覆盖，已按上节保留 TLS 的方式修复；没有放宽查询或失败关闭边界。
+2. 第二次且最后一次带模型的 run 尝试成功。持久线程 UUID：`8f675187-c9f6-430b-acae-fe09f9153e69`；run UUID：`2295b2fa-1d9e-46ca-a462-662abbd91579`；运行状态 `success`。匿名化请求身份链如下：
 
    | 请求/记录 | 结果 | 身份证据 |
    | --- | --- | --- |
