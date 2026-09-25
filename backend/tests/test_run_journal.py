@@ -488,6 +488,68 @@ class TestLlmCallbacks:
         assert len(messages[0]["content"]["tool_calls"]) == 1
 
     @pytest.mark.anyio
+    async def test_analytics_structured_payloads_are_projected_for_journal_events(self, journal_setup):
+        import json
+
+        from langchain_core.messages import ToolMessage
+
+        j, store = journal_setup
+        tool_call = {
+            "id": "analytics-call",
+            "name": "query_business_data",
+            "args": {
+                "datasource_id": "ds-1",
+                "sql": "SELECT SQL_SENTINEL",
+                "plan_id": "PLAN_SENTINEL",
+                "token": "CREDENTIAL_SENTINEL",
+            },
+        }
+        j.on_llm_end(_make_llm_response("", tool_calls=[tool_call]), run_id=uuid4(), tags=["lead_agent"])
+        result_content = json.dumps(
+            {
+                "code": "executed",
+                "columns": ["COLUMN_SENTINEL"],
+                "rows": [["ROW_SENTINEL"]],
+                "row_count": 1,
+                "truncated": False,
+                "evidence": {"evidence_id": "a" * 64, "row_count": 1, "decision_code": "executed"},
+            }
+        )
+        tool_message = ToolMessage(
+            content=result_content,
+            tool_call_id="analytics-call",
+            name="query_business_data",
+            artifact={"body": "ARTIFACT_BODY_SENTINEL"},
+        )
+        j.on_tool_end(tool_message, run_id=uuid4())
+        j.on_chain_end({"messages": [tool_message], "note": "arbitrary model text remains outside structured projection"}, run_id=uuid4())
+        await j.flush()
+
+        events = await store.list_events("t1", "r1")
+        relevant = [event for event in events if event["event_type"] in {"llm.ai.response", "llm.tool.result", "run.end"}]
+        encoded = json.dumps(relevant, ensure_ascii=False)
+        assert not any(
+            sentinel in encoded
+            for sentinel in (
+                "SQL_SENTINEL",
+                "PLAN_SENTINEL",
+                "CREDENTIAL_SENTINEL",
+                "COLUMN_SENTINEL",
+                "ROW_SENTINEL",
+                "ARTIFACT_BODY_SENTINEL",
+            )
+        )
+        ai_event = next(event for event in relevant if event["event_type"] == "llm.ai.response")
+        assert ai_event["content"]["tool_calls"][0]["args"] == {"datasource_id": "ds-1"}
+        result_event = next(event for event in relevant if event["event_type"] == "llm.tool.result")
+        assert json.loads(result_event["content"]["content"])["evidence"]["evidence_id"] == "a" * 64
+        end_event = next(event for event in relevant if event["event_type"] == "run.end")
+        assert end_event["content"]["note"] == "arbitrary model text remains outside structured projection"
+        assert tool_message.content == result_content
+        assert tool_message.artifact == {"body": "ARTIFACT_BODY_SENTINEL"}
+        assert tool_call["args"]["sql"] == "SELECT SQL_SENTINEL"
+
+    @pytest.mark.anyio
     async def test_on_llm_end_subagent_no_ai_message(self, journal_setup):
         j, store = journal_setup
         run_id = uuid4()

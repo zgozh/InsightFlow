@@ -74,6 +74,70 @@ def test_thread_page_orders_across_runs_and_paginates_without_gaps():
     assert older.json()["next_before_seq"] is None
 
 
+def test_thread_message_reads_project_legacy_analytics_rows():
+    import json
+
+    store = MemoryRunEventStore()
+    ai_content = {
+        "type": "ai",
+        "id": "legacy-ai",
+        "content": "",
+        "tool_calls": [
+            {
+                "id": "call-1",
+                "name": "query_business_data",
+                "args": {"datasource_id": "ds-1", "sql": "THREAD_SQL_SENTINEL"},
+            }
+        ],
+        "additional_kwargs": {},
+    }
+    tool_content = {
+        "type": "tool",
+        "id": "legacy-tool",
+        "tool_call_id": "call-1",
+        "name": "query_business_data",
+        "content": json.dumps({"code": "executed", "rows": [["THREAD_ROW_SENTINEL"]], "row_count": 1}),
+        "additional_kwargs": {},
+    }
+
+    async def seed():
+        await store.put(
+            thread_id="thread-1",
+            run_id="run-1",
+            event_type="llm.ai.response",
+            category="message",
+            content=ai_content,
+            metadata={"caller": "lead_agent"},
+        )
+        await store.put(
+            thread_id="thread-1",
+            run_id="run-1",
+            event_type="llm.tool.result",
+            category="message",
+            content=tool_content,
+            metadata={},
+        )
+
+    asyncio.run(seed())
+    app = _make_app(store)
+    app.state.run_manager.list_by_thread.return_value = []
+
+    with TestClient(app) as client:
+        legacy = client.get("/api/threads/thread-1/messages")
+        page = client.get("/api/threads/thread-1/messages/page?limit=10")
+
+    assert legacy.status_code == page.status_code == 200
+    for body in (legacy.json(), page.json()["data"]):
+        encoded = json.dumps(body, ensure_ascii=False)
+        assert "THREAD_SQL_SENTINEL" not in encoded
+        assert "THREAD_ROW_SENTINEL" not in encoded
+    assert legacy.json()[0]["content"]["tool_calls"][0]["args"] == {"datasource_id": "ds-1"}
+    assert json.loads(page.json()["data"][1]["content"]["content"])["code"] == "executed"
+    stored = asyncio.run(store.list_events("thread-1", "run-1"))
+    assert stored[0]["content"]["tool_calls"][0]["args"]["sql"] == "THREAD_SQL_SENTINEL"
+    assert "THREAD_ROW_SENTINEL" in stored[1]["content"]["content"]
+
+
 @pytest.mark.parametrize("caller", ["middleware:title", "subagent:general-purpose"])
 def test_thread_page_scans_past_internal_ai_chunks_to_fill_visible_page(monkeypatch, caller):
     monkeypatch.setattr(thread_runs, "THREAD_MESSAGE_PAGE_SCAN_BATCH", 3)

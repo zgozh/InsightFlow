@@ -137,15 +137,17 @@
 
 现行状态边界：默认应用数据库是 SQLite；可选 PostgreSQL 后端的 Gateway/PostgreSQL 重启恢复尚未完整实测验收。
 
-## AS-13 凭据与 PII 不进入日志和事件（secrets/PII absent from logs and events）
+## AS-13 平台结构化 Analytics 输出边界（structured Analytics output boundary）
 
 - **Given** 数据源凭据仅通过环境变量或 secret file/provider 注入，数据库仅保存 `secret_ref` 而不保存明文密码；列标记为 sensitive/PII
 - **When** 认证用户请求包含该 HIGH 列的查询
 - **Then** V1 以 `APPROVAL_REQUIRED` fail closed 拒绝；不签发可执行 query plan ID、不执行任何业务数据库查询、不返回结果行
-- **And** 审计、工具响应、事件与报告投影只允许稳定决定码和已定义的安全 metadata，不包含明文凭据、原始 SQL、token 或原始 PII 结果行
+- **And** 平台生成的结构化 Analytics metadata、审计与对外/持久化运行事件投影不得包含原始 SQL、一次性 plan token、数据源凭据或原始结果行；允许保留稳定决定码、已定义的安全 evidence、计数与状态
+- **And** 该保证只覆盖平台生成的结构化字段；任意用户/模型文本、模型最终回复和 artifact 正文不保证绝无敏感内容，本契约不要求扫描或改写其自由文本
+- **And** 可选第三方 tracing 可能独立采集 prompt、tool input/output 与 completion；运维必须关闭该 tracing，或另行控制受信目标、访问权限和保留期。该外部导出不由本切片的结构化投影测试证明
 - **And** 标记为 sensitive/PII 的列在 V1 不支持“获批后查询”或动态结果脱敏；动态 PII 脱敏尚未实现，不得宣称已具备
 
-依据：报告 §10（V1 HIGH 拒绝策略）、§11（`secret_ref` 禁止明文、审计禁止保存敏感结果行）、§14 Security（拒绝路径的安全 metadata 边界）。
+依据：报告 §10（V1 HIGH 拒绝策略）、§11（`secret_ref` 禁止明文、审计禁止保存敏感结果行）、§14 Security（拒绝路径的安全 metadata 边界）。Phase 6E3A 为部分运行输出路径加入结构化投影；整项 AS-13 仍须按证据矩阵完成 GPT 复验与后续真实验收。
 
 ## AS-14 MCP 不能绕过查询策略（MCP cannot bypass query policy）
 

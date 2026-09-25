@@ -112,6 +112,130 @@ async def test_list_run_events_redacts_historical_run_start_metadata():
 
 
 @pytest.mark.anyio
+async def test_list_run_events_projects_legacy_analytics_structures_without_mutating_store():
+    import json
+
+    from app.gateway.routers.thread_runs import list_run_events
+
+    ai_content = {
+        "type": "ai",
+        "id": "legacy-ai",
+        "content": "",
+        "tool_calls": [
+            {
+                "id": "legacy-analytics-call",
+                "name": "query_business_data",
+                "args": {"datasource_id": "ds-1", "sql": "LEGACY_SQL_SENTINEL", "token": "LEGACY_TOKEN_SENTINEL"},
+            }
+        ],
+    }
+    tool_content = {
+        "type": "tool",
+        "id": "legacy-tool",
+        "tool_call_id": "legacy-analytics-call",
+        "content": json.dumps(
+            {
+                "code": "executed",
+                "columns": ["LEGACY_COLUMN_SENTINEL"],
+                "rows": [["LEGACY_ROW_SENTINEL"]],
+                "row_count": 1,
+                "evidence": {"evidence_id": "a" * 64},
+                "secret": "LEGACY_SECRET_SENTINEL",
+            }
+        ),
+    }
+    stored_rows = [
+        {"seq": 1, "run_id": "analytics-run", "event_type": "llm.ai.response", "content": ai_content, "metadata": {}},
+        {"seq": 2, "run_id": "analytics-run", "event_type": "llm.tool.result", "content": tool_content, "metadata": {}},
+        {
+            "seq": 3,
+            "run_id": "analytics-run",
+            "event_type": "run.end",
+            "content": {"messages": [ai_content, tool_content], "note": "arbitrary model text is preserved"},
+            "metadata": {},
+        },
+        {
+            "seq": 6,
+            "run_id": "other-run",
+            "event_type": "llm.ai.response",
+            "content": {
+                "type": "ai",
+                "tool_calls": [{"id": "legacy-analytics-call", "name": "web_search", "args": {"query": "ordinary"}}],
+            },
+            "metadata": {},
+        },
+        {
+            "seq": 4,
+            "event_type": "subagent.step",
+            "content": {
+                "kind": "ai",
+                "tool_calls": [
+                    {
+                        "name": "query_business_data",
+                        "args": {"datasource_id": "ds-1", "sql": "SUBAGENT_LEGACY_SQL_SENTINEL"},
+                    }
+                ],
+            },
+            "metadata": {},
+        },
+        {
+            "seq": 5,
+            "event_type": "subagent.step",
+            "content": {
+                "kind": "tool",
+                "tool_name": "query_business_data",
+                "text": json.dumps({"code": "executed", "rows": [["SUBAGENT_LEGACY_ROW_SENTINEL"]]}),
+            },
+            "metadata": {},
+        },
+    ]
+
+    class FakeStore:
+        async def list_events(self, thread_id, run_id, *, event_types=None, task_id=None, limit=500, after_seq=None):
+            return stored_rows
+
+    class FakeState:
+        run_event_store = FakeStore()
+
+    class FakeApp:
+        state = FakeState()
+
+    class FakeRequest:
+        app = FakeApp()
+        _deerflow_test_bypass_auth = True
+
+    events = await list_run_events(
+        thread_id="legacy-thread",
+        run_id="legacy-run",
+        request=FakeRequest(),
+        event_types=None,
+        task_id=None,
+        limit=500,
+        after_seq=None,
+    )
+
+    encoded = json.dumps(events, ensure_ascii=False)
+    assert not any(
+        sentinel in encoded
+        for sentinel in (
+            "LEGACY_SQL_SENTINEL",
+            "LEGACY_TOKEN_SENTINEL",
+            "LEGACY_COLUMN_SENTINEL",
+            "LEGACY_ROW_SENTINEL",
+            "LEGACY_SECRET_SENTINEL",
+            "SUBAGENT_LEGACY_SQL_SENTINEL",
+            "SUBAGENT_LEGACY_ROW_SENTINEL",
+        )
+    )
+    assert events[0]["content"]["tool_calls"][0]["args"] == {"datasource_id": "ds-1"}
+    projected_result = json.loads(events[1]["content"]["content"])
+    assert projected_result["evidence"]["evidence_id"] == "a" * 64
+    assert events[2]["content"]["note"] == "arbitrary model text is preserved"
+    assert stored_rows[0]["content"]["tool_calls"][0]["args"]["sql"] == "LEGACY_SQL_SENTINEL"
+    assert "LEGACY_ROW_SENTINEL" in stored_rows[1]["content"]["content"]
+
+
+@pytest.mark.anyio
 async def test_effective_memory_flows_from_injection_to_the_existing_debug_api():
     """The production run-events route is the field-level consumer for M1.
 

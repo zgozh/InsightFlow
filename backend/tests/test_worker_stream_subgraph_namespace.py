@@ -19,7 +19,7 @@ from importlib.metadata import version as package_version
 from types import SimpleNamespace
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from packaging.version import Version
 
 from deerflow.runtime.runs import worker
@@ -28,8 +28,10 @@ from deerflow.runtime.runs.schemas import DisconnectMode, RunStatus
 from deerflow.runtime.runs.worker import (
     _compose_sse_event,
     _publish_stream_item,
+    _serialize_and_project_stream_payload,
     _unpack_stream_item,
 )
+from deerflow.runtime.serialization import AnalyticsToolCallChunkProjector
 from deerflow.runtime.stream_bridge.memory import MemoryStreamBridge
 
 SUBAGENT_NS = ("tools:call_subagent_1",)
@@ -250,8 +252,170 @@ class TestPublishStreamItem:
         assert batcher.pushed == [chunk]
         assert [event for _run, event, _payload in bridge.published] == ["messages"]
 
+    @pytest.mark.asyncio
+    async def test_custom_task_running_projects_subagent_messages_for_stream_and_persistence(self):
+        import json
 
-# ---------------------------------------------------------------------------
+        message = AIMessage(
+            id="child-analytics-ai",
+            content="",
+            tool_calls=[
+                {
+                    "id": "child-analytics-call",
+                    "name": "query_business_data",
+                    "args": {"datasource_id": "ds-1", "sql": "SUBAGENT_SQL_SENTINEL"},
+                }
+            ],
+        )
+        chunk = {"type": "task_running", "task_id": "task-1", "message": message.model_dump(), "message_index": 1}
+        bridge = _FakeBridge()
+        events = _FakeSubagentEvents()
+
+        await _publish_stream_item(
+            bridge=bridge,
+            run_id="run-1",
+            mode="custom",
+            chunk=chunk,
+            namespace=(),
+            file_tool_chunk_batcher=None,
+            subagent_events=events,
+        )
+
+        assert "SUBAGENT_SQL_SENTINEL" not in json.dumps(bridge.published)
+        assert "SUBAGENT_SQL_SENTINEL" not in json.dumps(events.added)
+        assert bridge.published[0][2]["message"]["tool_calls"][0]["args"] == {"datasource_id": "ds-1"}
+        assert message.tool_calls[0]["args"]["sql"] == "SUBAGENT_SQL_SENTINEL"
+
+    @pytest.mark.asyncio
+    async def test_analytics_tool_call_chunks_are_projected_without_changing_other_tools(self):
+        import json
+
+        bridge = _FakeBridge()
+        projector = AnalyticsToolCallChunkProjector()
+        first = AIMessageChunk(
+            content="",
+            id="ai-analytics",
+            tool_call_chunks=[
+                {
+                    "id": "call-analytics",
+                    "index": 0,
+                    "name": "query_business_data",
+                    "args": '{"datasource_id":"ds-1","sql":"SQL_SENTINEL',
+                }
+            ],
+        )
+        continuation = AIMessageChunk(
+            content="",
+            id="ai-analytics",
+            tool_call_chunks=[{"index": 0, "name": None, "args": ' CONTINUATION_SENTINEL"}'}],
+        )
+        ordinary = AIMessageChunk(
+            content="",
+            id="ai-search",
+            tool_call_chunks=[{"id": "call-search", "index": 0, "name": "web_search", "args": '{"query":"ordinary argument"}'}],
+        )
+
+        for chunk in (first, continuation, ordinary):
+            await _publish_stream_item(
+                bridge=bridge,
+                run_id="run-1",
+                mode="messages",
+                chunk=chunk,
+                namespace=(),
+                file_tool_chunk_batcher=None,
+                subagent_events=_FakeSubagentEvents(),
+                analytics_chunk_projector=projector,
+            )
+
+        payloads = [payload for _run, _event, payload in bridge.published]
+        assert len(payloads) == 3
+        assert "SQL_SENTINEL" not in json.dumps(payloads)
+        assert "CONTINUATION_SENTINEL" not in json.dumps(payloads)
+        assert payloads[0]["tool_calls"][0]["args"] == {"datasource_id": "ds-1"}
+        assert payloads[1]["tool_call_chunks"][0]["args"] == ""
+        assert payloads[2]["tool_call_chunks"][0]["args"] == '{"query":"ordinary argument"}'
+        assert payloads[2]["tool_calls"][0]["args"] == {"query": "ordinary argument"}
+        assert first.tool_call_chunks[0]["args"].endswith("SQL_SENTINEL")
+        assert continuation.tool_call_chunks[0]["args"] == ' CONTINUATION_SENTINEL"}'
+
+    # ---------------------------------------------------------------------------
+    # Analytics argument deltas must fail closed when their identity is ambiguous.
+    # ---------------------------------------------------------------------------
+    @pytest.mark.asyncio
+    async def test_partial_analytics_name_is_masked_and_unmatched_arguments_fail_closed(self):
+        import json
+
+        from deerflow.runtime.serialization import AnalyticsToolCallCorrelationError
+
+        bridge = _FakeBridge()
+        projector = AnalyticsToolCallChunkProjector()
+        first = AIMessageChunk(
+            content="",
+            id="ai-partial",
+            tool_call_chunks=[{"id": "call-partial", "index": 0, "name": "query_business_", "args": '"sql":"PARTIAL_SQL_SENTINEL'}],
+        )
+        await _publish_stream_item(
+            bridge=bridge,
+            run_id="run-1",
+            mode="messages",
+            chunk=first,
+            namespace=(),
+            file_tool_chunk_batcher=None,
+            subagent_events=_FakeSubagentEvents(),
+            analytics_chunk_projector=projector,
+        )
+        assert "PARTIAL_SQL_SENTINEL" not in json.dumps(bridge.published)
+
+        uncorrelated = AIMessageChunk(
+            content="",
+            tool_call_chunks=[{"id": None, "index": None, "name": None, "args": "UNMATCHED_SQL_SENTINEL"}],
+        )
+        with pytest.raises(AnalyticsToolCallCorrelationError):
+            await _publish_stream_item(
+                bridge=bridge,
+                run_id="run-1",
+                mode="messages",
+                chunk=uncorrelated,
+                namespace=(),
+                file_tool_chunk_batcher=None,
+                subagent_events=_FakeSubagentEvents(),
+                analytics_chunk_projector=projector,
+            )
+        assert "UNMATCHED_SQL_SENTINEL" not in json.dumps(bridge.published)
+
+    def test_single_mode_messages_tuple_serializer_projects_analytics_deltas(self):
+        import json
+
+        projector = AnalyticsToolCallChunkProjector()
+        first = AIMessageChunk(
+            content="",
+            id="single-ai",
+            tool_call_chunks=[{"id": "single-call", "index": 0, "name": "query_business_data", "args": '"sql":"SINGLE_SQL_SENTINEL'}],
+        )
+        continuation = AIMessageChunk(
+            content="",
+            id="single-ai",
+            tool_call_chunks=[{"index": 0, "name": None, "args": "SINGLE_CONTINUATION_SENTINEL"}],
+        )
+
+        first_payload = _serialize_and_project_stream_payload(
+            (first, {"langgraph_node": "model"}),
+            mode="messages",
+            analytics_chunk_projector=projector,
+        )
+        continuation_payload = _serialize_and_project_stream_payload(
+            (continuation, {"langgraph_node": "model"}),
+            mode="messages",
+            analytics_chunk_projector=projector,
+        )
+
+        assert first_payload[0]["tool_call_chunks"][0]["args"] == ""
+        assert continuation_payload[0]["tool_call_chunks"][0]["args"] == ""
+        assert first_payload[1] == continuation_payload[1] == {"langgraph_node": "model"}
+        assert not any(marker in json.dumps([first_payload, continuation_payload]) for marker in ("SINGLE_SQL_SENTINEL", "SINGLE_CONTINUATION_SENTINEL"))
+        assert first.tool_call_chunks[0]["args"] == '"sql":"SINGLE_SQL_SENTINEL'
+
+
 # Production-shaped integration: SubagentExecutor -> astream(subgraphs=...)
 # -> run_agent stream loop -> StreamBridge. The namespace must originate from
 # LangGraph's own delegation routing (checkpoint-namespace inheritance), not

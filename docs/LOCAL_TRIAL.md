@@ -11,6 +11,8 @@
 | **经营分析额外** | 只读连接凭证放根目录 `.env` 的 `ANALYTICS_DS`；schema、metric、policy 在登录后的管理页面登记 | PostgreSQL/MySQL 业务库由使用者提供，不会随默认栈启动。数据源 `secret_ref` 填 `env://ANALYTICS_DS`；凭证用只读账号 JSON，不能把密码写入 `config.yaml`、数据源记录或仓库。 |
 | **高级可选** | 依功能写入 `.env`、`config.yaml` 或 `extensions_config.json` | Jina key 放 `.env`；Scheduler 在 `config.yaml` 配置；应用 PostgreSQL 要同时配置 `database.backend: postgres` 与 `.env` 中的 `DATABASE_URL`；MCP 与 skills 属于 `extensions_config.json`；观测按需设置 LangSmith/Monocle 环境变量。 |
 
+安全边界：Gateway 的 Analytics 结构化运行输出投影不拦截 LangSmith、Langfuse、Monocle 等可选 tracing SDK；启用后它们可能采集 prompt、tool input/output 与 completion。运维应关闭 tracing，或仅导出到受信目标并单独管理访问权限与保留期。本机试用和本切片均未验证第三方 tracing 的实际导出内容。
+
 `make up` 默认只启动 Nginx、Frontend、Gateway 和 Redis，并绑定本机回环地址；部署脚本会生成所需的认证密钥。外部 sandbox provisioner 必须由运维另行部署：`config.yaml` 中的 provisioner URL/key 要与该服务端配置匹配，Compose 不会自动创建它。`.env` 保存环境值，`config.yaml` 描述启用的模型和应用行为，`extensions_config.json` 管理 MCP/skills；这三者不能相互替代。
 
 DeepSeek Flash 的简洁模型条目见根目录 `config.example.yaml` 的 “DEEPSEEK FLASH QUICKSTART” 注释块。模板使用 `langchain_openai:ChatOpenAI`、`base_url` 和非思考模式；DeepSeek 官方文档列出 `deepseek-flash`、`https://api.deepseek.com`，并说明 Chat Completions 工具调用支持。[模型与价格](https://api-docs.deepseek.com/quick_start/pricing/)、[工具调用](https://api-docs.deepseek.com/guides/tool_calls/)。思考模式下的工具调用需正确回传 `reasoning_content`；本模板不启用该路径。

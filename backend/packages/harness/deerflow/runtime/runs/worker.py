@@ -80,7 +80,7 @@ from deerflow.runtime.goal import (
     write_thread_goal,
 )
 from deerflow.runtime.keyed_lock import AsyncKeyedLockTable
-from deerflow.runtime.serialization import serialize
+from deerflow.runtime.serialization import AnalyticsToolCallChunkProjector, project_analytics_structured_value, serialize
 from deerflow.runtime.stream_bridge import StreamBridge
 from deerflow.runtime.stream_modes import normalize_stream_modes, to_langgraph_stream_modes
 from deerflow.runtime.user_context import get_current_user, get_effective_user_id, resolve_runtime_user_id
@@ -1254,6 +1254,7 @@ async def run_agent(
         async def _stream_once(input_payload: Any, stream_config: RunnableConfig) -> None:
             nonlocal llm_error_fallback_message
             file_tool_chunk_batcher = _LargeFileToolChunkBatcher() if "messages-tuple" in requested_modes else None
+            analytics_chunk_projector = AnalyticsToolCallChunkProjector()
             try:
                 async with _checkpoint_thread_lock(thread_id):
                     if len(lg_modes) == 1 and not stream_subgraphs:
@@ -1272,12 +1273,16 @@ async def run_agent(
                                     # subagent's messages; see the multi-mode branch below.
                                     llm_error_fallback_message = llm_error_fallback_message or _extract_llm_error_fallback_message(chunk, pre_existing_message_ids)
                                 sse_event = _lg_mode_to_sse_event(single_mode)
-                                single_payload = serialize(chunk, mode=single_mode)
+                                single_payload = _serialize_and_project_stream_payload(
+                                    chunk,
+                                    mode=single_mode,
+                                    analytics_chunk_projector=analytics_chunk_projector,
+                                )
                                 if single_mode == "values" and seq_stamper is not None:
                                     single_payload = await seq_stamper.stamp(single_payload)
                                 await bridge.publish(run_id, sse_event, single_payload)
                                 if single_mode == "custom":
-                                    await subagent_events.add(chunk)
+                                    await subagent_events.add(single_payload)
                         finally:
                             close_error = sys.exception()
                             try:
@@ -1326,6 +1331,7 @@ async def run_agent(
                                 file_tool_chunk_batcher=file_tool_chunk_batcher,
                                 subagent_events=subagent_events,
                                 seq_stamper=seq_stamper,
+                                analytics_chunk_projector=analytics_chunk_projector,
                             )
                     finally:
                         close_error = sys.exception()
@@ -1344,7 +1350,12 @@ async def run_agent(
                 if file_tool_chunk_batcher is not None:
                     try:
                         for publish_chunk in file_tool_chunk_batcher.finish():
-                            await bridge.publish(run_id, "messages", serialize(publish_chunk, mode="messages"))
+                            payload = _serialize_and_project_stream_payload(
+                                publish_chunk,
+                                mode="messages",
+                                analytics_chunk_projector=analytics_chunk_projector,
+                            )
+                            await bridge.publish(run_id, "messages", payload)
                     except Exception:
                         if stream_error is None:
                             raise
@@ -3021,6 +3032,20 @@ def _build_seq_stamper(event_store: Any, thread_id: str, journal: Any) -> _Messa
     )
 
 
+def _serialize_and_project_stream_payload(
+    chunk: Any,
+    *,
+    mode: str,
+    analytics_chunk_projector: AnalyticsToolCallChunkProjector | None = None,
+    namespace: tuple[str, ...] = (),
+) -> Any:
+    """以副本序列化各类外发帧，并对消息块保留增量身份投影。"""
+    payload = project_analytics_structured_value(serialize(chunk, mode=mode))
+    if analytics_chunk_projector is not None and mode in {"messages", "messages-tuple"}:
+        return analytics_chunk_projector.project(payload, namespace=namespace)
+    return payload
+
+
 async def _publish_stream_item(
     *,
     bridge: Any,
@@ -3031,6 +3056,7 @@ async def _publish_stream_item(
     file_tool_chunk_batcher: Any,
     subagent_events: Any,
     seq_stamper: Any = None,
+    analytics_chunk_projector: AnalyticsToolCallChunkProjector | None = None,
 ) -> None:
     """Publish one stream frame, preserving the subgraph namespace.
 
@@ -3043,19 +3069,34 @@ async def _publish_stream_item(
     """
     sse_event = _compose_sse_event(_lg_mode_to_sse_event(mode), namespace)
     if namespace:
-        await bridge.publish(run_id, sse_event, serialize(chunk, mode=mode))
+        payload = _serialize_and_project_stream_payload(
+            chunk,
+            mode=mode,
+            analytics_chunk_projector=analytics_chunk_projector,
+            namespace=namespace,
+        )
+        await bridge.publish(run_id, sse_event, payload)
         return
     if file_tool_chunk_batcher is not None and mode != "messages":
         pending_chunks = file_tool_chunk_batcher.finish() if mode == "values" else file_tool_chunk_batcher.flush()
         for publish_chunk in pending_chunks:
-            await bridge.publish(run_id, "messages", serialize(publish_chunk, mode="messages"))
+            payload = _serialize_and_project_stream_payload(
+                publish_chunk,
+                mode="messages",
+                analytics_chunk_projector=analytics_chunk_projector,
+            )
+            await bridge.publish(run_id, "messages", payload)
     chunks_to_publish = file_tool_chunk_batcher.push(chunk) if mode == "messages" and file_tool_chunk_batcher is not None else [chunk]
     for publish_chunk in chunks_to_publish:
-        payload = serialize(publish_chunk, mode=mode)
+        payload = _serialize_and_project_stream_payload(
+            publish_chunk,
+            mode=mode,
+            analytics_chunk_projector=analytics_chunk_projector,
+        )
         if mode == "values" and seq_stamper is not None:
             # Root frames only: a subagent's snapshot is not part of this
             # thread's feed ordering (the namespaced branch returned above).
             payload = await seq_stamper.stamp(payload)
         await bridge.publish(run_id, sse_event, payload)
     if mode == "custom":
-        await subagent_events.add(chunk)
+        await subagent_events.add(payload)

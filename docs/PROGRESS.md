@@ -16,6 +16,8 @@ Baseline: DeerFlow `v2.1.0-rc0` (`769589e8daee14c2587a634b6b43bd96471a41a1`), im
 
 当前独立切片：Phase 6E1 LocalSandbox 子进程环境白名单修复已验收；6E2A 可信分析线程服务端标记与运行 fail-closed 门禁已实现，Fix 01 补齐线程创建同 ID kind 冲突保护，待 GPT 复验。6E2B 完整受控运行仍阻塞于虚拟文件工具宿主路径隔离，本次分析入口 stopgap 只阻止静默降级并待 GPT 复验；后端继续拒绝运行，AS-14 未完成，不启动 5C 或 Phase 6 后续工作。
 
+Phase 6E3A 已为 Analytics 结构化调用/结果的单模式及多模式 SSE、subagent step、RunJournal、Gateway 历史读取与 checkpoint seed 加入输出副本投影；7 个受影响后端测试文件定点验证为 240 passed / 1 条现存 Starlette deprecation warning，Ruff check 与 format --check 通过。该切片待 GPT 复验，不代表 AS-13 整体验收完成；真实 Gateway/模型端到端和可选第三方 tracing 导出未验证，任意用户/模型文本与 artifact 正文不在保证范围。
+
 Phase 2 is delivered in four independently reviewed slices: **2A** deterministic SQL policy core, **2B1** semantic authorization core, **2B2** governed datasource execution, and **2C** persistence and delivery. A slice is not complete until its own gates and review pass.
 
 A phase has one primary commit unless its approved plan defines independently gated batches; every batch must have its own commit and recorded test evidence.

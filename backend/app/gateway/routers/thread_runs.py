@@ -59,6 +59,7 @@ from deerflow.config.paths import get_paths, make_safe_user_id
 from deerflow.runtime import CancelOutcome, ConflictError, RunRecord, RunStatus, ThreadOperationKind, serialize_channel_values_for_api
 from deerflow.runtime.runs.store.base import format_run_cursor_created_at, normalize_run_created_at_iso
 from deerflow.runtime.secret_context import redact_config_secrets, redact_metadata_secrets
+from deerflow.runtime.serialization import project_analytics_event_rows
 from deerflow.runtime.user_context import get_effective_user_id
 from deerflow.utils.messages import ORIGINAL_USER_CONTENT_KEY, get_original_user_content_text, message_to_text
 from deerflow.utils.thread_id import ThreadId
@@ -1389,6 +1390,7 @@ async def list_thread_messages(
         include_extra=False,
         batch_size=THREAD_MESSAGE_LEGACY_SCAN_BATCH,
     )
+    messages = project_analytics_event_rows(messages)
 
     # Find the last AI message per run_id. AI messages are persisted by
     # RunJournal with event_type "llm.ai.response" (see runtime/journal.py);
@@ -1497,7 +1499,7 @@ async def _enrich_thread_message_page(
     # endpoint was inlining the equivalent loop but stamping every AI row,
     # which #4163 fixed for the other paths and missed here.
     stamp_turn_duration_on_last_ai(data, run_durations)
-    return data
+    return project_analytics_event_rows(data)
 
 
 @router.get("/{thread_id}/messages/page", response_model=ThreadMessagesPageResponse)
@@ -1560,7 +1562,7 @@ async def list_run_messages(
             if durations:
                 stamp_turn_duration_on_last_ai(data, durations)
 
-    return {"data": data, "has_more": has_more}
+    return {"data": project_analytics_event_rows(data), "has_more": has_more}
 
 
 def _archive_response_chunks(result: ArtifactArchiveResult):
@@ -1736,6 +1738,7 @@ async def list_run_events(
         limit=limit,
         after_seq=after_seq,
     )
+    events = project_analytics_event_rows(events)
     return [
         {
             **event,

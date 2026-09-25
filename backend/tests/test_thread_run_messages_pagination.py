@@ -100,6 +100,51 @@ def test_returns_paginated_envelope():
     assert len(body["data"]) == 3
 
 
+def test_run_messages_projects_legacy_analytics_rows_without_mutating_store():
+    import json
+
+    rows = [
+        {
+            "seq": 1,
+            "run_id": "run-1",
+            "event_type": "llm.ai.response",
+            "content": {
+                "type": "ai",
+                "tool_calls": [
+                    {
+                        "id": "call-1",
+                        "name": "query_business_data",
+                        "args": {"datasource_id": "ds-1", "sql": "MESSAGE_SQL_SENTINEL"},
+                    }
+                ],
+            },
+        },
+        {
+            "seq": 2,
+            "run_id": "run-1",
+            "event_type": "llm.tool.result",
+            "content": {
+                "type": "tool",
+                "tool_call_id": "call-1",
+                "name": "query_business_data",
+                "content": json.dumps({"code": "executed", "rows": [["MESSAGE_ROW_SENTINEL"]], "row_count": 1}),
+            },
+        },
+    ]
+    event_store = _make_event_store(rows)
+    app = _make_app(event_store=event_store)
+
+    with TestClient(app) as client:
+        response = client.get("/api/threads/thread-1/runs/run-1/messages")
+
+    assert response.status_code == 200
+    encoded = response.text
+    assert "MESSAGE_SQL_SENTINEL" not in encoded
+    assert "MESSAGE_ROW_SENTINEL" not in encoded
+    assert response.json()["data"][0]["content"]["tool_calls"][0]["args"] == {"datasource_id": "ds-1"}
+    assert "MESSAGE_SQL_SENTINEL" in json.dumps(rows)
+
+
 def test_has_more_true_when_extra_row_returned():
     """has_more=True when event store returns limit+1 rows."""
     # Default limit is 50; provide 51 rows

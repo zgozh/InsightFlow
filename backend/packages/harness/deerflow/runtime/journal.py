@@ -45,6 +45,7 @@ from deerflow.runtime.events.catalog import (
     RUN_ERROR_EVENT,
     RUN_START_EVENT,
 )
+from deerflow.runtime.serialization import project_analytics_messages, project_analytics_structured_value
 from deerflow.utils.messages import message_to_text, restore_original_human_message
 
 if TYPE_CHECKING:
@@ -138,10 +139,11 @@ def _build_history_seed_events(
     usage panel is run-scoped, not fed from the message feed).
     """
     events: list[dict] = []
+    projected_messages = project_analytics_messages(list(messages))
     created_at = datetime.now(UTC).isoformat()
     # Messages ahead of the first human turn (none in practice) stay in turn 0.
     turn_index = 0
-    for raw_message in messages:
+    for message_index, raw_message in enumerate(messages):
         message = _coerce_seed_message(raw_message)
         if not isinstance(message, BaseMessage):
             continue
@@ -154,11 +156,11 @@ def _build_history_seed_events(
             metadata: dict[str, Any] = {"caller": "lead_agent", **seed_metadata}
         elif isinstance(message, AIMessage):
             event_type = "llm.ai.response"
-            content = message.model_dump()
+            content = projected_messages[message_index]
             metadata = {"caller": "lead_agent", **seed_metadata}
         elif isinstance(message, ToolMessage):
             event_type = "llm.tool.result"
-            content = message.model_dump()
+            content = projected_messages[message_index]
             metadata = dict(seed_metadata)
         else:
             # System / remove / summary artifacts never enter the thread feed.
@@ -303,6 +305,7 @@ class RunJournal(BaseCallbackHandler):
         self._llm_call_index = 0
         self._seen_llm_starts: set[str] = set()  # langchain run_ids that fired on_chat_model_start
         self._current_run_tool_call_names: dict[str, str] = {}
+        self._tool_call_names_for_projection: dict[str, str] = {}
         self._active_tool_names: dict[str, str] = {}
         self._persisted_tool_message_identities: set[str] = set()
 
@@ -476,6 +479,7 @@ class RunJournal(BaseCallbackHandler):
                     logger.warning(f"on_llm_end {run_id}: generation has no message attribute: {gen}")
 
         for message in messages:
+            self._remember_tool_call_names_for_projection(message)
             if is_canonical_callback:
                 self._remember_current_run_tool_calls(message, caller=caller)
 
@@ -652,6 +656,20 @@ class RunJournal(BaseCallbackHandler):
             name = self._tool_call_value(tool_call, "name")
             self._current_run_tool_call_names[tool_call_id] = str(name or "")
 
+    def _remember_tool_call_names_for_projection(self, message: AnyMessage) -> None:
+        is_ai_message = isinstance(message, AIMessage) or getattr(message, "type", None) == "ai"
+        if not is_ai_message:
+            return
+        tool_calls = getattr(message, "tool_calls", None) or []
+        if not isinstance(tool_calls, list):
+            return
+        for tool_call in tool_calls:
+            tool_call_id = self._tool_call_value(tool_call, "id")
+            if not isinstance(tool_call_id, str) or not tool_call_id:
+                continue
+            name = self._tool_call_value(tool_call, "name")
+            self._tool_call_names_for_projection[tool_call_id] = str(name or "")
+
     def _persist_tool_result_message(self, message: BaseMessage) -> None:
         self._put(
             event_type=LLM_TOOL_RESULT_EVENT.event_type,
@@ -708,7 +726,7 @@ class RunJournal(BaseCallbackHandler):
             "run_id": self.run_id,
             "event_type": event_type,
             "category": category,
-            "content": content,
+            "content": project_analytics_structured_value(content, tool_names=self._tool_call_names_for_projection),
             "metadata": metadata or {},
             "created_at": datetime.now(UTC).isoformat(),
         }
@@ -1173,6 +1191,7 @@ class RunJournal(BaseCallbackHandler):
         self._llm_start_times.clear()
         self._seen_llm_starts.clear()
         self._current_run_tool_call_names.clear()
+        self._tool_call_names_for_projection.clear()
         self._persisted_tool_message_identities.clear()
         self._produced_artifacts.clear()
         self._produced_artifact_keys.clear()

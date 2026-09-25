@@ -113,6 +113,38 @@ def test_seed_deserializes_dict_shaped_checkpoint_messages() -> None:
     assert events[2]["content"]["tool_call_id"] == "call-1"
 
 
+def test_seed_projects_analytics_structures_without_mutating_checkpoint_messages() -> None:
+    import json
+
+    tool_call = {
+        "name": "query_business_data",
+        "args": {"datasource_id": "ds-1", "sql": "SEED_SQL_SENTINEL", "token": "SEED_TOKEN_SENTINEL"},
+        "id": "call-analytics",
+        "type": "tool_call",
+    }
+    result_content = json.dumps(
+        {
+            "code": "executed",
+            "columns": ["SEED_COLUMN_SENTINEL"],
+            "rows": [["SEED_ROW_SENTINEL"]],
+            "row_count": 1,
+            "evidence": {"evidence_id": "a" * 64, "query_hash": "b" * 64},
+        }
+    )
+    ai_message = AIMessage(id="analytics-ai", content="", tool_calls=[tool_call])
+    tool_message = ToolMessage(id="analytics-tool", content=result_content, tool_call_id="call-analytics")
+
+    events = _seed([ai_message, tool_message])
+
+    assert events[0]["content"]["tool_calls"][0]["args"] == {"datasource_id": "ds-1"}
+    projected_result = json.loads(events[1]["content"]["content"])
+    assert projected_result["code"] == "executed"
+    assert projected_result["evidence"]["evidence_id"] == "a" * 64
+    assert not any(sentinel in json.dumps(events) for sentinel in ("SEED_SQL_SENTINEL", "SEED_TOKEN_SENTINEL", "SEED_COLUMN_SENTINEL", "SEED_ROW_SENTINEL"))
+    assert ai_message.tool_calls[0]["args"]["sql"] == "SEED_SQL_SENTINEL"
+    assert tool_message.content == result_content
+
+
 def test_seed_drops_unparseable_dict_message() -> None:
     """A dict with no usable ``type`` can't be reconstructed; it is dropped
     rather than crashing the seed (best-effort — the branch stays usable)."""
