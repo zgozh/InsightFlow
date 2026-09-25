@@ -101,7 +101,7 @@ def _collect_analytics_tool_call_names(value: Any, tool_names: dict[str, str]) -
                     for call in calls:
                         tool_id = call.get("id") if isinstance(call, dict) else None
                         tool_name = _analytics_tool_name(call)
-                        if isinstance(tool_id, str) and tool_id and isinstance(tool_name, str):
+                        if isinstance(tool_id, str) and tool_id and isinstance(tool_name, str) and tool_name:
                             tool_names[tool_id] = tool_name
             if isinstance(additional_kwargs, dict):
                 raw_calls = additional_kwargs.get("tool_calls")
@@ -109,13 +109,13 @@ def _collect_analytics_tool_call_names(value: Any, tool_names: dict[str, str]) -
                     for call in raw_calls:
                         tool_id = call.get("id") if isinstance(call, dict) else None
                         tool_name = _analytics_tool_name(call)
-                        if isinstance(tool_id, str) and tool_id and isinstance(tool_name, str):
+                        if isinstance(tool_id, str) and tool_id and isinstance(tool_name, str) and tool_name:
                             tool_names[tool_id] = tool_name
                 raw_call = additional_kwargs.get("function_call")
                 if isinstance(raw_call, dict):
                     tool_id = raw_call.get("id")
                     tool_name = _analytics_tool_name(raw_call)
-                    if isinstance(tool_id, str) and tool_id and isinstance(tool_name, str):
+                    if isinstance(tool_id, str) and tool_id and isinstance(tool_name, str) and tool_name:
                         tool_names[tool_id] = tool_name
         for child in value.values():
             _collect_analytics_tool_call_names(child, tool_names)
@@ -124,25 +124,45 @@ def _collect_analytics_tool_call_names(value: Any, tool_names: dict[str, str]) -
             _collect_analytics_tool_call_names(child, tool_names)
 
 
-def _is_analytics_call(call: Any, tool_names: dict[str, str]) -> bool:
-    if not isinstance(call, dict):
-        return False
-    tool_name = _analytics_tool_name(call)
-    if tool_name in _ANALYTICS_SENSITIVE_TOOL_NAMES:
-        return True
-    tool_id = call.get("id")
-    return isinstance(tool_id, str) and tool_names.get(tool_id) in _ANALYTICS_SENSITIVE_TOOL_NAMES
+def _sensitive_analytics_tool_name(name: Any) -> str | None:
+    if not isinstance(name, str) or not name:
+        return None
+    for sensitive_name in _ANALYTICS_SENSITIVE_TOOL_NAMES:
+        if sensitive_name == name or sensitive_name.startswith(name):
+            return sensitive_name
+    return None
 
 
-def _resolved_analytics_tool_name(call: Any, tool_names: dict[str, str]) -> str | None:
+def _resolved_tool_name(call: Any, tool_names: dict[str, str]) -> str | None:
     if not isinstance(call, dict):
         return None
     direct = _analytics_tool_name(call)
-    if direct in _ANALYTICS_SENSITIVE_TOOL_NAMES:
+    if isinstance(direct, str) and direct:
         return direct
     tool_id = call.get("id")
-    resolved = tool_names.get(tool_id) if isinstance(tool_id, str) else None
-    return resolved if resolved in _ANALYTICS_SENSITIVE_TOOL_NAMES else None
+    resolved = tool_names.get(tool_id) if isinstance(tool_id, str) and tool_id else None
+    return resolved if isinstance(resolved, str) and resolved else None
+
+
+def _is_analytics_call(call: Any, tool_names: dict[str, str]) -> bool:
+    return _sensitive_analytics_tool_name(_resolved_tool_name(call, tool_names)) is not None
+
+
+def _resolved_analytics_tool_name(call: Any, tool_names: dict[str, str]) -> str | None:
+    return _sensitive_analytics_tool_name(_resolved_tool_name(call, tool_names))
+
+
+def _is_ambiguous_tool_call(call: Any, tool_names: dict[str, str]) -> bool:
+    if not isinstance(call, dict) or _is_analytics_call(call, tool_names):
+        return False
+    # 名称缺失或只有未知 ID 时，只遮盖这个无法归类的调用，不扩散到同帧的普通工具。
+    return not _resolved_tool_name(call, tool_names)
+
+
+def _mask_ambiguous_tool_args(args: Any, *, json_text: bool = False) -> dict[str, Any] | str:
+    if isinstance(args, str):
+        return "{}" if json_text else ""
+    return {}
 
 
 def _safe_analytics_tool_args(args: Any) -> dict[str, Any] | str:
@@ -261,7 +281,12 @@ def _project_analysis_report_result_content(content: Any) -> str:
     return json.dumps(safe, ensure_ascii=False, separators=(",", ":"))
 
 
-def _project_analytics_message(value: dict[str, Any], tool_names: dict[str, str]) -> dict[str, Any]:
+def _project_analytics_message(
+    value: dict[str, Any],
+    tool_names: dict[str, str],
+    *,
+    mask_ambiguous_tool_call_chunks: bool = True,
+) -> dict[str, Any]:
     message_type = value.get("type")
     if isinstance(message_type, str) and message_type in {"ai", "AIMessage", "AIMessageChunk"}:
         for key in ("tool_calls", "invalid_tool_calls", "tool_call_chunks"):
@@ -269,9 +294,11 @@ def _project_analytics_message(value: dict[str, Any], tool_names: dict[str, str]
             if not isinstance(calls, list):
                 continue
             for call in calls:
-                if not _is_analytics_call(call, tool_names):
-                    continue
                 tool_name = _resolved_analytics_tool_name(call, tool_names)
+                if tool_name is None:
+                    if (key != "tool_call_chunks" or mask_ambiguous_tool_call_chunks) and _is_ambiguous_tool_call(call, tool_names) and isinstance(call, dict) and "args" in call:
+                        call["args"] = _mask_ambiguous_tool_args(call.get("args"))
+                    continue
                 if key == "tool_call_chunks":
                     call["args"] = ""
                 elif key == "invalid_tool_calls":
@@ -287,33 +314,40 @@ def _project_analytics_message(value: dict[str, Any], tool_names: dict[str, str]
             raw_calls = additional_kwargs.get("tool_calls")
             if isinstance(raw_calls, list):
                 for call in raw_calls:
-                    if not _is_analytics_call(call, tool_names):
-                        continue
                     tool_name = _resolved_analytics_tool_name(call, tool_names)
                     function = call.get("function") if isinstance(call, dict) else None
-                    if isinstance(function, dict):
+                    if tool_name is not None and isinstance(function, dict):
                         if tool_name == _ANALYSIS_REPORT_WRITER_TOOL:
                             function["arguments"] = _safe_analysis_report_tool_args(function.get("arguments"))
                         else:
                             function["arguments"] = _safe_analytics_tool_args(function.get("arguments"))
-                    elif isinstance(call, dict):
+                    elif tool_name is not None and isinstance(call, dict):
                         if tool_name == _ANALYSIS_REPORT_WRITER_TOOL:
                             call["args"] = _safe_analysis_report_tool_args(call.get("args"))
                         else:
                             call["args"] = _safe_analytics_tool_args(call.get("args"))
+                    elif _is_ambiguous_tool_call(call, tool_names):
+                        if isinstance(function, dict) and "arguments" in function:
+                            function["arguments"] = _mask_ambiguous_tool_args(function.get("arguments"), json_text=True)
+                        elif isinstance(call, dict) and "args" in call:
+                            call["args"] = _mask_ambiguous_tool_args(call.get("args"))
             raw_call = additional_kwargs.get("function_call")
             if isinstance(raw_call, dict):
-                raw_call_name = _analytics_tool_name(raw_call)
+                raw_call_name = _resolved_analytics_tool_name(raw_call, tool_names)
                 if raw_call_name == _ANALYTICS_QUERY_TOOL:
                     raw_call["arguments"] = _safe_analytics_tool_args(raw_call.get("arguments"))
                 elif raw_call_name == _ANALYSIS_REPORT_WRITER_TOOL:
                     raw_call["arguments"] = _safe_analysis_report_tool_args(raw_call.get("arguments"))
+                elif _is_ambiguous_tool_call(raw_call, tool_names) and "arguments" in raw_call:
+                    raw_call["arguments"] = _mask_ambiguous_tool_args(raw_call.get("arguments"), json_text=True)
     elif isinstance(message_type, str) and message_type in {"tool", "ToolMessage"}:
         tool_id = value.get("tool_call_id")
         tool_name = value.get("name")
-        if tool_name not in _ANALYTICS_SENSITIVE_TOOL_NAMES and not (isinstance(tool_id, str) and tool_names.get(tool_id) in _ANALYTICS_SENSITIVE_TOOL_NAMES):
+        resolved_name = _sensitive_analytics_tool_name(tool_name)
+        if not isinstance(tool_name, str) or not tool_name:
+            resolved_name = _sensitive_analytics_tool_name(tool_names.get(tool_id)) if isinstance(tool_id, str) else None
+        if resolved_name is None:
             return value
-        resolved_name = tool_name if tool_name in _ANALYTICS_SENSITIVE_TOOL_NAMES else tool_names.get(tool_id)
         if resolved_name == _ANALYSIS_REPORT_WRITER_TOOL:
             value["content"] = _project_analysis_report_result_content(value.get("content"))
         else:
@@ -377,6 +411,9 @@ def project_analytics_event_rows(events: list[Any]) -> list[Any]:
         scope = run_id if isinstance(run_id, str) else None
         names = names_by_run.setdefault(scope, {})
         _collect_analytics_tool_call_names(event, names)
+        content = event.get("content") if isinstance(event, dict) and event.get("event_type") == "subagent.step" else None
+        if isinstance(content, dict) and content.get("kind") == "ai":
+            _collect_analytics_tool_call_names({"type": "ai", **content}, names)
         projected.append(_project_analytics_value(event, names))
     for event in projected:
         if not isinstance(event, dict) or event.get("event_type") != "subagent.step":
@@ -388,20 +425,16 @@ def project_analytics_event_rows(events: list[Any]) -> list[Any]:
         if not isinstance(content, dict):
             continue
         if content.get("kind") == "ai":
-            calls = content.get("tool_calls")
-            if isinstance(calls, list):
-                for call in calls:
-                    if _is_analytics_call(call, tool_names):
-                        tool_name = _resolved_analytics_tool_name(call, tool_names)
-                        if tool_name == _ANALYSIS_REPORT_WRITER_TOOL:
-                            call["args"] = _safe_analysis_report_tool_args(call.get("args"))
-                        else:
-                            call["args"] = _safe_analytics_tool_args(call.get("args"))
+            _project_analytics_message({"type": "ai", **content}, tool_names)
         elif content.get("kind") == "tool":
             tool_name = content.get("tool_name")
-            if tool_name == _ANALYSIS_REPORT_WRITER_TOOL:
+            resolved_name = _sensitive_analytics_tool_name(tool_name)
+            if not isinstance(tool_name, str) or not tool_name:
+                tool_id = content.get("tool_call_id")
+                resolved_name = _sensitive_analytics_tool_name(tool_names.get(tool_id)) if isinstance(tool_id, str) else None
+            if resolved_name == _ANALYSIS_REPORT_WRITER_TOOL:
                 content["text"] = _project_analysis_report_result_content(content.get("text"))
-            elif tool_name == _ANALYTICS_QUERY_TOOL:
+            elif resolved_name == _ANALYTICS_QUERY_TOOL:
                 content["text"] = _project_analytics_result_content(content.get("text"))
     return projected
 
@@ -498,7 +531,7 @@ class AnalyticsToolCallChunkProjector:
                     self._ids_by_index[key] = tool_id
             chunk["args"] = ""
 
-        _project_analytics_message(message, tool_names)
+        _project_analytics_message(message, tool_names, mask_ambiguous_tool_call_chunks=False)
 
         for field in ("tool_calls", "invalid_tool_calls"):
             calls = message.get(field)
@@ -514,7 +547,7 @@ class AnalyticsToolCallChunkProjector:
                 # 不把同帧中有明确名称的普通工具参数一起清空。
                 if not direct_analytics and not call_name and not call_id and len(calls) == 1 and len(chunks) == 1 and has_ambiguous_chunk:
                     direct_analytics = True
-                possible_analytics = isinstance(call_name, str) and any(name.startswith(call_name) for name in _ANALYTICS_SENSITIVE_TOOL_NAMES)
+                possible_analytics = isinstance(call_name, str) and bool(call_name) and any(name.startswith(call_name) for name in _ANALYTICS_SENSITIVE_TOOL_NAMES)
                 direct_analytics = direct_analytics or possible_analytics
                 if not direct_analytics:
                     explicit_other = isinstance(call_name, str) and bool(call_name)

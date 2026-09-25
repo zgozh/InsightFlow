@@ -128,9 +128,11 @@ journal to pin serialized, deduplicated parallel tool callbacks.
 报告路径；RunJournal 仅在精确工具名、当前 run 的 tool-call ID、固定 run 文件名及成功 JSON 回执
 全部匹配时，把该报告路径归因到 `by_tool.write_analysis_report`。worker 仅将“本 run 确实产生的同一
 报告路径 + 该成功回执”作为自包含交付，不放宽 `present_files` 对普通 outputs 的证明规则。临时
-staging 目录不计入 workspace/output 扫描。模型内部调用仍保留完整 Markdown；SSE 增量 chunk、消息与
-event 历史/seed 投影只按精确工具身份遮盖 `markdown`，回执仅保留允许字段。该投影只约束平台派生副本，
-不声称报告 artifact 正文已脱敏；正文仍受线程 owner 检查保护。
+staging 目录不计入 workspace/output 扫描。模型内部调用仍保留完整 Markdown；平台派生副本对精确 writer
+身份沿用安全字段投影，对仍可能成为 writer/Analytics 查询工具的名称前缀和无可靠身份的单个解析壳保守
+遮盖参数，已明确分叉为其他工具的完整名称及其普通参数保持可见。SSE 增量 chunk 按稳定消息 ID/索引
+记住名称分叉；回执仅保留允许字段。该投影只约束平台派生副本，不声称报告 artifact 正文已脱敏；正文
+仍受线程 owner 检查保护。
 
 **Deferred-tool promotion event deduplication** (`runtime/journal.py`): one
 `RunJournal` owns the lead graph's run-scoped atomic promotion claim. Parallel

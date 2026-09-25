@@ -535,3 +535,194 @@ def test_analysis_report_writer_projection_hides_markdown_and_projects_receipt_f
     )
     assert event_rows[0]["content"]["tool_calls"][0]["args"] == {"title": "Synthetic report", "evidence_ids": [evidence_id]}
     assert markdown not in json.dumps(event_rows)
+
+
+def test_structured_projection_masks_partial_analytics_tool_names_in_all_raw_shapes():
+    import copy
+    import json
+
+    from deerflow.runtime.serialization import project_analytics_structured_value, serialize_channel_values_for_api
+
+    payload = {
+        "messages": [
+            {
+                "type": "ai",
+                "tool_calls": [{"id": "partial-writer", "name": "write_analysis_", "args": {"markdown": "BODY_SENTINEL"}}],
+            },
+            {
+                "type": "tool",
+                "tool_call_id": "partial-writer",
+                "content": '{"markdown":"CORRELATED_BODY_SENTINEL"}',
+            },
+            {
+                "type": "ai",
+                "tool_calls": [{"id": "partial-query", "name": "query_business_", "args": {"sql": "SQL_SENTINEL"}}],
+            },
+            {
+                "type": "ai",
+                "invalid_tool_calls": [{"id": "invalid-writer", "name": "write_analysis_repor", "args": '{"markdown":"INVALID_BODY_SENTINEL"}'}],
+            },
+            {
+                "type": "AIMessageChunk",
+                "tool_call_chunks": [{"id": "chunk-query", "index": 0, "name": "query_business_dat", "args": '{"sql":"CHUNK_SQL_SENTINEL"}'}],
+            },
+            {
+                "type": "ai",
+                "additional_kwargs": {
+                    "tool_calls": [
+                        {
+                            "id": "raw-writer",
+                            "function": {"name": "write_analysis_repor", "arguments": '{"markdown":"RAW_BODY_SENTINEL"}'},
+                        }
+                    ],
+                    "function_call": {
+                        "name": "query_business_dat",
+                        "arguments": '{"sql":"RAW_SQL_SENTINEL"}',
+                    },
+                },
+            },
+        ]
+    }
+    original = copy.deepcopy(payload)
+
+    projected = project_analytics_structured_value(payload)
+    encoded = json.dumps(projected, ensure_ascii=False)
+    checkpoint_history = serialize_channel_values_for_api({"messages": payload["messages"]})
+    checkpoint_history_encoded = json.dumps(checkpoint_history, ensure_ascii=False)
+
+    assert not any(
+        sentinel in encoded
+        for sentinel in (
+            "BODY_SENTINEL",
+            "CORRELATED_BODY_SENTINEL",
+            "SQL_SENTINEL",
+            "INVALID_BODY_SENTINEL",
+            "CHUNK_SQL_SENTINEL",
+            "RAW_BODY_SENTINEL",
+            "RAW_SQL_SENTINEL",
+        )
+    )
+    assert not any(
+        sentinel in checkpoint_history_encoded
+        for sentinel in (
+            "BODY_SENTINEL",
+            "CORRELATED_BODY_SENTINEL",
+            "SQL_SENTINEL",
+            "INVALID_BODY_SENTINEL",
+            "CHUNK_SQL_SENTINEL",
+            "RAW_BODY_SENTINEL",
+            "RAW_SQL_SENTINEL",
+        )
+    )
+    assert payload == original
+
+
+def test_structured_projection_masks_only_ambiguous_call_and_preserves_explicit_other_names():
+    import json
+
+    from deerflow.runtime.serialization import project_analytics_structured_value
+
+    payload = {
+        "type": "ai",
+        "tool_calls": [
+            {"args": {"markdown": "AMBIGUOUS_BODY_SENTINEL"}},
+            {"id": "ordinary", "name": "web_search", "args": {"query": "ordinary query"}},
+            {
+                "id": "writer-preview",
+                "name": "write_analysis_report_preview",
+                "args": {"markdown": "visible writer-preview text"},
+            },
+            {
+                "id": "query-export",
+                "name": "query_business_data_export",
+                "args": {"sql": "visible query-export text"},
+            },
+        ],
+        "additional_kwargs": {
+            "tool_calls": [
+                {"function": {"arguments": '{"markdown":"AMBIGUOUS_RAW_BODY_SENTINEL"}'}},
+                {"function": {"name": "web_search", "arguments": '{"query":"ordinary raw query"}'}},
+            ]
+        },
+    }
+
+    projected = project_analytics_structured_value(payload)
+    calls = projected["tool_calls"]
+    encoded = json.dumps(projected, ensure_ascii=False)
+
+    assert "AMBIGUOUS_BODY_SENTINEL" not in encoded
+    assert "AMBIGUOUS_RAW_BODY_SENTINEL" not in encoded
+    assert calls[0]["args"] == {}
+    assert calls[1]["args"] == {"query": "ordinary query"}
+    assert calls[2]["args"] == {"markdown": "visible writer-preview text"}
+    assert calls[3]["args"] == {"sql": "visible query-export text"}
+    raw_calls = projected["additional_kwargs"]["tool_calls"]
+    assert raw_calls[0]["function"]["arguments"] == "{}"
+    assert raw_calls[1]["function"]["arguments"] == '{"query":"ordinary raw query"}'
+
+
+def test_history_event_projection_masks_partial_invalid_and_raw_calls():
+    import json
+
+    from deerflow.runtime.serialization import project_analytics_event_rows
+
+    events = [
+        {
+            "run_id": "synthetic-run",
+            "event_type": "llm.ai.response",
+            "content": {
+                "type": "ai",
+                "invalid_tool_calls": [{"id": "history-invalid", "name": "write_analysis_repor", "args": '{"markdown":"HISTORY_INVALID_SENTINEL"}'}],
+                "additional_kwargs": {
+                    "tool_calls": [
+                        {
+                            "id": "history-raw",
+                            "function": {"name": "query_business_dat", "arguments": '{"sql":"HISTORY_RAW_SQL_SENTINEL"}'},
+                        }
+                    ]
+                },
+            },
+        },
+        {
+            "run_id": "synthetic-run",
+            "event_type": "llm.tool.result",
+            "content": {
+                "type": "tool",
+                "tool_call_id": "history-raw",
+                "content": '{"rows":[["HISTORY_RESULT_SENTINEL"]]}',
+            },
+        },
+        {
+            "run_id": "synthetic-run",
+            "event_type": "subagent.step",
+            "content": {
+                "kind": "ai",
+                "tool_calls": [{"id": "subagent-partial", "name": "write_analysis_", "args": {"markdown": "SUBAGENT_BODY_SENTINEL"}}],
+            },
+        },
+        {
+            "run_id": "synthetic-run",
+            "event_type": "subagent.step",
+            "content": {
+                "kind": "tool",
+                "tool_call_id": "subagent-partial",
+                "text": '{"markdown":"SUBAGENT_RESULT_SENTINEL"}',
+            },
+        },
+    ]
+
+    projected = project_analytics_event_rows(events)
+    encoded = json.dumps(projected, ensure_ascii=False)
+
+    assert not any(
+        sentinel in encoded
+        for sentinel in (
+            "HISTORY_INVALID_SENTINEL",
+            "HISTORY_RAW_SQL_SENTINEL",
+            "HISTORY_RESULT_SENTINEL",
+            "SUBAGENT_BODY_SENTINEL",
+            "SUBAGENT_RESULT_SENTINEL",
+        )
+    )
+    assert projected[0]["content"]["invalid_tool_calls"][0]["args"] == ""
+    assert json.loads(projected[1]["content"]["content"]) == {"code": "analytics_result_unavailable"}

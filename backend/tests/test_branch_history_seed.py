@@ -194,6 +194,42 @@ def test_checkpoint_seed_projects_report_markdown_without_mutating_checkpoint_me
     assert markdown in tool_result.content
 
 
+def test_checkpoint_seed_masks_partial_report_writer_and_correlated_result() -> None:
+    import json
+
+    markdown = "CHECKPOINT_PARTIAL_REPORT_SENTINEL"
+    result_body = "CHECKPOINT_PARTIAL_RESULT_SENTINEL"
+    ai_message = AIMessage(
+        id="partial-report-ai",
+        content="",
+        tool_calls=[
+            {
+                "id": "partial-report-call",
+                "name": "write_analysis_",
+                "args": {"title": "Synthetic report", "markdown": markdown},
+            }
+        ],
+    )
+    tool_result = ToolMessage(
+        id="partial-report-result",
+        content=json.dumps({"markdown": result_body}),
+        tool_call_id="partial-report-call",
+    )
+
+    events = build_checkpoint_history_seed_events(
+        [ai_message, tool_result],
+        thread_id="thread-1",
+        run_id_prefix="checkpoint-seed-thread-1",
+    )
+
+    assert markdown not in json.dumps(events)
+    assert result_body not in json.dumps(events)
+    assert events[0]["content"]["tool_calls"][0]["args"] == {"title": "Synthetic report"}
+    assert json.loads(events[1]["content"]["content"]) == {"code": "analysis_report_result_unavailable"}
+    assert ai_message.tool_calls[0]["args"]["markdown"] == markdown
+    assert result_body in tool_result.content
+
+
 def test_seed_drops_unparseable_dict_message() -> None:
     """A dict with no usable ``type`` can't be reconstructed; it is dropped
     rather than crashing the seed (best-effort — the branch stays usable)."""

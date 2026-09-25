@@ -85,7 +85,7 @@ from deerflow.runtime.goal import (
     write_thread_goal,
 )
 from deerflow.runtime.keyed_lock import AsyncKeyedLockTable
-from deerflow.runtime.serialization import AnalyticsToolCallChunkProjector, project_analytics_structured_value, serialize
+from deerflow.runtime.serialization import AnalyticsToolCallChunkProjector, project_analytics_structured_value, serialize, serialize_lc_object
 from deerflow.runtime.stream_bridge import StreamBridge
 from deerflow.runtime.stream_modes import normalize_stream_modes, to_langgraph_stream_modes
 from deerflow.runtime.user_context import get_current_user, get_effective_user_id, resolve_runtime_user_id
@@ -3070,10 +3070,16 @@ def _serialize_and_project_stream_payload(
     namespace: tuple[str, ...] = (),
 ) -> Any:
     """以副本序列化各类外发帧，并对消息块保留增量身份投影。"""
-    payload = project_analytics_structured_value(serialize(chunk, mode=mode))
     if analytics_chunk_projector is not None and mode in {"messages", "messages-tuple"}:
-        return analytics_chunk_projector.project(payload, namespace=namespace)
-    return payload
+        if mode == "messages" and isinstance(chunk, tuple) and len(chunk) == 2:
+            serialized = [serialize_lc_object(chunk[0]), chunk[1] if isinstance(chunk[1], dict) else {}]
+        else:
+            serialized = serialize_lc_object(chunk)
+        message = analytics_chunk_projector._message_from_payload(serialized)
+        if message is not None and message.get("type") == "AIMessageChunk":
+            return analytics_chunk_projector.project(serialized, namespace=namespace)
+        return project_analytics_structured_value(serialized)
+    return project_analytics_structured_value(serialize(chunk, mode=mode))
 
 
 async def _publish_stream_item(
