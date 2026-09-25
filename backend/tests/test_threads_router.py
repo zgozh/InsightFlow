@@ -685,6 +685,134 @@ def test_thread_kind_defaults_to_chat_and_metadata_cannot_create_analysis_mode()
     assert THREAD_ANALYSIS_MODE_METADATA_KEY not in stored["metadata"]
 
 
+def test_thread_creation_idempotency_requires_matching_persisted_kind() -> None:
+    app, _store, checkpointer = _build_thread_app()
+
+    with TestClient(app) as client:
+        for thread_id, kind, conflicting_kind in (
+            ("idempotent-chat-kind", "chat", "analysis"),
+            ("idempotent-analysis-kind", "analysis", "chat"),
+        ):
+            created = client.post(
+                "/api/threads",
+                json={"thread_id": thread_id, "kind": kind, "metadata": {"label": "original"}},
+            )
+            assert created.status_code == 200, created.text
+            before = asyncio.run(app.state.thread_store.get(thread_id, user_id=None))
+            checkpoint_config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
+            checkpoint_before = asyncio.run(checkpointer.aget_tuple(checkpoint_config))
+
+            same_kind = client.post(
+                "/api/threads",
+                json={"thread_id": thread_id, "kind": kind, "metadata": {"label": "same-kind retry"}},
+            )
+            conflict = client.post(
+                "/api/threads",
+                json={"thread_id": thread_id, "kind": conflicting_kind, "metadata": {"label": "conflicting retry"}},
+            )
+
+            assert same_kind.status_code == 200, same_kind.text
+            assert conflict.status_code == 409
+            assert conflict.json() == {"detail": {"code": "thread_kind_conflict"}}
+            after = asyncio.run(app.state.thread_store.get(thread_id, user_id=None))
+            checkpoint_after = asyncio.run(checkpointer.aget_tuple(checkpoint_config))
+            assert after == before
+            assert checkpoint_after is not None and checkpoint_before is not None
+            assert checkpoint_after.config == checkpoint_before.config
+            assert checkpoint_after.checkpoint == checkpoint_before.checkpoint
+            assert checkpoint_after.metadata == checkpoint_before.metadata
+
+
+def test_thread_creation_integrity_race_rejects_conflicting_kind() -> None:
+    from sqlalchemy.exc import IntegrityError
+
+    app, store, checkpointer = _build_thread_app()
+
+    class _RacingThreadMetaStore(_PermissiveThreadMetaStore):
+        async def create(self, thread_id, *, assistant_id=None, user_id=None, display_name=None, metadata=None, project_id=None):  # type: ignore[override]
+            await super().create(
+                thread_id,
+                assistant_id=assistant_id,
+                user_id=user_id,
+                display_name=display_name,
+                metadata={THREAD_ANALYSIS_MODE_METADATA_KEY: True, "winner": "concurrent"},
+                project_id=project_id,
+            )
+            raise IntegrityError("INSERT INTO threads_meta", {}, Exception("synthetic duplicate key"))
+
+    app.state.thread_store = _RacingThreadMetaStore(store)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/threads",
+            json={"thread_id": "integrity-kind-race", "kind": "chat", "metadata": {"winner": "loser"}},
+        )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": {"code": "thread_kind_conflict"}}
+    stored = asyncio.run(app.state.thread_store.get("integrity-kind-race", user_id=None))
+    assert stored["metadata"] == {THREAD_ANALYSIS_MODE_METADATA_KEY: True, "winner": "concurrent"}
+    assert asyncio.run(checkpointer.aget_tuple({"configurable": {"thread_id": "integrity-kind-race", "checkpoint_ns": ""}})) is None
+
+
+@pytest.mark.parametrize("metadata", [{THREAD_ANALYSIS_MODE_METADATA_KEY: None}, {THREAD_ANALYSIS_MODE_METADATA_KEY: "analysis"}, ["not-an-object"]])
+def test_thread_creation_fails_closed_on_corrupt_persisted_kind(metadata) -> None:
+    app, _store, checkpointer = _build_thread_app()
+    asyncio.run(app.state.thread_store.create("corrupt-kind", user_id=None, metadata=metadata))
+    before = asyncio.run(app.state.thread_store.get("corrupt-kind", user_id=None))
+
+    with TestClient(app) as client:
+        response = client.post("/api/threads", json={"thread_id": "corrupt-kind", "kind": "chat"})
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": {"code": "analysis_mode_unavailable"}}
+    assert asyncio.run(app.state.thread_store.get("corrupt-kind", user_id=None)) == before
+    assert asyncio.run(checkpointer.aget_tuple({"configurable": {"thread_id": "corrupt-kind", "checkpoint_ns": ""}})) is None
+
+
+def test_memory_thread_creation_race_keeps_first_persisted_kind() -> None:
+    from _router_auth_helpers import call_unwrapped
+
+    app, store, _checkpointer = _build_thread_app()
+
+    class _YieldingThreadMetaStore(_PermissiveThreadMetaStore):
+        async def get(self, *args, **kwargs):
+            record = await super().get(*args, **kwargs)
+            await asyncio.sleep(0)
+            return record
+
+    app.state.thread_store = _YieldingThreadMetaStore(store)
+    request = SimpleNamespace(
+        headers={},
+        state=SimpleNamespace(user=SimpleNamespace(id="synthetic-user", system_role="user")),
+        app=app,
+    )
+
+    async def _create(kind: str):
+        try:
+            return await call_unwrapped(
+                threads.create_thread,
+                threads.ThreadCreateRequest(thread_id="memory-kind-race", kind=kind),
+                request,
+            )
+        except HTTPException as exc:
+            return exc
+
+    async def _scenario():
+        return await asyncio.gather(_create("chat"), _create("analysis"))
+
+    outcomes = asyncio.run(_scenario())
+    successful = [(kind, result) for kind, result in zip(("chat", "analysis"), outcomes, strict=True) if isinstance(result, threads.ThreadResponse)]
+    conflicts = [result for result in outcomes if isinstance(result, HTTPException)]
+
+    assert len(successful) == 1
+    assert len(conflicts) == 1
+    assert conflicts[0].status_code == 409
+    assert conflicts[0].detail == {"code": "thread_kind_conflict"}
+    stored = asyncio.run(app.state.thread_store.get("memory-kind-race", user_id=None))
+    assert (stored["metadata"].get(THREAD_ANALYSIS_MODE_METADATA_KEY) is True) == (successful[0][0] == "analysis")
+
+
 @pytest.mark.parametrize("handler_name", ["create_run", "stream_run", "wait_run"])
 def test_explicit_thread_run_entrypoints_require_persisted_thread(monkeypatch, handler_name: str) -> None:
     from _router_auth_helpers import call_unwrapped
@@ -924,33 +1052,11 @@ def test_fast_path_trusted_claim_does_not_take_over_owned_row() -> None:
     assert final_record["user_id"] == "owner-a"
 
 
-def test_insert_race_concurrent_trusted_claims_have_one_winner() -> None:
-    from sqlalchemy.exc import IntegrityError
-
+def test_concurrent_trusted_creates_have_one_winner() -> None:
     from app.gateway.auth_disabled import AUTH_SOURCE_INTERNAL
     from app.gateway.internal_auth import INTERNAL_OWNER_USER_ID_HEADER_NAME, INTERNAL_SYSTEM_ROLE
 
-    class _ConcurrentInsertRaceStore(MemoryThreadMetaStore):
-        def __init__(self):
-            super().__init__(InMemoryStore())
-            self._create_arrivals = 0
-            self._create_lock = asyncio.Lock()
-            self._legacy_row_committed = asyncio.Event()
-
-        async def create(self, thread_id, *, assistant_id=None, user_id=None, display_name=None, metadata=None, project_id=None):  # type: ignore[override]
-            async with self._create_lock:
-                self._create_arrivals += 1
-                if self._create_arrivals == 2:
-                    await super().create(thread_id, user_id=None, metadata=metadata)
-                    self._legacy_row_committed.set()
-            await self._legacy_row_committed.wait()
-            raise IntegrityError(
-                "INSERT INTO threads_meta",
-                {},
-                Exception("UNIQUE constraint failed: threads_meta.thread_id"),
-            )
-
-    thread_store = _ConcurrentInsertRaceStore()
+    thread_store = MemoryThreadMetaStore(InMemoryStore())
     checkpointer = InMemorySaver()
 
     def _request(owner):
@@ -965,14 +1071,14 @@ def test_insert_race_concurrent_trusted_claims_have_one_winner() -> None:
         outcomes = await asyncio.gather(
             *(
                 threads.create_thread(
-                    threads.ThreadCreateRequest(thread_id="legacy-insert-race"),
+                    threads.ThreadCreateRequest(thread_id="trusted-owner-create-race"),
                     _request(owner),
                 )
                 for owner in owners
             ),
             return_exceptions=True,
         )
-        return owners, outcomes, await thread_store.get("legacy-insert-race", user_id=None)
+        return owners, outcomes, await thread_store.get("trusted-owner-create-race", user_id=None)
 
     owners, outcomes, final_record = asyncio.run(_scenario())
 
@@ -981,7 +1087,7 @@ def test_insert_race_concurrent_trusted_claims_have_one_winner() -> None:
     assert winners == [final_record["user_id"]]
     assert final_record["user_id"] in owners
     assert len(failures) == 1
-    assert failures[0].status_code == 500
+    assert failures[0].status_code == 404
 
 
 def test_create_thread_maps_memory_owner_conflict_to_404() -> None:

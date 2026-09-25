@@ -770,6 +770,8 @@ async def _resolve_existing_thread(
     thread_id: str,
     thread_owner_user_id: str | None,
     thread_owner_kwargs: dict[str, Any],
+    *,
+    requested_kind: Literal["chat", "analysis"] | None = None,
 ) -> dict | None:
     """Return the existing thread_meta record for an idempotent create.
 
@@ -780,9 +782,24 @@ async def _resolve_existing_thread(
     """
     existing_record = await thread_store.get(thread_id, **thread_owner_kwargs)
     if existing_record is None and thread_owner_user_id:
+        if requested_kind is not None:
+            candidate = await thread_store.get(thread_id, user_id=None)
+            if candidate is not None and candidate.get("user_id") is None:
+                _require_matching_thread_kind(requested_kind, candidate)
         await thread_store.claim_unowned(thread_id, thread_owner_user_id)
         existing_record = await thread_store.get(thread_id, **thread_owner_kwargs)
+    if existing_record is not None and requested_kind is not None:
+        _require_matching_thread_kind(requested_kind, existing_record)
     return existing_record
+
+
+def _require_matching_thread_kind(requested_kind: Literal["chat", "analysis"], record: dict) -> None:
+    try:
+        is_analysis = read_thread_analysis_mode(record)
+    except ValueError:
+        raise analysis_mode_unavailable_error() from None
+    if is_analysis != (requested_kind == "analysis"):
+        raise HTTPException(status_code=409, detail={"code": "thread_kind_conflict"})
 
 
 def _existing_thread_response(thread_id: str, record: dict) -> ThreadResponse:
@@ -815,45 +832,54 @@ async def create_thread(body: ThreadCreateRequest, request: Request) -> ThreadRe
     # ``body.metadata`` is already stripped of server-reserved keys by
     # ``ThreadCreateRequest._strip_reserved`` — see the model definition.
 
-    # Idempotency: return existing record when already present
-    existing_record = await _resolve_existing_thread(thread_store, thread_id, thread_owner_user_id, thread_owner_kwargs)
-    if existing_record is not None:
-        return _existing_thread_response(thread_id, existing_record)
-
-    thread_metadata = dict(body.metadata)
-    if body.kind == "analysis":
-        thread_metadata[THREAD_ANALYSIS_MODE_METADATA_KEY] = True
-
-    # Write thread_meta so the thread appears in /threads/search immediately
-    try:
-        created_record = await thread_store.create(
+    # Serialize the existence check and insert in-process: the memory store's
+    # generic create contract intentionally overwrites same-owner IDs, so its
+    # per-store lock alone cannot make this idempotency pair atomic.
+    async with goal_thread_lock(thread_id):
+        existing_record = await _resolve_existing_thread(
+            thread_store,
             thread_id,
-            assistant_id=getattr(body, "assistant_id", None),
-            **thread_owner_kwargs,
-            metadata=thread_metadata,
+            thread_owner_user_id,
+            thread_owner_kwargs,
+            requested_kind=body.kind,
         )
-    except ThreadOwnershipConflictError:
-        # Do not reveal that a caller-chosen id belongs to another user.
-        raise HTTPException(status_code=404, detail="Thread not found") from None
-    except IntegrityError:
-        # The idempotency read above and this insert are not atomic: a
-        # concurrent request for the same thread_id can commit in between, so
-        # the SQL-backed store rejects ours on the duplicate primary key.
-        # Honour the documented idempotency contract by resolving the
-        # now-existing record — running the same owner reconciliation the fast
-        # path does — instead of surfacing the conflict as a 500. The memory
-        # store serializes same-id creates under its per-thread lock and keeps
-        # its historical overwrite behavior, so it does not reach this branch.
-        existing_record = await _resolve_existing_thread(thread_store, thread_id, thread_owner_user_id, thread_owner_kwargs)
         if existing_record is not None:
             return _existing_thread_response(thread_id, existing_record)
-        # A duplicate-key error with no row we can read back is a real failure.
-        logger.exception("Failed to write thread_meta for %s", sanitize_log_param(thread_id))
-        raise HTTPException(status_code=500, detail="Failed to create thread")
-    except Exception:
-        # Any non-race failure must surface, not be silently swallowed as a 200.
-        logger.exception("Failed to write thread_meta for %s", sanitize_log_param(thread_id))
-        raise HTTPException(status_code=500, detail="Failed to create thread")
+
+        thread_metadata = dict(body.metadata)
+        if body.kind == "analysis":
+            thread_metadata[THREAD_ANALYSIS_MODE_METADATA_KEY] = True
+
+        # Write thread_meta so the thread appears in /threads/search immediately
+        try:
+            created_record = await thread_store.create(
+                thread_id,
+                assistant_id=getattr(body, "assistant_id", None),
+                **thread_owner_kwargs,
+                metadata=thread_metadata,
+            )
+        except ThreadOwnershipConflictError:
+            # Do not reveal that a caller-chosen id belongs to another user.
+            raise HTTPException(status_code=404, detail="Thread not found") from None
+        except IntegrityError:
+            # Another Gateway worker may commit the same ID after our read.
+            # Recover through the same persisted-kind check as the fast path.
+            existing_record = await _resolve_existing_thread(
+                thread_store,
+                thread_id,
+                thread_owner_user_id,
+                thread_owner_kwargs,
+                requested_kind=body.kind,
+            )
+            if existing_record is not None:
+                return _existing_thread_response(thread_id, existing_record)
+            # A duplicate-key error with no row we can read back is a real failure.
+            logger.exception("Failed to write thread_meta for %s", sanitize_log_param(thread_id))
+            raise HTTPException(status_code=500, detail="Failed to create thread")
+        except Exception:
+            # Any non-race failure must surface, not be silently swallowed as a 200.
+            logger.exception("Failed to write thread_meta for %s", sanitize_log_param(thread_id))
+            raise HTTPException(status_code=500, detail="Failed to create thread")
 
     # Write an empty checkpoint so state endpoints work immediately
     config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
