@@ -1,6 +1,6 @@
 # Phase 6F2：AS-14 受控分析安全边界定点验收
 
-你是 InsightFlow 实施 Agent（`gpt-6-luna`，`reasoning_effort=max`）；GPT 负责方案与独立复验。起点应为干净 `main`、HEAD `1bae353`。先核对起点、固定 `upstream-v2.1.0-rc0` tag/tree 与工作树；不符即停止报告。只读全局、根及实际涉及模块的 `AGENTS.md`，再读 `docs/acceptance/acceptance-scenarios.md` 的 AS-14、`docs/acceptance/phase-06d-contract-reconciliation.md` 的 AS-14、`docs/acceptance/phase-06f1-real-analysis-rehearsal.md`，以及本切片直接涉及的工具装配、Gateway 准入、writer capability 和现有测试。不要重读整个架构史。
+你是 InsightFlow 实施 Agent（`gpt-6-luna`，`reasoning_effort=max`）；GPT 负责方案与独立复验。上一切片终点为 `1bae353`；起点应为干净 `main`，该提交是当前 HEAD 的祖先，且 HEAD 已包含本提示词及其起点勘误提交。先核对这些条件、固定 `upstream-v2.1.0-rc0` tag/tree 与工作树；不符即停止报告。只读全局、根及实际涉及模块的 `AGENTS.md`，再读 `docs/acceptance/acceptance-scenarios.md` 的 AS-14、`docs/acceptance/phase-06d-contract-reconciliation.md` 的 AS-14、`docs/acceptance/phase-06f1-real-analysis-rehearsal.md`，以及本切片直接涉及的工具装配、Gateway 准入、writer capability 和现有测试。不要重读整个架构史。
 
 ## 目标与不变量
 
