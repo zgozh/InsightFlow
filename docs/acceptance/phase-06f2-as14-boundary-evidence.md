@@ -24,13 +24,39 @@ AS-14 按用户批准的范围验收：平台托管 Analytics 查询受平台策
 | 首条分析消息同一 UUID 先持久预建、SDK create、thread-scoped stream；普通聊天请求不变 | `frontend/tests/e2e/analysis-entry-activation.spec.ts` 覆盖预建/冲突/普通线程/报告导航；普通聊天 `chat-page.tsx` 不设置 analysis kind。6F1 记录了浏览器请求 URL、SDK create、Gateway server record、stream 使用同 UUID，以及服务端持久 marker | 前端先校验 `POST /api/threads kind=analysis` 响应再 stream；失败不流。此前 Playwright 记录分析入口 4/4、普通聊天首次发送 1/1。6F1 是真实 NGINX/认证/SDK/stream 正向样例。不是多用户 E2E。 |
 | 旧 chat/缺失标记不得从分析路由降级；普通 chat 语义维持 | `frontend/src/app/workspace/analysis/[thread_id]/page.tsx` 只在 `metadata.analysis_mode === true` 时挂载 `ChatPage(mode="analysis")`；本轮新增 `analysis-route-stopgap.dom.test.tsx::does not mount analysis for a legacy thread without a persisted marker`，既有测试覆盖显式普通线程与 metadata 不可读 | 本轮单测实测 metadata 存在但 marker 缺键时展示非分析线程状态且不挂载运行时；未改普通 chat 行为。服务端把缺键记录视为 chat 是既有持久契约，而不是分析 UI 的 fallback。 |
 
-## 本轮验证与复用证据
+## 验证记录
 
-- 本轮新增 UI guard 定点测试：在 `frontend/` 执行 `pnpm rstest run unit/app/analysis-route-stopgap.dom.test.tsx`，退出码 **0**；1 file / **6 passed** / 0 failed / 0 skipped。该文件现覆盖 legacy chat 缺标记、显式普通标记、分析标记正确时挂载、线程缺失与元数据读取失败。
-- 受影响文件格式检查：`pnpm exec prettier --check tests/unit/app/analysis-route-stopgap.dom.test.tsx` 首次退出码 1，报告新增断言格式需调整；执行 `pnpm exec prettier --write tests/unit/app/analysis-route-stopgap.dom.test.tsx` 后，重新执行 `--check` 退出码 **0**。最终 `git diff --check` 退出码 **0**、无空白错误。
-- 本轮未运行后端测试、`pnpm check`、全量 Playwright、Docker、模型或数据库门禁：后端边界已有针对性测试，且 6F2 没改后端代码；6F1 的真实服务/模型/数据库链没有重跑。历史 `docs/PROGRESS.md` 摘要记录 6E2B2B 定点安全/Gateway 用例 20 passed、线程 kind 3 passed、Rstest 13/13、Playwright 分析入口 4/4 与普通聊天首发 1/1，摘要没有保存这些组的精确命令，故不把它们写成本轮新运行。
-- Query/authorization 等更早的可复用后端记录见 `docs/LOCAL_TRIAL.md`：实际执行的聚焦 pytest 命令退出码 0，817 passed、0 failed、0 skipped、2 warnings；其覆盖 Query Policy/API/Gateway 子路径，不替代 6E2B 工具隔离证据。
-- 6F1 的请求、审计、artifact 与限制原始记录见[真实链路彩排](phase-06f1-real-analysis-rehearsal.md)。本轮不重复任何真实模型请求或容器/卷操作。
+### 6F2 原始验收切片（commit `7045fff`）
+
+- UI guard 定点测试：在 `frontend/` 执行 `pnpm rstest run unit/app/analysis-route-stopgap.dom.test.tsx`，退出码 **0**；1 file / **6 passed** / 0 failed / 0 skipped。覆盖 legacy chat 缺标记、显式普通标记、分析标记正确时挂载、线程缺失与元数据读取失败。
+- 受影响文件格式检查：`pnpm exec prettier --check tests/unit/app/analysis-route-stopgap.dom.test.tsx` 首次退出码 1，报告新增断言格式需调整；执行 `pnpm exec prettier --write tests/unit/app/analysis-route-stopgap.dom.test.tsx` 后，重新执行 `--check` 退出码 **0**。该提交的 `git diff --check` 退出码 **0**、无空白错误。
+- 该切片当时未运行后端测试、`pnpm check`、全量 Playwright、Docker、模型或数据库门禁。历史 `docs/PROGRESS.md` 摘要记录 6E2B2B 定点安全/Gateway 用例 20 passed、线程 kind 3 passed、Rstest 13/13、Playwright 分析入口 4/4 与普通聊天首发 1/1；摘要没有保存这些组的精确命令。
+- Query/authorization 等更早的可复用后端记录见 `docs/LOCAL_TRIAL.md`：聚焦 pytest 命令退出码 0，817 passed、0 failed、0 skipped、2 warnings；其覆盖 Query Policy/API/Gateway 子路径，不替代本次 6F2 后端隔离门禁。
+- 6F1 的请求、审计、artifact 与限制原始记录见[真实链路彩排](phase-06f1-real-analysis-rehearsal.md)。
+
+### Fix 01 可复现后端安全门禁
+
+以下两条命令均在 `backend/` 的锁定环境运行。按项目既有 Windows 解决方式将 `UV_DEFAULT_INDEX` 指向官方 PyPI；未读取或输出任何私密配置/环境变量值。
+
+1. Gateway、工具集合、持久身份与 owner admission：
+
+   ```powershell
+   $env:UV_DEFAULT_INDEX = 'https://pypi.org/simple'
+   uv run --locked pytest tests/test_analysis_tool_allowlist.py tests/test_gateway_services.py::test_start_run_rejects_analysis_thread_before_agent_factory tests/test_gateway_services.py::test_start_run_keeps_analysis_closed_without_bound_services_or_real_principal tests/test_gateway_services.py::test_start_run_binds_writer_capability_before_analysis_agent_start tests/test_gateway_services.py::test_analysis_writer_capability_failure_terminalizes_without_starting_graph tests/test_gateway_services.py::test_start_run_fails_closed_on_corrupt_analysis_thread_mode tests/test_gateway_services.py::test_start_run_fails_closed_when_thread_mode_cannot_be_read tests/test_gateway_services.py::test_start_run_ignores_client_analysis_mode_for_ordinary_thread tests/test_gateway_services.py::test_run_metadata_cannot_create_analysis_mode_on_new_thread tests/test_runtime_lifecycle_e2e.py::test_analysis_gateway_admission_runs_catalog_query_writer_and_owner_scoped_artifact_get tests/test_stateless_runs_owner_isolation.py::test_stream_cross_user_returns_404 -q
+   ```
+
+   退出码 **0**；**21 passed**、0 failed、0 skipped，33.01 秒。1 条既有 `StarletteDeprecationWarning`：Starlette `TestClient` 与当前 `httpx` 集成将弃用；不是本次测试失败。
+
+2. Report writer capability、固定路径和 owner/thread/run 约束：
+
+   ```powershell
+   $env:UV_DEFAULT_INDEX = 'https://pypi.org/simple'
+   uv run --locked pytest tests/test_analytics_agent_reports.py tests/test_analysis_report_writer_files.py -q
+   ```
+
+   退出码 **0**；**59 passed**、0 failed、1 skipped，8.54 秒。1 条同类既有 `StarletteDeprecationWarning`。唯一 skip 是 `test_report_writer_rejects_existing_symlink_without_touching_target`：当前 Windows 环境不能创建 symlink；同文件的“打开前拒绝现存 symlink”测试仍执行并通过。
+
+两组共 **80 passed、0 failed、1 skipped、2 warnings**。本门禁仅使用合成测试输入，不连接真实 MCP、模型、业务数据库或容器；不重复 6F1/前端门禁。测试代码与安全运行路径未改，仅补可复现命令及输出记录。
 
 ## 剩余限制
 
