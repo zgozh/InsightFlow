@@ -1738,6 +1738,7 @@ async def test_start_run_binds_writer_capability_before_analysis_agent_start(_st
     from unittest.mock import patch
 
     import app.gateway.services as services_module
+    from deerflow.constants import ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY
     from deerflow.runtime.user_context import reset_current_user, set_current_user
 
     user = SimpleNamespace(id="analysis-owner", system_role="user")
@@ -1766,8 +1767,18 @@ async def test_start_run_binds_writer_capability_before_analysis_agent_start(_st
         ):
             record = await services_module.start_run(
                 _run_create_request(
-                    context={"analysis_mode": False, "__analysis_report_writer": {"forged": True}},
-                    config={"configurable": {"analysis_mode": False, "__analysis_report_writer": {"forged": True}}},
+                    context={
+                        "analysis_mode": False,
+                        "__analysis_report_writer": {"forged": True},
+                        ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY: {"forged": True},
+                    },
+                    config={
+                        "configurable": {
+                            "analysis_mode": False,
+                            "__analysis_report_writer": {"forged": True},
+                            ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY: {"forged": True},
+                        }
+                    },
                 ),
                 "analysis-capability-bound",
                 request,
@@ -1783,11 +1794,15 @@ async def test_start_run_binds_writer_capability_before_analysis_agent_start(_st
     assert config["configurable"]["analysis_mode"] is True
     assert "__analysis_report_writer" not in config["context"]
     assert "__analysis_report_writer" not in config["configurable"]
+    assert ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY not in config["context"]
+    assert ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY not in config["configurable"]
     assert run_context.analysis_report_writer is capability
+    assert run_context.analysis_evidence_collector.matches(user.id, "analysis-capability-bound", record.run_id)
 
 
 @pytest.mark.asyncio
-async def test_analysis_writer_capability_failure_terminalizes_without_starting_graph(_stub_app_config, monkeypatch):
+@pytest.mark.parametrize("failed_capability", ["writer", "evidence"])
+async def test_analysis_run_capability_failure_terminalizes_without_starting_graph(_stub_app_config, monkeypatch, failed_capability):
     from types import SimpleNamespace
     from unittest.mock import patch
 
@@ -1801,11 +1816,19 @@ async def test_analysis_writer_capability_failure_terminalizes_without_starting_
     services = SimpleNamespace(config=SimpleNamespace(enabled=True))
     request.app.state.analytics_services = services
     monkeypatch.setattr(services_module, "get_bound_analytics_services", lambda: services)
-    monkeypatch.setattr(
-        services_module,
-        "create_analysis_report_writer_capability",
-        lambda **kwargs: (_ for _ in ()).throw(ValueError("synthetic path failure")),
-    )
+    if failed_capability == "writer":
+        monkeypatch.setattr(
+            services_module,
+            "create_analysis_report_writer_capability",
+            lambda **kwargs: (_ for _ in ()).throw(ValueError("synthetic path failure")),
+        )
+    else:
+        monkeypatch.setattr(services_module, "create_analysis_report_writer_capability", lambda **kwargs: object())
+        monkeypatch.setattr(
+            services_module,
+            "create_analysis_run_evidence_collector",
+            lambda **kwargs: (_ for _ in ()).throw(ValueError("synthetic collector failure")),
+        )
     await thread_store.create("analysis-capability-failed", user_id=user.id, metadata={"analysis_mode": True})
     graph_factory_calls: list[object] = []
 

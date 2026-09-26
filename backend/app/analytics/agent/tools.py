@@ -15,12 +15,22 @@ secret resolver 或 repository。
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from langchain.tools import tool
 
-from app.analytics.agent.evidence import AnalyticsQueryEvidence, AnalyticsQueryToolResult, canonical_json, compute_result_digest
-from app.analytics.agent.runtime import get_bound_analytics_services, trusted_principal
+from app.analytics.agent.evidence import (
+    ANALYSIS_EVIDENCE_UNAVAILABLE,
+    AnalysisRunEvidenceCollector,
+    AnalyticsQueryEvidence,
+    AnalyticsQueryToolResult,
+    canonical_json,
+    compute_result_digest,
+)
+from app.analytics.agent.runtime import get_bound_analytics_services, trusted_principal, trusted_thread_run
 from app.analytics.domain.datasource import DatasourceDefinition
 from app.analytics.domain.metric import MetricDefinition
+from deerflow.constants import ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY
 from deerflow.tools.types import Runtime
 
 CATALOG_TOOL_NAME = "inspect_business_catalog"
@@ -96,7 +106,15 @@ async def inspect_business_catalog(runtime: Runtime) -> str:
     )
 
 
-async def _plan_and_execute(*, services, principal_id: str, datasource_id: str, sql: str) -> str:
+async def _plan_and_execute(
+    *,
+    services,
+    principal_id: str,
+    datasource_id: str,
+    sql: str,
+    evidence_collector: AnalysisRunEvidenceCollector | None = None,
+    thread_run: tuple[str, str] | None = None,
+) -> str:
     """一次调用内完成 plan → execute；token 只存在于这个函数的局部变量。"""
 
     try:
@@ -136,13 +154,22 @@ async def _plan_and_execute(*, services, principal_id: str, datasource_id: str, 
         result=result,
         decision_code=executed.code,
     )
-    return AnalyticsQueryToolResult(
+    tool_result = AnalyticsQueryToolResult(
         code=executed.code,
         columns=result.columns,
         rows=result.rows,
         truncated=result.truncated,
         evidence=evidence,
-    ).to_json()
+    )
+    if evidence_collector is not None:
+        if thread_run is None or not evidence_collector.record_success(
+            principal_id=principal_id,
+            thread_id=thread_run[0],
+            run_id=thread_run[1],
+            result=tool_result,
+        ):
+            return _payload(ANALYSIS_EVIDENCE_UNAVAILABLE)
+    return tool_result.to_json()
 
 
 @tool(QUERY_TOOL_NAME, parse_docstring=True)
@@ -173,6 +200,16 @@ async def query_business_data(datasource_id: str, sql: str, runtime: Runtime) ->
     if principal_id is None:
         return _payload(_UNAVAILABLE)
 
+    context = getattr(runtime, "context", None)
+    evidence_collector = context.get(ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY) if isinstance(context, Mapping) else None
+    if not isinstance(evidence_collector, AnalysisRunEvidenceCollector):
+        evidence_collector = None
+        thread_run = None
+    else:
+        thread_run = trusted_thread_run(runtime)
+        if thread_run is None or not evidence_collector.matches(principal_id, *thread_run):
+            return _payload(_UNAVAILABLE)
+
     if not isinstance(datasource_id, str) or not datasource_id.strip() or datasource_id != datasource_id.strip():
         return _payload(_INVALID_REQUEST)
     if not isinstance(sql, str) or not sql.strip():
@@ -180,7 +217,14 @@ async def query_business_data(datasource_id: str, sql: str, runtime: Runtime) ->
     if len(sql) > MAX_SQL_CHARACTERS:
         return _payload(_INVALID_REQUEST)
 
-    return await _plan_and_execute(services=services, principal_id=principal_id, datasource_id=datasource_id, sql=sql)
+    return await _plan_and_execute(
+        services=services,
+        principal_id=principal_id,
+        datasource_id=datasource_id,
+        sql=sql,
+        evidence_collector=evidence_collector,
+        thread_run=thread_run,
+    )
 
 
 __all__ = ["CATALOG_TOOL_NAME", "MAX_SQL_CHARACTERS", "QUERY_TOOL_NAME", "compute_result_digest", "inspect_business_catalog", "query_business_data"]

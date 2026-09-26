@@ -23,6 +23,7 @@ sandbox 的 outputs，此时登记索引才有意义。发布失败必须如实�
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Annotated
 
@@ -30,10 +31,10 @@ from langchain.tools import InjectedToolCallId, tool
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 
-from app.analytics.agent.evidence import canonical_json
+from app.analytics.agent.evidence import ANALYSIS_EVIDENCE_UNAVAILABLE, AnalysisRunEvidenceCollector, canonical_json
 from app.analytics.agent.runtime import get_bound_analytics_services, trusted_principal, trusted_thread_run
 from app.analytics.domain import AnalysisReport, ReportPublishCode, ReportStatus
-from deerflow.constants import ANALYSIS_REPORT_WRITER_CONTEXT_KEY
+from deerflow.constants import ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY, ANALYSIS_REPORT_WRITER_CONTEXT_KEY
 from deerflow.tools.types import Runtime
 
 PUBLISH_REPORT_TOOL_NAME = "publish_analysis_report"
@@ -122,7 +123,7 @@ async def write_analysis_report(
     """写入并登记当前 analysis run 的唯一 Markdown 报告。
 
     Gateway 能力固定所有者、线程、run、存储根目录和文件名。模型只提供报告正文与 evidence
-    引用；安全回执不包含正文或内部身份。
+    引用；引用必须属于该 run 的成功受控查询，安全回执不包含正文或内部身份。
 
     Args:
         title: 报告列表显示的短标题。
@@ -141,7 +142,7 @@ async def write_analysis_report(
     principal_id = trusted_principal(runtime)
     identity = trusted_thread_run(runtime)
     context = getattr(runtime, "context", None)
-    capability = context.get(ANALYSIS_REPORT_WRITER_CONTEXT_KEY) if isinstance(context, dict) else None
+    capability = context.get(ANALYSIS_REPORT_WRITER_CONTEXT_KEY) if isinstance(context, Mapping) else None
     if principal_id is None or identity is None or capability is None:
         return _payload(_UNAVAILABLE)
     thread_id, run_id = identity
@@ -149,6 +150,10 @@ async def write_analysis_report(
     write_markdown = getattr(capability, "write_markdown", None)
     if not callable(matches) or not callable(write_markdown):
         return _payload(_UNAVAILABLE)
+    try:
+        normalized_evidence_ids = tuple(evidence_ids)
+    except (TypeError, ValueError):
+        return _payload(_INVALID_REQUEST)
     try:
         if not matches(principal_id, thread_id, run_id):
             return _payload(_UNAVAILABLE)
@@ -161,11 +166,26 @@ async def write_analysis_report(
             artifact_path=f"/mnt/user-data/outputs/analysis-report-{run_id}.md",
             title=title,
             status=ReportStatus.PUBLISHED,
-            evidence_ids=tuple(evidence_ids),
+            evidence_ids=normalized_evidence_ids,
             created_at=datetime.now(UTC),
         )
     except (TypeError, ValueError):
         return _payload(_INVALID_REQUEST)
+
+    evidence_collector = context.get(ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY) if isinstance(context, Mapping) else None
+    if not isinstance(evidence_collector, AnalysisRunEvidenceCollector):
+        return _payload(ANALYSIS_EVIDENCE_UNAVAILABLE)
+    try:
+        snapshots = evidence_collector.resolve_successful_queries(
+            principal_id=principal_id,
+            thread_id=thread_id,
+            run_id=run_id,
+            evidence_ids=normalized_evidence_ids,
+        )
+    except (TypeError, ValueError):
+        return _payload(ANALYSIS_EVIDENCE_UNAVAILABLE)
+    if snapshots is None:
+        return _payload(ANALYSIS_EVIDENCE_UNAVAILABLE)
 
     try:
         write_result = await write_markdown(markdown)
@@ -186,7 +206,7 @@ async def write_analysis_report(
             run_id=run_id,
             title=title,
             artifact_path=artifact_path,
-            evidence_ids=evidence_ids,
+            evidence_ids=normalized_evidence_ids,
         )
     except (ValueError, TypeError):
         return _payload(_INVALID_REQUEST)
@@ -210,7 +230,7 @@ async def write_analysis_report(
         or not _SAFE_REPORT_ID.fullmatch(report_id)
         or report_identity != (principal_id, thread_id, run_id, artifact_path)
         or getattr(report, "title", None) != title
-        or report_evidence_ids != tuple(evidence_ids)
+        or report_evidence_ids != normalized_evidence_ids
     ):
         return _payload(_UNAVAILABLE)
 
@@ -219,7 +239,7 @@ async def write_analysis_report(
             "code": code.value,
             "report_id": report_id,
             "artifact_path": artifact_path,
-            "evidence_ids": list(evidence_ids),
+            "evidence_ids": list(normalized_evidence_ids),
         }
     )
     return Command(

@@ -832,7 +832,7 @@ def test_analysis_gateway_admission_runs_catalog_query_writer_and_owner_scoped_a
     from langchain_core.messages import AIMessage
     from starlette.testclient import TestClient
 
-    from app.analytics.agent.evidence import AnalyticsQueryEvidence
+    from app.analytics.agent.evidence import AnalyticsQueryEvidence, canonical_json, create_analysis_run_evidence_collector
     from app.analytics.agent.runtime import bind_analytics_services, clear_analytics_services
     from app.analytics.application.delivery import QueryPlanDelivery, QueryPlanDeliveryMetadata
     from app.analytics.application.report_ports import ReportPublication
@@ -867,11 +867,14 @@ def test_analysis_gateway_admission_runs_catalog_query_writer_and_owner_scoped_a
         schema_version="synthetic-schema-v1",
         policy_version="synthetic-policy-v1",
     )
+    private_result_sentinel = "PRIVATE_QUERY_ROW_SENTINEL"
+    result_columns = ("amount",)
+    result_rows = ((private_result_sentinel,),)
     query_result = QueryExecutionResult(
-        columns=("amount",),
-        rows=((42,),),
+        columns=result_columns,
+        rows=result_rows,
         row_count=1,
-        byte_count=2,
+        byte_count=len(canonical_json({"columns": list(result_columns), "rows": [list(row) for row in result_rows]}).encode("utf-8")),
         truncated=False,
     )
     evidence = AnalyticsQueryEvidence.build(
@@ -964,7 +967,7 @@ def test_analysis_gateway_admission_runs_catalog_query_writer_and_owner_scoped_a
             id_issuer=lambda: "synthetic-report-id",
         ),
     )
-    report_markdown = "# Synthetic report\n\nSynthetic result: 42.\n"
+    report_markdown = "# Synthetic report\n\nSynthetic result is supported by the supplied evidence.\n"
     model = FakeToolCallingModel(
         responses=[
             AIMessage(
@@ -1001,9 +1004,17 @@ def test_analysis_gateway_admission_runs_catalog_query_writer_and_owner_scoped_a
         ]
     )
 
+    created_collectors = []
+
+    def capture_evidence_collector(**kwargs):
+        collector = create_analysis_run_evidence_collector(**kwargs)
+        created_collectors.append(collector)
+        return collector
+
     try:
         with (
             patch("deerflow.agents.lead_agent.agent.create_chat_model", return_value=model),
+            patch("app.gateway.services.create_analysis_run_evidence_collector", side_effect=capture_evidence_collector),
             TestClient(isolated_analysis_app) as client,
         ):
             isolated_analysis_app.state.analytics_services = services
@@ -1061,6 +1072,22 @@ def test_analysis_gateway_admission_runs_catalog_query_writer_and_owner_scoped_a
                 f"/mnt/user-data/outputs/analysis-report-{run_id}.md",
             )
             assert report.evidence_ids == (evidence.evidence_id,)
+            assert len(created_collectors) == 1
+            snapshots = created_collectors[0].resolve_successful_queries(
+                principal_id=datasources.principals[0],
+                thread_id=thread_id,
+                run_id=run_id,
+                evidence_ids=(evidence.evidence_id,),
+            )
+            assert snapshots is not None and snapshots[0].rows == result_rows
+
+            state_response = client.get(f"/api/threads/{thread_id}/state")
+            events_response = client.get(f"/api/threads/{thread_id}/runs/{run_id}/events")
+            assert state_response.status_code == 200, state_response.text
+            assert events_response.status_code == 200, events_response.text
+            assert "__analysis_evidence_collector" not in state_response.text
+            assert "__analysis_evidence_collector" not in events_response.text
+            assert private_result_sentinel not in events_response.text
 
             artifact_path = f"mnt/user-data/outputs/analysis-report-{run_id}.md"
             artifact = client.get(f"/api/threads/{thread_id}/artifacts/{artifact_path}")

@@ -157,6 +157,14 @@ Harness 自身不 import App，也没有 Analytics 专用开关。
 - 成功执行返回确定性 evidence：`evidence_id` 是安全元数据 canonical JSON 的 SHA-256，`result_digest`
   是 canonical columns+rows 的 SHA-256。字段白名单固定，不含 SQL、token/digest、secret、DSN、异常文本或 PII。
   结果仍受 Phase 2 的列/行/字节上限约束。
+- Gateway 只在认证 analysis run 准入后发行绑定 principal/thread/run 的短生命周期 collector，并只通过
+  worker 的 `ToolRuntime.context` 传给固定查询与报告工具。`query_business_data` 只有在 plan→execute 得到
+  成功决定、构造规范 evidence 与有界结果后才登记快照；拒绝、异常、取消不登记。每 run 最多保存 20 项、
+  合计 16 MiB；快照仅含规范 evidence、列与有界 JSON 行，不含 raw SQL、plan token 或凭证。
+- `write_analysis_report` 在文件与索引写入前要求 evidence ID 非空、无重复并全部命中同一 collector 的成功
+  记录；未知、伪造、跨 owner/thread/run 或缺少 collector 均稳定拒绝。collector 是 run-local 内存对象，不是
+  进程级索引、checkpoint state、run event、对外回执或持久化 evidence 库。普通聊天不获此 collector，原有
+  受控查询返回行为保持不变，但不能据此获得受控报告资格。
 
 Lead-only 与 subagent 隔离：DeerFlow 会把父级 tool group 原样继承给 subagent，因此
 `config.example.yaml` 用 operator-owned、**加法式**的 `subagents.agents.general-purpose.disallowed_tools`

@@ -7,17 +7,20 @@ evidence 是给 Reviewer 用的确定性引用：它必须可 JSON 序列化、�
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
 
 from app.analytics.agent.evidence import (
+    AnalysisRunEvidenceCollector,
     AnalyticsQueryEvidence,
     AnalyticsQueryToolResult,
     EvidenceError,
     canonical_json,
     compute_result_digest,
+    create_analysis_run_evidence_collector,
 )
 from app.analytics.application.delivery import QueryPlanDelivery, QueryPlanDeliveryMetadata
 from app.analytics.domain import ExecutionDecisionCode, QueryCostEstimate, QueryExecutionResult, QueryPlanReceipt, QueryRisk
@@ -48,8 +51,10 @@ def _estimate(**overrides) -> QueryCostEstimate:
 
 
 def _result(**overrides) -> QueryExecutionResult:
-    values = {"columns": ("id",), "rows": ((1,),), "row_count": 1, "byte_count": 21, "truncated": False}
+    values = {"columns": ("id",), "rows": ((1,),), "row_count": 1, "byte_count": 0, "truncated": False}
     values.update(overrides)
+    if "byte_count" not in overrides:
+        values["byte_count"] = len(canonical_json({"columns": list(values["columns"]), "rows": [list(row) for row in values["rows"]]}).encode("utf-8"))
     return QueryExecutionResult(**values)
 
 
@@ -255,3 +260,77 @@ def test_tool_result_requires_evidence_only_when_it_carries_rows():
         AnalyticsQueryToolResult(code=ExecutionDecisionCode.EXECUTED.value, columns=("id",), rows=((1,),), truncated=False)
     with pytest.raises(ValueError):
         AnalyticsQueryToolResult(code=ExecutionDecisionCode.PLAN_UNAVAILABLE.value, evidence=_evidence())
+
+
+def test_run_evidence_collector_stores_only_successful_snapshot_under_its_exact_identity():
+    result = AnalyticsQueryToolResult(
+        code=ExecutionDecisionCode.EXECUTED.value,
+        columns=("id",),
+        rows=((1,),),
+        truncated=False,
+        evidence=_evidence(),
+    )
+    collector = create_analysis_run_evidence_collector(principal_id="user-1", thread_id="thread-1", run_id="run-1")
+
+    assert isinstance(collector, AnalysisRunEvidenceCollector)
+    assert collector.record_success(
+        principal_id="user-1",
+        thread_id="thread-1",
+        run_id="run-1",
+        result=result,
+    )
+    assert collector.resolve_successful_queries(
+        principal_id="user-1",
+        thread_id="thread-1",
+        run_id="run-1",
+        evidence_ids=(result.evidence.evidence_id,),
+    ) == (result,)
+    assert (
+        collector.resolve_successful_queries(
+            principal_id="user-1",
+            thread_id="thread-1",
+            run_id="run-2",
+            evidence_ids=(result.evidence.evidence_id,),
+        )
+        is None
+    )
+    assert not collector.record_success(
+        principal_id="other-user",
+        thread_id="thread-1",
+        run_id="run-1",
+        result=result,
+    )
+
+
+def test_run_evidence_collector_rejects_failed_or_mismatched_results():
+    collector = create_analysis_run_evidence_collector(principal_id="user-1", thread_id="thread-1", run_id="run-1")
+    failed = AnalyticsQueryToolResult(
+        code=ExecutionDecisionCode.DATABASE_UNAVAILABLE.value,
+        columns=("id",),
+        rows=((1,),),
+        truncated=False,
+        evidence=_evidence(),
+    )
+    mismatched = AnalyticsQueryToolResult(
+        code=ExecutionDecisionCode.EXECUTED.value,
+        columns=("id",),
+        rows=((2,),),
+        truncated=False,
+        evidence=_evidence(),
+    )
+    forged_evidence = replace(_evidence(), evidence_id="f" * 64)
+    forged_id = AnalyticsQueryToolResult(
+        code=ExecutionDecisionCode.EXECUTED.value,
+        columns=("id",),
+        rows=((1,),),
+        truncated=False,
+        evidence=forged_evidence,
+    )
+
+    for result in (failed, mismatched, forged_id):
+        assert not collector.record_success(
+            principal_id="user-1",
+            thread_id="thread-1",
+            run_id="run-1",
+            result=result,
+        )

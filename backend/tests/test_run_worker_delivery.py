@@ -17,7 +17,7 @@ from deerflow.runtime.events.store.memory import MemoryRunEventStore
 from deerflow.runtime.runs.manager import RunManager
 from deerflow.runtime.runs.schemas import RunStatus
 from deerflow.runtime.runs.store.memory import MemoryRunStore
-from deerflow.runtime.runs.worker import RunContext, _build_runtime_context, _delivery_content_with_outputs, _install_runtime_context, run_agent
+from deerflow.runtime.runs.worker import RunContext, _build_runtime_context, _delivery_content_with_outputs, _install_runtime_context, _release_run_scoped_references, run_agent
 from deerflow.runtime.user_context import get_effective_user_id
 
 
@@ -89,6 +89,35 @@ def test_runtime_context_rejects_a_caller_forged_report_writer_capability():
     assert "__analysis_report_writer" not in runtime_context
     assert "__analysis_report_writer" not in config["context"]
     assert "__analysis_report_writer" not in config["configurable"]
+
+
+def test_runtime_context_carries_the_gateway_collector_by_identity_without_checkpoint_config_or_cleanup_leak():
+    from deerflow.constants import ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY
+
+    forged = object()
+    collector = object()
+    runtime_context = _build_runtime_context(
+        "thread_1",
+        "run_1",
+        {ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY: forged},
+        analysis_evidence_collector=collector,
+    )
+    config = {
+        "context": {ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY: forged},
+        "configurable": {ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY: forged},
+    }
+
+    _install_runtime_context(config, runtime_context)
+
+    assert runtime_context[ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY] is collector
+    assert config["context"][ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY] is collector
+    assert ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY not in config["configurable"]
+    assert forged not in runtime_context.values()
+
+    _release_run_scoped_references([config], runtime_context, None)
+
+    assert ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY not in runtime_context
+    assert ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY not in config["context"]
 
 
 @pytest.mark.anyio

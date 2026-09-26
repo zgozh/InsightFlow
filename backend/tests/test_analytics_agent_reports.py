@@ -18,6 +18,7 @@ from __future__ import annotations
 import inspect
 import json
 from datetime import UTC, datetime
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
@@ -158,13 +159,61 @@ def test_report_writer_schema_has_only_content_and_evidence_fields():
     assert set(schema.model_json_schema()["properties"]) == {"title", "markdown", "evidence_ids"}
 
 
-def _writer_runtime(capability=None, *, user_id="user-1", thread_id="thread-1", run_id="run-1"):
+def _writer_runtime(capability=None, *, evidence_collector=None, user_id="user-1", thread_id="thread-1", run_id="run-1"):
     runtime = _runtime(user_id=user_id, thread_id=thread_id, run_id=run_id)
+    if evidence_collector is not None:
+        from deerflow.constants import ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY
+
+        runtime.context[ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY] = evidence_collector
     if capability is not None:
         from deerflow.constants import ANALYSIS_REPORT_WRITER_CONTEXT_KEY
 
         runtime.context[ANALYSIS_REPORT_WRITER_CONTEXT_KEY] = capability
     return runtime
+
+
+def _successful_run_evidence(*, principal_id="user-1", thread_id="thread-1", run_id="run-1"):
+    from app.analytics.agent.evidence import (
+        AnalyticsQueryEvidence,
+        AnalyticsQueryToolResult,
+        canonical_json,
+        create_analysis_run_evidence_collector,
+    )
+    from app.analytics.domain import DatasourceEngine, QueryCostEstimate, QueryExecutionResult, QueryRisk
+
+    columns = ("amount",)
+    rows = ((42,),)
+    byte_count = len(canonical_json({"columns": list(columns), "rows": [list(row) for row in rows]}).encode("utf-8"))
+    query_result = QueryExecutionResult(columns=columns, rows=rows, row_count=1, byte_count=byte_count, truncated=False)
+    evidence = AnalyticsQueryEvidence.build(
+        datasource_id="synthetic-datasource",
+        query_hash="b" * 64,
+        risk=QueryRisk.LOW,
+        schema_version="synthetic-schema-v1",
+        policy_version="synthetic-policy-v1",
+        estimate=QueryCostEstimate(
+            engine=DatasourceEngine.POSTGRESQL,
+            estimated_rows=1,
+            engine_cost=Decimal("1"),
+            plan_digest="c" * 64,
+        ),
+        result=query_result,
+    )
+    result = AnalyticsQueryToolResult(
+        code="executed",
+        columns=query_result.columns,
+        rows=query_result.rows,
+        truncated=query_result.truncated,
+        evidence=evidence,
+    )
+    collector = create_analysis_run_evidence_collector(principal_id=principal_id, thread_id=thread_id, run_id=run_id)
+    assert collector.record_success(
+        principal_id=principal_id,
+        thread_id=thread_id,
+        run_id=run_id,
+        result=result,
+    )
+    return collector, evidence.evidence_id
 
 
 def _writer_capability(monkeypatch, tmp_path, *, principal_id="user-1", thread_id="thread-1", run_id="run-1"):
@@ -189,7 +238,8 @@ async def test_report_writer_writes_then_indexes_and_returns_only_a_safe_receipt
     from langgraph.types import Command
 
     capability = _writer_capability(monkeypatch, tmp_path)
-    runtime = _writer_runtime(capability)
+    collector, evidence_id = _successful_run_evidence()
+    runtime = _writer_runtime(capability, evidence_collector=collector)
     markdown = "# Synthetic\n\nREPORT_BODY_SENTINEL SELECT SQL_SENTINEL\n"
     repo = _Repo()
     _bind(repo)
@@ -197,7 +247,7 @@ async def test_report_writer_writes_then_indexes_and_returns_only_a_safe_receipt
     command = await agent_reports.write_analysis_report.coroutine(
         title=_TITLE,
         markdown=markdown,
-        evidence_ids=[_HASH_A],
+        evidence_ids=[evidence_id],
         runtime=runtime,
         tool_call_id="call-report-writer",
     )
@@ -213,7 +263,7 @@ async def test_report_writer_writes_then_indexes_and_returns_only_a_safe_receipt
         "code": "published",
         "report_id": "report-1",
         "artifact_path": expected_path,
-        "evidence_ids": [_HASH_A],
+        "evidence_ids": [evidence_id],
     }
     assert "REPORT_BODY_SENTINEL" not in json.dumps([message.model_dump() for message in command.update["messages"]])
     assert "principal_id" not in receipt and "thread_id" not in receipt and "run_id" not in receipt
@@ -224,7 +274,8 @@ async def test_report_writer_index_failure_leaves_reusable_file_but_no_success_r
     from langgraph.types import Command
 
     capability = _writer_capability(monkeypatch, tmp_path)
-    runtime = _writer_runtime(capability)
+    collector, evidence_id = _successful_run_evidence()
+    runtime = _writer_runtime(capability, evidence_collector=collector)
     markdown = "# Retry after index failure\n"
     failing_repo = _Repo(error=RuntimeError("dsn=synthetic-secret"))
     _bind(failing_repo)
@@ -232,7 +283,7 @@ async def test_report_writer_index_failure_leaves_reusable_file_but_no_success_r
     failed = await agent_reports.write_analysis_report.coroutine(
         title=_TITLE,
         markdown=markdown,
-        evidence_ids=[_HASH_A],
+        evidence_ids=[evidence_id],
         runtime=runtime,
         tool_call_id="call-failed",
     )
@@ -246,13 +297,56 @@ async def test_report_writer_index_failure_leaves_reusable_file_but_no_success_r
     retried = await agent_reports.write_analysis_report.coroutine(
         title=_TITLE,
         markdown=markdown,
-        evidence_ids=[_HASH_A],
+        evidence_ids=[evidence_id],
         runtime=runtime,
         tool_call_id="call-retry",
     )
     assert isinstance(retried, Command)
     assert json.loads(retried.update["messages"][0].content)["code"] == "published"
     assert len(successful_repo.reports) == 1
+
+
+@pytest.mark.asyncio
+async def test_report_writer_same_run_same_evidence_and_content_retry_remains_existing(monkeypatch, tmp_path):
+    from langgraph.types import Command
+
+    capability = _writer_capability(monkeypatch, tmp_path)
+    collector, evidence_id = _successful_run_evidence()
+    runtime = _writer_runtime(capability, evidence_collector=collector)
+    markdown = "# Idempotent synthetic report\n"
+    first_repo = _Repo()
+    _bind(first_repo)
+
+    first = await agent_reports.write_analysis_report.coroutine(
+        title=_TITLE,
+        markdown=markdown,
+        evidence_ids=[evidence_id],
+        runtime=runtime,
+        tool_call_id="call-first-report",
+    )
+    assert isinstance(first, Command)
+    assert json.loads(first.update["messages"][0].content)["code"] == "published"
+
+    stored = _report(
+        id="report-original",
+        run_id="run-1",
+        artifact_path="/mnt/user-data/outputs/analysis-report-run-1.md",
+        evidence_ids=(evidence_id,),
+    )
+    retry_repo = _Repo(code=ReportPublishCode.EXISTING, stored=stored)
+    clear_analytics_services()
+    _bind(retry_repo)
+    retry = await agent_reports.write_analysis_report.coroutine(
+        title=_TITLE,
+        markdown=markdown,
+        evidence_ids=[evidence_id],
+        runtime=runtime,
+        tool_call_id="call-report-retry",
+    )
+
+    assert isinstance(retry, Command)
+    assert json.loads(retry.update["messages"][0].content)["code"] == "existing"
+    assert retry_repo.reports[0].identity == stored.identity
 
 
 @pytest.mark.asyncio
@@ -272,6 +366,51 @@ async def test_report_writer_fails_closed_without_matching_gateway_capability(mo
 
     assert isinstance(result, str)
     assert _body(result) == {"code": "analytics_unavailable"}
+    assert repo.reports == []
+    assert not capability.output_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_report_writer_rejects_unregistered_evidence_before_any_write(monkeypatch, tmp_path):
+    """模型自报的 SHA-256 不是当前 run 的查询证据。"""
+
+    capability = _writer_capability(monkeypatch, tmp_path)
+    runtime = _writer_runtime(capability)
+    repo = _Repo()
+    _bind(repo)
+
+    result = await agent_reports.write_analysis_report.coroutine(
+        title=_TITLE,
+        markdown="# Must not be written\n",
+        evidence_ids=[_HASH_A],
+        runtime=runtime,
+        tool_call_id="call-unregistered-evidence",
+    )
+
+    assert isinstance(result, str)
+    assert _body(result) == {"code": "analysis_evidence_unavailable"}
+    assert repo.reports == []
+    assert not capability.output_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_report_writer_rejects_evidence_owned_by_another_run_before_any_write(monkeypatch, tmp_path):
+    collector, evidence_id = _successful_run_evidence(run_id="run-1")
+    capability = _writer_capability(monkeypatch, tmp_path, run_id="run-2")
+    runtime = _writer_runtime(capability, evidence_collector=collector, run_id="run-2")
+    repo = _Repo()
+    _bind(repo)
+
+    result = await agent_reports.write_analysis_report.coroutine(
+        title=_TITLE,
+        markdown="# Must not be written\n",
+        evidence_ids=[evidence_id],
+        runtime=runtime,
+        tool_call_id="call-cross-run-evidence",
+    )
+
+    assert isinstance(result, str)
+    assert _body(result) == {"code": "analysis_evidence_unavailable"}
     assert repo.reports == []
     assert not capability.output_path.exists()
 

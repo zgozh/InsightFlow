@@ -21,6 +21,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.analytics.agent import tools as agent_tools
+from app.analytics.agent.evidence import AnalyticsQueryEvidence, canonical_json, create_analysis_run_evidence_collector
 from app.analytics.agent.runtime import bind_analytics_services, clear_analytics_services
 from app.analytics.application.delivery import QueryPlanDelivery, QueryPlanDeliveryMetadata
 from app.analytics.domain import (
@@ -70,7 +71,8 @@ def _estimate():
 
 
 def _result(rows=((1,),)):
-    return QueryExecutionResult(columns=("id",), rows=rows, row_count=len(rows), byte_count=21 * len(rows), truncated=False)
+    byte_count = len(canonical_json({"columns": ["id"], "rows": [list(row) for row in rows]}).encode("utf-8"))
+    return QueryExecutionResult(columns=("id",), rows=rows, row_count=len(rows), byte_count=byte_count, truncated=False)
 
 
 class _Catalog:
@@ -243,6 +245,79 @@ async def test_a_successful_query_plans_once_executes_once_and_returns_evidence(
     assert payload["evidence"]["datasource_id"] == "ds-1"
     assert payload["evidence"]["query_hash"] == _HASH
     assert payload["evidence"]["result_digest"] == agent_tools.compute_result_digest(("id",), ((1,),))
+
+
+@pytest.mark.asyncio
+async def test_a_successful_query_registers_the_same_bounded_snapshot_in_its_run_collector():
+    from deerflow.constants import ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY
+
+    plan = _PlanQuery(_plan_created())
+    execute = _ExecuteQuery(_executed())
+    bind_analytics_services(_services(plan=plan, execute=execute))
+    collector = create_analysis_run_evidence_collector(principal_id="user-1", thread_id="thread-1", run_id="run-1")
+    runtime = _runtime(
+        context={
+            "thread_id": "thread-1",
+            "run_id": "run-1",
+            ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY: collector,
+        }
+    )
+
+    payload = json.loads(await agent_tools.query_business_data.ainvoke({"datasource_id": "ds-1", "sql": _SQL, "runtime": runtime}))
+    evidence_id = payload["evidence"]["evidence_id"]
+    snapshots = collector.resolve_successful_queries(
+        principal_id="user-1",
+        thread_id="thread-1",
+        run_id="run-1",
+        evidence_ids=(evidence_id,),
+    )
+
+    assert payload["code"] == "executed"
+    assert snapshots is not None and snapshots[0].rows == ((1,),)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failed_stage", ["plan", "execute"])
+async def test_a_failed_plan_or_execution_never_registers_evidence(failed_stage):
+    from deerflow.constants import ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY
+
+    if failed_stage == "plan":
+        plan = _PlanQuery(QueryPlanDelivery(code=ExecutionDecisionCode.COST_LIMIT_EXCEEDED.value))
+        execute = _ExecuteQuery(_executed())
+    else:
+        plan = _PlanQuery(_plan_created())
+        execute = _ExecuteQuery(_failure(ExecutionDecisionCode.DATABASE_UNAVAILABLE))
+    bind_analytics_services(_services(plan=plan, execute=execute))
+    collector = create_analysis_run_evidence_collector(principal_id="user-1", thread_id="thread-1", run_id="run-1")
+    runtime = _runtime(
+        context={
+            "thread_id": "thread-1",
+            "run_id": "run-1",
+            ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY: collector,
+        }
+    )
+
+    payload = json.loads(await agent_tools.query_business_data.ainvoke({"datasource_id": "ds-1", "sql": _SQL, "runtime": runtime}))
+    evidence_id = AnalyticsQueryEvidence.build(
+        datasource_id="ds-1",
+        query_hash=_HASH,
+        risk=QueryRisk.LOW,
+        schema_version="s1",
+        policy_version="p1",
+        estimate=_estimate(),
+        result=_result(),
+    ).evidence_id
+
+    assert payload["code"] != "executed"
+    assert (
+        collector.resolve_successful_queries(
+            principal_id="user-1",
+            thread_id="thread-1",
+            run_id="run-1",
+            evidence_ids=(evidence_id,),
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio

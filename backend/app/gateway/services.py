@@ -25,6 +25,7 @@ from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.messages.utils import convert_to_messages
 from langgraph.types import Command
 
+from app.analytics.agent.evidence import create_analysis_run_evidence_collector
 from app.analytics.agent.runtime import get_bound_analytics_services
 from app.gateway.analysis_report_writer import create_analysis_report_writer_capability
 from app.gateway.auth_disabled import AUTH_SOURCE_INTERNAL, AUTH_SOURCE_PAT, AUTH_SOURCE_SESSION
@@ -48,7 +49,7 @@ from deerflow.agents.middlewares.tool_transform_meta import TOOL_TRANSFORMS_KEY
 from deerflow.agents.middlewares.view_image_middleware import _IMAGE_CONTEXT_MESSAGE_MARKER_KEY
 from deerflow.config.app_config import get_app_config
 from deerflow.config.database_config import resolve_checkpoint_graph_cache_max
-from deerflow.constants import ANALYSIS_REPORT_WRITER_CONTEXT_KEY
+from deerflow.constants import ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY, ANALYSIS_REPORT_WRITER_CONTEXT_KEY
 from deerflow.persistence.thread_meta import THREAD_ANALYSIS_MODE_METADATA_KEY
 from deerflow.runtime import (
     END_SENTINEL,
@@ -592,6 +593,7 @@ _SERVER_OWNED_RUNTIME_CONTEXT_KEYS: frozenset[str] = (
             "langgraph_auth_user",
             "langgraph_auth_user_id",
             THREAD_ANALYSIS_MODE_METADATA_KEY,
+            ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY,
             ANALYSIS_REPORT_WRITER_CONTEXT_KEY,
             # Server-owned pinned project snapshot (spec §7.1): resolved once
             # at admission from threads_meta; a client-supplied value must
@@ -1797,30 +1799,39 @@ async def start_run(
             # or strict verification failure:
             # its startup barrier is the single path that turns pending
             # cancellation into no-agent-construction plus publish_end.
-            run_context_for_run = replace(run_ctx, analysis_report_writer=None)
+            run_context_for_run = replace(run_ctx, analysis_report_writer=None, analysis_evidence_collector=None)
             run_config_context = config.get("context")
             report_owner = run_config_context.get("user_id") if isinstance(run_config_context, Mapping) else None
             if analysis_mode:
+                writer_capability = None
+                evidence_collector = None
                 try:
-                    writer_capability = (
-                        create_analysis_report_writer_capability(
+                    if metadata_failure is None and isinstance(report_owner, str) and report_owner == analysis_principal_id and report_owner == record.user_id:
+                        writer_capability = create_analysis_report_writer_capability(
                             principal_id=report_owner,
                             thread_id=thread_id,
                             run_id=record.run_id,
                         )
-                        if metadata_failure is None and isinstance(report_owner, str) and report_owner == analysis_principal_id and report_owner == record.user_id
-                        else None
-                    )
+                        evidence_collector = create_analysis_run_evidence_collector(
+                            principal_id=report_owner,
+                            thread_id=thread_id,
+                            run_id=record.run_id,
+                        )
                 except Exception:
-                    # 能力无法签发时，该 run 不得降级进入普通图。
+                    # 任一单 run 能力无法签发时，该 run 不得降级进入普通图。
                     writer_capability = None
-                if writer_capability is None:
+                    evidence_collector = None
+                if writer_capability is None or evidence_collector is None:
                     await run_mgr.fail_start_if_pending(
                         record.run_id,
                         error="analysis_mode_unavailable",
                     )
                 else:
-                    run_context_for_run = replace(run_context_for_run, analysis_report_writer=writer_capability)
+                    run_context_for_run = replace(
+                        run_context_for_run,
+                        analysis_report_writer=writer_capability,
+                        analysis_evidence_collector=evidence_collector,
+                    )
 
             await run_agent(
                 bridge,

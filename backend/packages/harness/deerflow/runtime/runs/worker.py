@@ -41,6 +41,7 @@ from deerflow.agents.middlewares.input_sanitization_middleware import neutralize
 from deerflow.config.app_config import AppConfig
 from deerflow.config.database_config import CheckpointChannelMode
 from deerflow.constants import (
+    ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY,
     ANALYSIS_REPORT_STAGING_DIRNAME,
     ANALYSIS_REPORT_WRITER_CONTEXT_KEY,
     CONVERSATION_READER_CONTEXT_KEY,
@@ -207,6 +208,7 @@ def _release_run_scoped_references(
         "__run_journal",
         CURRENT_RUN_PRE_EXISTING_MESSAGE_IDS_KEY,
         CONVERSATION_READER_CONTEXT_KEY,
+        ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY,
         ANALYSIS_REPORT_WRITER_CONTEXT_KEY,
     }
     try:
@@ -232,6 +234,7 @@ def _release_run_scoped_references(
         if isinstance(configurable, dict):
             configurable.pop("__pregel_runtime", None)
             configurable.pop(CONVERSATION_READER_CONTEXT_KEY, None)
+            configurable.pop(ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY, None)
             configurable.pop(ANALYSIS_REPORT_WRITER_CONTEXT_KEY, None)
         context = runnable_config.get("context")
         if isinstance(context, dict):
@@ -539,6 +542,7 @@ _SERVER_OWNED_RUNTIME_CONTEXT_KEYS: Final[frozenset[str]] = (
             CURRENT_RUN_PRE_EXISTING_MESSAGE_IDS_KEY,
             DEERFLOW_TRACE_METADATA_KEY,
             CONVERSATION_READER_CONTEXT_KEY,
+            ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY,
             ANALYSIS_REPORT_WRITER_CONTEXT_KEY,
             "is_subagent",
             "agent_id",
@@ -564,6 +568,7 @@ def _build_runtime_context(
     extensions: Any | None = None,
     conversation_reader: Any | None = None,
     analysis_report_writer: Any | None = None,
+    analysis_evidence_collector: Any | None = None,
 ) -> dict[str, Any]:
     """Build the dict that becomes ``ToolRuntime.context`` for the run.
 
@@ -589,6 +594,8 @@ def _build_runtime_context(
         runtime_ctx[CONVERSATION_READER_CONTEXT_KEY] = conversation_reader
     if analysis_report_writer is not None:
         runtime_ctx[ANALYSIS_REPORT_WRITER_CONTEXT_KEY] = analysis_report_writer
+    if analysis_evidence_collector is not None:
+        runtime_ctx[ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY] = analysis_evidence_collector
     if task_store is not None:
         from deerflow_extension_api import EXTENSION_TASK_STORE_KEY
 
@@ -650,6 +657,8 @@ class RunContext:
     conversation_reader: Any | None = field(default=None)
     # Gateway 仅为经过认证的 analysis run 签发此单 run writer。
     analysis_report_writer: Any | None = field(default=None)
+    # Gateway 仅为同类 run 签发的短生命周期成功查询 evidence 快照。
+    analysis_evidence_collector: Any | None = field(default=None)
 
 
 def _install_runtime_context(config: dict, runtime_context: dict[str, Any]) -> None:
@@ -658,6 +667,7 @@ def _install_runtime_context(config: dict, runtime_context: dict[str, Any]) -> N
     configurable = config.get("configurable")
     if isinstance(configurable, dict):
         configurable.pop(CONVERSATION_READER_CONTEXT_KEY, None)
+        configurable.pop(ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY, None)
         configurable.pop(ANALYSIS_REPORT_WRITER_CONTEXT_KEY, None)
     existing_context = config.get("context")
     if isinstance(existing_context, dict):
@@ -1110,6 +1120,7 @@ async def run_agent(
             extensions,
             ctx.conversation_reader,
             ctx.analysis_report_writer,
+            ctx.analysis_evidence_collector,
         )
         # Bind every checkpoint produced by this run to the effective agent
         # identity that produced its state. Manual compaction uses only this
