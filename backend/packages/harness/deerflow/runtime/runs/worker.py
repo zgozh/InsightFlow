@@ -42,6 +42,7 @@ from deerflow.config.app_config import AppConfig
 from deerflow.config.database_config import CheckpointChannelMode
 from deerflow.constants import (
     ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY,
+    ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY,
     ANALYSIS_REPORT_STAGING_DIRNAME,
     ANALYSIS_REPORT_WRITER_CONTEXT_KEY,
     CONVERSATION_READER_CONTEXT_KEY,
@@ -210,6 +211,7 @@ def _release_run_scoped_references(
         CONVERSATION_READER_CONTEXT_KEY,
         ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY,
         ANALYSIS_REPORT_WRITER_CONTEXT_KEY,
+        ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY,
     }
     try:
         from deerflow.extensions import EXTENSION_SNAPSHOT_CONTEXT_KEY
@@ -236,16 +238,25 @@ def _release_run_scoped_references(
             configurable.pop(CONVERSATION_READER_CONTEXT_KEY, None)
             configurable.pop(ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY, None)
             configurable.pop(ANALYSIS_REPORT_WRITER_CONTEXT_KEY, None)
+            configurable.pop(ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY, None)
         context = runnable_config.get("context")
         if isinstance(context, dict):
             for key in internal_context_keys:
-                context.pop(key, None)
+                value = context.pop(key, None)
+                if key == ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY:
+                    close = getattr(value, "close", None)
+                    if callable(close):
+                        close()
         for handler in handlers:
             _remove_callback(runnable_config, handler)
 
     if isinstance(runtime_context, dict):
         for key in internal_context_keys:
-            runtime_context.pop(key, None)
+            value = runtime_context.pop(key, None)
+            if key == ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY:
+                close = getattr(value, "close", None)
+                if callable(close):
+                    close()
 
 
 def _checkpoint_thread_lock(thread_id: str) -> AbstractAsyncContextManager[None]:
@@ -544,6 +555,7 @@ _SERVER_OWNED_RUNTIME_CONTEXT_KEYS: Final[frozenset[str]] = (
             CONVERSATION_READER_CONTEXT_KEY,
             ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY,
             ANALYSIS_REPORT_WRITER_CONTEXT_KEY,
+            ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY,
             "is_subagent",
             "agent_id",
             "__run_loop_detection_recorder",
@@ -569,6 +581,7 @@ def _build_runtime_context(
     conversation_reader: Any | None = None,
     analysis_report_writer: Any | None = None,
     analysis_evidence_collector: Any | None = None,
+    analysis_report_reviewer: Any | None = None,
 ) -> dict[str, Any]:
     """Build the dict that becomes ``ToolRuntime.context`` for the run.
 
@@ -596,6 +609,8 @@ def _build_runtime_context(
         runtime_ctx[ANALYSIS_REPORT_WRITER_CONTEXT_KEY] = analysis_report_writer
     if analysis_evidence_collector is not None:
         runtime_ctx[ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY] = analysis_evidence_collector
+    if analysis_report_reviewer is not None:
+        runtime_ctx[ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY] = analysis_report_reviewer
     if task_store is not None:
         from deerflow_extension_api import EXTENSION_TASK_STORE_KEY
 
@@ -659,6 +674,8 @@ class RunContext:
     analysis_report_writer: Any | None = field(default=None)
     # Gateway 仅为同类 run 签发的短生命周期成功查询 evidence 快照。
     analysis_evidence_collector: Any | None = field(default=None)
+    # Gateway 发行、Lead assembly 绑定所选 base model 的 run-local Reviewer。
+    analysis_report_reviewer: Any | None = field(default=None)
 
 
 def _install_runtime_context(config: dict, runtime_context: dict[str, Any]) -> None:
@@ -669,6 +686,7 @@ def _install_runtime_context(config: dict, runtime_context: dict[str, Any]) -> N
         configurable.pop(CONVERSATION_READER_CONTEXT_KEY, None)
         configurable.pop(ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY, None)
         configurable.pop(ANALYSIS_REPORT_WRITER_CONTEXT_KEY, None)
+        configurable.pop(ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY, None)
     existing_context = config.get("context")
     if isinstance(existing_context, dict):
         existing_context.setdefault("thread_id", runtime_context["thread_id"])
@@ -1121,6 +1139,7 @@ async def run_agent(
             ctx.conversation_reader,
             ctx.analysis_report_writer,
             ctx.analysis_evidence_collector,
+            ctx.analysis_report_reviewer,
         )
         # Bind every checkpoint produced by this run to the effective agent
         # identity that produced its state. Manual compaction uses only this

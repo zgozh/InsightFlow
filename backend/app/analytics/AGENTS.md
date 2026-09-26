@@ -212,6 +212,18 @@ runtime 同时取得身份与 Gateway 签发的本 run writer 能力，先通过
 工具投影遮盖 `markdown`，不得把正文搬入索引或回执。工具正向白名单和 Gateway 的
 `analysis_mode_unavailable` 门禁由各自模块约定，writer 合成测试不代表分析入口已启用。
 
+**报告 Reviewer 门禁（Phase 6F3B1）**：writer 完成身份、领域与 run-owned evidence 校验后，必须先使用
+Gateway 发行的同 run Reviewer capability，再写 artifact 或登记索引。Capability 仅从成功查询 collector
+解析快照、标题、草稿和 evidence ID；不从模型消息、checkpoint 或模型自报字段重建。Lead assembly
+把服务端最终选定的未绑定 base model 交给该能力；Reviewer 直接调用该模型，不绑定工具/结构化工具、不经过
+Lead ToolNode、task 或 MCP。Reviewer 输入总量按 UTF-8 字节限制为 64 KiB，输出请求限 256 token、返回体
+限 2 KiB，调用限时 20 秒；无法提供受限输出参数、超限、超时、取消、模型错误或封闭 JSON 不合法均不能写入。
+每 run 最多两次不同内容复核，同一 title+markdown+evidence 的已通过重试复用仅含摘要码的决定；并发调用受
+run-local 锁与现有 create-only artifact writer 双重约束。拒绝仅向 Lead 返回有限稳定 `reason_code`。
+LLM pass 只是流程门，不是数学证明；本语义不替代 AS-07/08/09/10 验收，也不声称第三方 provider 自有遥测
+不会导出内容。Reviewer 的 LangChain invocation 明确清空继承回调/标签/metadata，避免普通 RunJournal
+接收其原始输入与输出；不要改成 `RunnableBinding` 包装模型调用，因为 LangChain 会重新合并 ambient callbacks。
+
 ## 语言规范
 
 本模块新增或修改的注释、docstring、架构说明与复杂测试场景说明使用中文（见仓库级 `AGENTS.md`）。

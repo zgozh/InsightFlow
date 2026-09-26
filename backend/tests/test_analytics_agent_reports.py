@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 from datetime import UTC, datetime
@@ -22,6 +23,10 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
+from pydantic import Field, PrivateAttr
 
 from app.analytics.agent import reports as agent_reports
 from app.analytics.agent.runtime import bind_analytics_services, clear_analytics_services
@@ -34,6 +39,35 @@ _HASH_A = "a" * 64
 _HASH_B = "b" * 64
 _PATH = "/mnt/user-data/outputs/business-analysis.md"
 _TITLE = "2026 Q3 经营分析"
+
+
+class _ReviewerModel(BaseChatModel):
+    """通过可检查输入与调用参数的无网络模型替身。"""
+
+    max_tokens: int | None = None
+    responses: list[object] = Field(default_factory=list)
+    delay_seconds: float = 0
+    prompts: list[list[object]] = Field(default_factory=list)
+    invocation_kwargs: list[dict] = Field(default_factory=list)
+    _started: asyncio.Event = PrivateAttr(default_factory=asyncio.Event)
+
+    @property
+    def _llm_type(self) -> str:
+        return "synthetic-analysis-reviewer"
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        raise AssertionError("Reviewer must use its async model entry point")
+
+    async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
+        self.prompts.append(messages)
+        self.invocation_kwargs.append(kwargs)
+        self._started.set()
+        if self.delay_seconds:
+            await asyncio.sleep(self.delay_seconds)
+        response = self.responses.pop(0) if self.responses else '{"approved":true,"reason_code":"approved"}'
+        if isinstance(response, BaseException):
+            raise response
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=str(response)))])
 
 
 def _runtime(user_id="user-1", *, thread_id="thread-1", run_id="run-1"):
@@ -159,17 +193,30 @@ def test_report_writer_schema_has_only_content_and_evidence_fields():
     assert set(schema.model_json_schema()["properties"]) == {"title", "markdown", "evidence_ids"}
 
 
-def _writer_runtime(capability=None, *, evidence_collector=None, user_id="user-1", thread_id="thread-1", run_id="run-1"):
+def _writer_runtime(capability=None, *, evidence_collector=None, reviewer=None, user_id="user-1", thread_id="thread-1", run_id="run-1"):
     runtime = _runtime(user_id=user_id, thread_id=thread_id, run_id=run_id)
     if evidence_collector is not None:
         from deerflow.constants import ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY
 
         runtime.context[ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY] = evidence_collector
+    if reviewer is not None:
+        from deerflow.constants import ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY
+
+        runtime.context[ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY] = reviewer
     if capability is not None:
         from deerflow.constants import ANALYSIS_REPORT_WRITER_CONTEXT_KEY
 
         runtime.context[ANALYSIS_REPORT_WRITER_CONTEXT_KEY] = capability
     return runtime
+
+
+def _reviewer_capability(*, principal_id="user-1", thread_id="thread-1", run_id="run-1", responses=None, delay_seconds=0):
+    from app.analytics.agent.reviewer import create_analysis_report_reviewer_capability
+
+    reviewer = create_analysis_report_reviewer_capability(principal_id=principal_id, thread_id=thread_id, run_id=run_id)
+    model = _ReviewerModel(responses=list(responses or []), delay_seconds=delay_seconds)
+    assert reviewer.bind_lead_model(principal_id=principal_id, thread_id=thread_id, run_id=run_id, model=model)
+    return reviewer, model
 
 
 def _successful_run_evidence(*, principal_id="user-1", thread_id="thread-1", run_id="run-1"):
@@ -239,7 +286,8 @@ async def test_report_writer_writes_then_indexes_and_returns_only_a_safe_receipt
 
     capability = _writer_capability(monkeypatch, tmp_path)
     collector, evidence_id = _successful_run_evidence()
-    runtime = _writer_runtime(capability, evidence_collector=collector)
+    reviewer, _model = _reviewer_capability()
+    runtime = _writer_runtime(capability, evidence_collector=collector, reviewer=reviewer)
     markdown = "# Synthetic\n\nREPORT_BODY_SENTINEL SELECT SQL_SENTINEL\n"
     repo = _Repo()
     _bind(repo)
@@ -270,12 +318,146 @@ async def test_report_writer_writes_then_indexes_and_returns_only_a_safe_receipt
 
 
 @pytest.mark.asyncio
+async def test_report_writer_requires_current_run_reviewer_before_any_write(monkeypatch, tmp_path):
+    """Reviewer 缺失时，合法 evidence 也不能越过复核直接发布。"""
+
+    capability = _writer_capability(monkeypatch, tmp_path)
+    collector, evidence_id = _successful_run_evidence()
+    runtime = _writer_runtime(capability, evidence_collector=collector)
+    repo = _Repo()
+    _bind(repo)
+
+    result = await agent_reports.write_analysis_report.coroutine(
+        title=_TITLE,
+        markdown="# Needs reviewer\n",
+        evidence_ids=[evidence_id],
+        runtime=runtime,
+        tool_call_id="call-missing-reviewer",
+    )
+
+    assert isinstance(result, str)
+    assert _body(result) == {"code": "analysis_review_unavailable"}
+    assert repo.reports == []
+    assert not capability.output_path.exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        ('{"approved":false,"reason_code":"unsupported_claim"}', {"code": "analysis_review_rejected", "reason_code": "unsupported_claim"}),
+        ('{"approved":true,"reason_code":"approved","extra":"invalid"}', {"code": "analysis_review_unavailable"}),
+        (RuntimeError("synthetic reviewer failure"), {"code": "analysis_review_unavailable"}),
+    ],
+)
+async def test_report_writer_reviewer_rejection_or_invalid_response_has_zero_writes(monkeypatch, tmp_path, response, expected):
+    capability = _writer_capability(monkeypatch, tmp_path)
+    collector, evidence_id = _successful_run_evidence()
+    reviewer, model = _reviewer_capability(responses=[response])
+    runtime = _writer_runtime(capability, evidence_collector=collector, reviewer=reviewer)
+    repo = _Repo()
+    _bind(repo)
+
+    result = await agent_reports.write_analysis_report.coroutine(
+        title=_TITLE,
+        markdown="# Must be reviewed\n",
+        evidence_ids=[evidence_id],
+        runtime=runtime,
+        tool_call_id="call-review-denied",
+    )
+
+    assert isinstance(result, str)
+    assert _body(result) == expected
+    assert len(model.prompts) == 1
+    assert repo.reports == []
+    assert not capability.output_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_report_writer_rejects_oversized_review_input_without_model_or_writes(monkeypatch, tmp_path):
+    capability = _writer_capability(monkeypatch, tmp_path)
+    collector, evidence_id = _successful_run_evidence()
+    reviewer, model = _reviewer_capability()
+    runtime = _writer_runtime(capability, evidence_collector=collector, reviewer=reviewer)
+    repo = _Repo()
+    _bind(repo)
+
+    result = await agent_reports.write_analysis_report.coroutine(
+        title=_TITLE,
+        markdown="# " + ("x" * (64 * 1024)),
+        evidence_ids=[evidence_id],
+        runtime=runtime,
+        tool_call_id="call-review-input-large",
+    )
+
+    assert isinstance(result, str)
+    assert _body(result) == {"code": "analysis_review_input_too_large"}
+    assert model.prompts == []
+    assert repo.reports == []
+    assert not capability.output_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_report_writer_timeout_and_cancellation_never_reach_file_or_index(monkeypatch, tmp_path):
+    from app.analytics.agent import reviewer as reviewer_module
+
+    monkeypatch.setattr(reviewer_module, "ANALYSIS_REVIEWER_TIMEOUT_SECONDS", 0.01)
+    capability = _writer_capability(monkeypatch, tmp_path)
+    collector, evidence_id = _successful_run_evidence()
+    reviewer, _model = _reviewer_capability(delay_seconds=0.1)
+    runtime = _writer_runtime(capability, evidence_collector=collector, reviewer=reviewer)
+    repo = _Repo()
+    _bind(repo)
+
+    timed_out = await agent_reports.write_analysis_report.coroutine(
+        title=_TITLE,
+        markdown="# Timeout\n",
+        evidence_ids=[evidence_id],
+        runtime=runtime,
+        tool_call_id="call-review-timeout",
+    )
+
+    assert isinstance(timed_out, str)
+    assert _body(timed_out) == {"code": "analysis_review_unavailable"}
+    assert repo.reports == []
+    assert not capability.output_path.exists()
+
+    monkeypatch.setattr(reviewer_module, "ANALYSIS_REVIEWER_TIMEOUT_SECONDS", 30)
+    cancel_capability = _writer_capability(monkeypatch, tmp_path, run_id="run-cancel")
+    cancel_collector, cancel_evidence_id = _successful_run_evidence(run_id="run-cancel")
+    cancel_reviewer, cancel_model = _reviewer_capability(run_id="run-cancel", delay_seconds=30)
+    cancel_runtime = _writer_runtime(
+        cancel_capability,
+        evidence_collector=cancel_collector,
+        reviewer=cancel_reviewer,
+        run_id="run-cancel",
+    )
+    cancel_task = asyncio.create_task(
+        agent_reports.write_analysis_report.coroutine(
+            title=_TITLE,
+            markdown="# Cancelled\n",
+            evidence_ids=[cancel_evidence_id],
+            runtime=cancel_runtime,
+            tool_call_id="call-review-cancel",
+        )
+    )
+    await cancel_model._started.wait()
+    cancel_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await cancel_task
+
+    assert repo.reports == []
+    assert not cancel_capability.output_path.exists()
+
+
+@pytest.mark.asyncio
 async def test_report_writer_index_failure_leaves_reusable_file_but_no_success_receipt(monkeypatch, tmp_path):
     from langgraph.types import Command
 
     capability = _writer_capability(monkeypatch, tmp_path)
     collector, evidence_id = _successful_run_evidence()
-    runtime = _writer_runtime(capability, evidence_collector=collector)
+    reviewer, model = _reviewer_capability()
+    runtime = _writer_runtime(capability, evidence_collector=collector, reviewer=reviewer)
     markdown = "# Retry after index failure\n"
     failing_repo = _Repo(error=RuntimeError("dsn=synthetic-secret"))
     _bind(failing_repo)
@@ -312,7 +494,8 @@ async def test_report_writer_same_run_same_evidence_and_content_retry_remains_ex
 
     capability = _writer_capability(monkeypatch, tmp_path)
     collector, evidence_id = _successful_run_evidence()
-    runtime = _writer_runtime(capability, evidence_collector=collector)
+    reviewer, model = _reviewer_capability()
+    runtime = _writer_runtime(capability, evidence_collector=collector, reviewer=reviewer)
     markdown = "# Idempotent synthetic report\n"
     first_repo = _Repo()
     _bind(first_repo)
@@ -347,6 +530,45 @@ async def test_report_writer_same_run_same_evidence_and_content_retry_remains_ex
     assert isinstance(retry, Command)
     assert json.loads(retry.update["messages"][0].content)["code"] == "existing"
     assert retry_repo.reports[0].identity == stored.identity
+    assert len(model.prompts) == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_report_variants_share_two_review_slots_and_create_only_artifact(monkeypatch, tmp_path):
+    from langgraph.types import Command
+
+    capability = _writer_capability(monkeypatch, tmp_path)
+    collector, evidence_id = _successful_run_evidence()
+    reviewer, model = _reviewer_capability(
+        responses=[
+            '{"approved":true,"reason_code":"approved"}',
+            '{"approved":true,"reason_code":"approved"}',
+        ]
+    )
+    runtime = _writer_runtime(capability, evidence_collector=collector, reviewer=reviewer)
+    repo = _Repo()
+    _bind(repo)
+
+    async def publish(markdown: str, call_id: str):
+        return await agent_reports.write_analysis_report.coroutine(
+            title=_TITLE,
+            markdown=markdown,
+            evidence_ids=[evidence_id],
+            runtime=runtime,
+            tool_call_id=call_id,
+        )
+
+    results = await asyncio.gather(
+        publish("# Variant A\n", "call-variant-a"),
+        publish("# Variant B\n", "call-variant-b"),
+        publish("# Variant C\n", "call-variant-c"),
+    )
+
+    codes = [json.loads(result.update["messages"][0].content)["code"] if isinstance(result, Command) else _body(result)["code"] for result in results]
+    assert sorted(codes) == ["analysis_review_attempt_limit", "published", "report_conflict"]
+    assert capability.output_path.read_text(encoding="utf-8") in {"# Variant A\n", "# Variant B\n"}
+    assert len(repo.reports) == 1
+    assert len(model.prompts) == 2
 
 
 @pytest.mark.asyncio

@@ -1000,6 +1000,7 @@ def test_analysis_gateway_admission_runs_catalog_query_writer_and_owner_scoped_a
                     }
                 ],
             ),
+            AIMessage(content='{"approved":true,"reason_code":"approved"}'),
             AIMessage(content=f"Synthetic analysis is complete. Evidence: {evidence.evidence_id}"),
         ]
     )
@@ -1087,7 +1088,10 @@ def test_analysis_gateway_admission_runs_catalog_query_writer_and_owner_scoped_a
             assert events_response.status_code == 200, events_response.text
             assert "__analysis_evidence_collector" not in state_response.text
             assert "__analysis_evidence_collector" not in events_response.text
+            assert "__analysis_report_reviewer" not in state_response.text
+            assert "__analysis_report_reviewer" not in events_response.text
             assert private_result_sentinel not in events_response.text
+            assert '{"approved":true,"reason_code":"approved"}' not in events_response.text
 
             artifact_path = f"mnt/user-data/outputs/analysis-report-{run_id}.md"
             artifact = client.get(f"/api/threads/{thread_id}/artifacts/{artifact_path}")

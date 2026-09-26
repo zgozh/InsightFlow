@@ -92,32 +92,50 @@ def test_runtime_context_rejects_a_caller_forged_report_writer_capability():
 
 
 def test_runtime_context_carries_the_gateway_collector_by_identity_without_checkpoint_config_or_cleanup_leak():
-    from deerflow.constants import ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY
+    from deerflow.constants import ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY, ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY
 
     forged = object()
     collector = object()
+    reviewer = SimpleNamespace(closed=False)
+    reviewer.close = lambda: setattr(reviewer, "closed", True)
     runtime_context = _build_runtime_context(
         "thread_1",
         "run_1",
-        {ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY: forged},
+        {
+            ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY: forged,
+            ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY: forged,
+        },
         analysis_evidence_collector=collector,
+        analysis_report_reviewer=reviewer,
     )
     config = {
-        "context": {ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY: forged},
-        "configurable": {ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY: forged},
+        "context": {
+            ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY: forged,
+            ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY: forged,
+        },
+        "configurable": {
+            ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY: forged,
+            ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY: forged,
+        },
     }
 
     _install_runtime_context(config, runtime_context)
 
     assert runtime_context[ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY] is collector
     assert config["context"][ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY] is collector
+    assert runtime_context[ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY] is reviewer
+    assert config["context"][ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY] is reviewer
     assert ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY not in config["configurable"]
+    assert ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY not in config["configurable"]
     assert forged not in runtime_context.values()
 
     _release_run_scoped_references([config], runtime_context, None)
 
     assert ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY not in runtime_context
     assert ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY not in config["context"]
+    assert ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY not in runtime_context
+    assert ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY not in config["context"]
+    assert reviewer.closed is True
 
 
 @pytest.mark.anyio

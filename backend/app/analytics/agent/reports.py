@@ -32,9 +32,10 @@ from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 
 from app.analytics.agent.evidence import ANALYSIS_EVIDENCE_UNAVAILABLE, AnalysisRunEvidenceCollector, canonical_json
+from app.analytics.agent.reviewer import AnalysisReportReviewerCapability
 from app.analytics.agent.runtime import get_bound_analytics_services, trusted_principal, trusted_thread_run
 from app.analytics.domain import AnalysisReport, ReportPublishCode, ReportStatus
-from deerflow.constants import ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY, ANALYSIS_REPORT_WRITER_CONTEXT_KEY
+from deerflow.constants import ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY, ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY, ANALYSIS_REPORT_WRITER_CONTEXT_KEY
 from deerflow.tools.types import Runtime
 
 PUBLISH_REPORT_TOOL_NAME = "publish_analysis_report"
@@ -123,7 +124,9 @@ async def write_analysis_report(
     """写入并登记当前 analysis run 的唯一 Markdown 报告。
 
     Gateway 能力固定所有者、线程、run、存储根目录和文件名。模型只提供报告正文与 evidence
-    引用；引用必须属于该 run 的成功受控查询，安全回执不包含正文或内部身份。
+    引用；引用必须属于该 run 的成功受控查询。发布前有服务端零工具 Reviewer；若返回
+    `analysis_review_rejected` 和稳定 reason code，可据此修订并最多再提交一次。Reviewer 只提供流程复核，
+    不证明数字正确；安全回执不包含正文或内部身份。
 
     Args:
         title: 报告列表显示的短标题。
@@ -186,6 +189,28 @@ async def write_analysis_report(
         return _payload(ANALYSIS_EVIDENCE_UNAVAILABLE)
     if snapshots is None:
         return _payload(ANALYSIS_EVIDENCE_UNAVAILABLE)
+
+    reviewer = context.get(ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY) if isinstance(context, Mapping) else None
+    if not isinstance(reviewer, AnalysisReportReviewerCapability) or not reviewer.matches(principal_id, thread_id, run_id):
+        return _payload("analysis_review_unavailable")
+    try:
+        review = await reviewer.review(
+            principal_id=principal_id,
+            thread_id=thread_id,
+            run_id=run_id,
+            title=title,
+            markdown=markdown,
+            evidence_ids=normalized_evidence_ids,
+            snapshots=snapshots,
+        )
+    except Exception:  # noqa: BLE001 - 复核能力异常不向模型回显且绝不继续发布
+        return _payload("analysis_review_unavailable")
+    if review.code != "approved":
+        if review.code == "analysis_review_rejected" and review.reason_code is not None:
+            return _payload(review.code, reason_code=review.reason_code)
+        if review.code in {"analysis_review_unavailable", "analysis_review_input_too_large", "analysis_review_attempt_limit"}:
+            return _payload(review.code)
+        return _payload("analysis_review_unavailable")
 
     try:
         write_result = await write_markdown(markdown)

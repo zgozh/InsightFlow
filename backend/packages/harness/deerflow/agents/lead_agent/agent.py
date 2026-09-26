@@ -60,6 +60,7 @@ from deerflow.config.subagents_config import (
     DEFAULT_MAX_TOTAL_SUBAGENTS_PER_RUN,
     effective_subagent_concurrency,
 )
+from deerflow.constants import ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY
 from deerflow.models import create_chat_model
 from deerflow.persistence.thread_meta import THREAD_ANALYSIS_MODE_METADATA_KEY
 from deerflow.runtime.checkpoint_mode import (
@@ -1113,8 +1114,33 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
     )
     if analysis_mode:
         system_prompt = f"{system_prompt}\n\n{_ANALYSIS_MODE_SYSTEM_INSTRUCTIONS}"
+    lead_model = create_chat_model(
+        name=model_name,
+        thinking_enabled=thinking_enabled,
+        reasoning_effort=reasoning_effort,
+        app_config=resolved_app_config,
+        attach_tracing=False,
+        model_overrides=agent_model_overrides,
+    )
+    if analysis_mode:
+        configurable = config.get("configurable")
+        runtime = configurable.get("__pregel_runtime") if isinstance(configurable, Mapping) else None
+        runtime_context = getattr(runtime, "context", None)
+        reviewer = runtime_context.get(ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY) if isinstance(runtime_context, Mapping) else None
+        bind_lead_model = getattr(reviewer, "bind_lead_model", None)
+        if callable(bind_lead_model):
+            try:
+                bind_lead_model(
+                    principal_id=runtime_context.get("user_id"),
+                    thread_id=runtime_context.get("thread_id"),
+                    run_id=runtime_context.get("run_id"),
+                    model=lead_model,
+                )
+            except Exception:  # noqa: BLE001 - 无法绑定时报告能力保持 fail-closed
+                logger.warning("Analysis report Reviewer model binding failed closed")
+
     graph = create_agent(
-        model=create_chat_model(name=model_name, thinking_enabled=thinking_enabled, reasoning_effort=reasoning_effort, app_config=resolved_app_config, attach_tracing=False, model_overrides=agent_model_overrides),
+        model=lead_model,
         tools=final_tools,
         middleware=normalize_middleware_state_schemas(middlewares, mode),
         system_prompt=system_prompt,

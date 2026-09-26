@@ -15,6 +15,9 @@ ANALYSIS_REPORT_WRITER_CONTEXT_KEY = "__analysis_report_writer"
 # Host-only per-run evidence state. It is created only after analysis admission,
 # passed through runtime context, and removed with the run's other capabilities.
 ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY = "__analysis_evidence_collector"
+# Host-only run capability for the report's no-tool Reviewer. The Lead assembly
+# binds its server-selected base model here; caller context is never authoritative.
+ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY = "__analysis_report_reviewer"
 ANALYSIS_REPORT_STAGING_DIRNAME = ".analysis-report-staging"
 
 # Hidden subdirectory (under a thread's outputs dir) that holds the browser

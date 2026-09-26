@@ -27,6 +27,8 @@ class FakeToolCallingModel(FakeMessagesListChatModel):
     handling needed.
     """
 
+    max_tokens: int | None = None
+
     def bind_tools(  # type: ignore[override]
         self,
         tools: Any,
