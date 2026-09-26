@@ -82,6 +82,13 @@ describe("analytics trace projection", () => {
           args: { filepaths: ["/mnt/user-data/outputs/r.md"] },
         },
       ]),
+      ai([
+        {
+          id: "c5-current",
+          name: "write_analysis_report",
+          args: { title: "t", markdown: "REPORT_BODY_SENTINEL" },
+        },
+      ]),
       ai([{ id: "c5", name: "publish_analysis_report", args: { title: "t" } }]),
     ]);
 
@@ -90,6 +97,7 @@ describe("analytics trace projection", () => {
       "catalog",
       "delegate",
       "artifact",
+      "report",
       "report",
     ]);
     expect(steps[0]?.todoCount).toBe(1);
@@ -386,6 +394,171 @@ describe("analytics trace projection", () => {
     ]);
 
     expect(steps[0]?.status).toBe("completed");
+  });
+
+  test("the current writer derives review approval and artifact only from a complete safe receipt", () => {
+    const path = "/mnt/user-data/outputs/analysis-report-run_1.md";
+    const messages = ["published", "existing"].flatMap((code) => [
+      ai([
+        {
+          id: `current-writer-${code}`,
+          name: "write_analysis_report",
+          args: {
+            title: "Synthetic",
+            markdown: "REPORT_BODY_SENTINEL",
+            evidence_ids: [DIGEST],
+          },
+        },
+      ]),
+      tool(
+        `current-writer-${code}`,
+        JSON.stringify({
+          code,
+          report_id: "report_1",
+          artifact_path: path,
+          evidence_ids: [DIGEST],
+        }),
+      ),
+    ]);
+
+    const steps = projectAnalyticsTrace(messages);
+
+    expect(steps.map((step) => step.kind)).toEqual(["report", "report"]);
+    expect(steps.map((step) => step.status)).toEqual([
+      "completed",
+      "completed",
+    ]);
+    expect(steps.map((step) => step.reviewerStatus)).toEqual([
+      "approved",
+      "approved",
+    ]);
+    expect(steps.map((step) => step.reviewerReasonCode)).toEqual([null, null]);
+    expect(steps.map((step) => step.artifactPaths)).toEqual([[path], [path]]);
+    expect(JSON.stringify(steps)).not.toContain("REPORT_BODY_SENTINEL");
+  });
+
+  test("review rejection carries only a finite safe reason and never an artifact", () => {
+    const steps = projectAnalyticsTrace([
+      ai([
+        {
+          id: "review-rejected",
+          name: "write_analysis_report",
+          args: { markdown: "REPORT_BODY_SENTINEL" },
+        },
+      ]),
+      tool(
+        "review-rejected",
+        JSON.stringify({
+          code: "analysis_review_rejected",
+          reason_code: "evidence_mismatch",
+        }),
+      ),
+    ]);
+
+    expect(steps[0]?.status).toBe("rejected");
+    expect(steps[0]?.reviewerStatus).toBe("rejected");
+    expect(steps[0]?.reviewerReasonCode).toBe("evidence_mismatch");
+    expect(steps[0]?.artifactPaths).toEqual([]);
+    expect(JSON.stringify(steps)).not.toContain("REPORT_BODY_SENTINEL");
+  });
+
+  test("review failure and limit receipts cannot imply approval, and evidence failures are not reviewer outcomes", () => {
+    const cases = [
+      {
+        id: "unavailable",
+        code: "analysis_review_unavailable",
+        review: "failed",
+      },
+      {
+        id: "oversized",
+        code: "analysis_review_input_too_large",
+        review: "limited",
+      },
+      {
+        id: "exhausted",
+        code: "analysis_review_attempt_limit",
+        review: "limited",
+      },
+      { id: "evidence", code: "analysis_evidence_unavailable", review: null },
+      { id: "conflict", code: "report_conflict", review: null },
+    ] as const;
+    const messages = cases.flatMap(({ id, code }) => [
+      ai([
+        {
+          id,
+          name: "write_analysis_report",
+          args: { markdown: "BODY_SENTINEL" },
+        },
+      ]),
+      tool(
+        id,
+        JSON.stringify({
+          code,
+          report_id: "report_1",
+          artifact_path: "/mnt/user-data/outputs/analysis-report-run_1.md",
+          evidence_ids: [DIGEST],
+        }),
+      ),
+    ]);
+
+    const steps = projectAnalyticsTrace(messages);
+
+    expect(steps.map((step) => step.reviewerStatus)).toEqual(
+      cases.map(({ review }) => review),
+    );
+    expect(steps.every((step) => step.artifactPaths.length === 0)).toBe(true);
+    expect(steps.some((step) => step.reviewerStatus === "approved")).toBe(
+      false,
+    );
+  });
+
+  test("a malformed or errored writer receipt cannot masquerade as review approval", () => {
+    const path = "/mnt/user-data/outputs/analysis-report-run_1.md";
+    const validReceipt = JSON.stringify({
+      code: "published",
+      report_id: "report_1",
+      artifact_path: path,
+      evidence_ids: [DIGEST],
+    });
+    const steps = projectAnalyticsTrace([
+      ai([{ id: "missing-fields", name: "write_analysis_report", args: {} }]),
+      tool(
+        "missing-fields",
+        JSON.stringify({ code: "published", artifact_path: path }),
+      ),
+      ai([{ id: "extra-fields", name: "write_analysis_report", args: {} }]),
+      tool(
+        "extra-fields",
+        JSON.stringify({
+          code: "published",
+          report_id: "report_1",
+          artifact_path: path,
+          evidence_ids: [DIGEST],
+          markdown: "CORRUPT_BODY_SENTINEL",
+        }),
+      ),
+      ai([{ id: "tool-error", name: "write_analysis_report", args: {} }]),
+      {
+        ...tool("tool-error", validReceipt),
+        status: "error",
+      } as unknown as Message,
+      ai([{ id: "unknown-code", name: "write_analysis_report", args: {} }]),
+      tool("unknown-code", JSON.stringify({ code: "provider_secret_leak" })),
+    ]);
+
+    expect(steps.map((step) => step.reviewerStatus)).toEqual([
+      null,
+      null,
+      null,
+      null,
+    ]);
+    expect(steps.map((step) => step.artifactPaths)).toEqual([[], [], [], []]);
+    expect(steps[0]?.unparsed).toBe(true);
+    expect(steps[1]?.unparsed).toBe(true);
+    expect(steps[2]?.status).toBe("failed");
+    expect(steps[3]?.unparsed).toBe(true);
+    expect(JSON.stringify(steps)).not.toContain("provider_secret_leak");
+    expect(JSON.stringify(steps)).not.toContain("CORRUPT_BODY_SENTINEL");
   });
 
   test("a malformed report payload is unparsed and never rendered", () => {

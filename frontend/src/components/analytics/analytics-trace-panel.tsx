@@ -21,6 +21,8 @@ import { CopyButton } from "@/components/workspace/copy-button";
 import {
   abbreviateDigest,
   formatEngineCost,
+  type AnalyticsReportReviewerReasonCode,
+  type AnalyticsReportReviewerStatus,
   type AnalyticsTraceStatus,
   type AnalyticsTraceStepKind,
   projectAnalyticsTrace,
@@ -48,6 +50,18 @@ type TraceKindLabelKey =
   | "stepPublish"
   | "unparsed";
 
+type ReviewerStatusLabelKey =
+  | "reviewerApproved"
+  | "reviewerRejected"
+  | "reviewerFailed"
+  | "reviewerLimited";
+
+type ReviewerReasonLabelKey =
+  | "reviewReasonUnsupportedClaim"
+  | "reviewReasonEvidenceMismatch"
+  | "reviewReasonMissingCitation"
+  | "reviewReasonInsufficientEvidence";
+
 const STATUS_LABEL: Record<AnalyticsTraceStatus, TraceStatusLabelKey> = {
   running: "statusRunning",
   completed: "statusCompleted",
@@ -63,6 +77,26 @@ const KIND_LABEL: Record<AnalyticsTraceStepKind, TraceKindLabelKey> = {
   artifact: "stepArtifact",
   report: "stepPublish",
   unknown: "unparsed",
+};
+
+const REVIEWER_STATUS_LABEL: Record<
+  AnalyticsReportReviewerStatus,
+  ReviewerStatusLabelKey
+> = {
+  approved: "reviewerApproved",
+  rejected: "reviewerRejected",
+  failed: "reviewerFailed",
+  limited: "reviewerLimited",
+};
+
+const REVIEWER_REASON_LABEL: Record<
+  AnalyticsReportReviewerReasonCode,
+  ReviewerReasonLabelKey
+> = {
+  unsupported_claim: "reviewReasonUnsupportedClaim",
+  evidence_mismatch: "reviewReasonEvidenceMismatch",
+  missing_citation: "reviewReasonMissingCitation",
+  insufficient_evidence: "reviewReasonInsufficientEvidence",
 };
 
 const STATUS_CLASS: Record<string, string> = {
@@ -213,6 +247,33 @@ export function AnalyticsTracePanel({
                         className="text-muted-foreground text-[11px]"
                       >
                         {t.analytics.trace.unparsed}
+                      </p>
+                    )}
+
+                    {step.reviewerStatus !== null && (
+                      <p
+                        role="status"
+                        data-testid="analytics-reviewer-status"
+                        data-reviewer-status={step.reviewerStatus}
+                        className="text-muted-foreground text-[11px]"
+                      >
+                        {t.analytics.trace.reviewer}:{" "}
+                        {
+                          t.analytics.trace[
+                            REVIEWER_STATUS_LABEL[step.reviewerStatus]
+                          ]
+                        }
+                        {step.reviewerReasonCode !== null && (
+                          <>
+                            {" "}
+                            ·{" "}
+                            {
+                              t.analytics.trace[
+                                REVIEWER_REASON_LABEL[step.reviewerReasonCode]
+                              ]
+                            }
+                          </>
+                        )}
                       </p>
                     )}
 

@@ -26,6 +26,7 @@ export const TRACE_TOOL_NAMES = [
   "query_business_data",
   "task",
   "present_files",
+  "write_analysis_report",
   "publish_analysis_report",
 ] as const;
 export type TraceToolName = (typeof TRACE_TOOL_NAMES)[number];
@@ -44,6 +45,18 @@ export type AnalyticsTraceStatus =
   | "completed"
   | "failed"
   | "rejected";
+
+export type AnalyticsReportReviewerStatus =
+  | "approved"
+  | "rejected"
+  | "failed"
+  | "limited";
+
+export type AnalyticsReportReviewerReasonCode =
+  | "unsupported_claim"
+  | "evidence_mismatch"
+  | "missing_citation"
+  | "insufficient_evidence";
 
 /** 受控查询卡片允许展示的安全事实：白名单，多一个字段都不行。 */
 export interface AnalyticsQueryFacts {
@@ -74,6 +87,9 @@ export interface AnalyticsTraceStep {
   /** 委派类型（已按稳定模式校验）。 */
   subagentType: string | null;
   facts: AnalyticsQueryFacts | null;
+  /** 仅由当前 writer 的投影回执推导；不代表独立持久状态。 */
+  reviewerStatus: AnalyticsReportReviewerStatus | null;
+  reviewerReasonCode: AnalyticsReportReviewerReasonCode | null;
   /** 未知工具或畸形 payload：UI 显示"无法解析的安全事件"，而不是原对象。 */
   unparsed: boolean;
 }
@@ -84,6 +100,7 @@ const KIND_BY_TOOL: Record<string, AnalyticsTraceStepKind> = {
   query_business_data: "query",
   task: "delegate",
   present_files: "artifact",
+  write_analysis_report: "report",
   publish_analysis_report: "report",
 };
 
@@ -91,9 +108,29 @@ const KIND_BY_TOOL: Record<string, AnalyticsTraceStepKind> = {
 const QUERY_SUCCESS_CODES = new Set(["executed", "result_limit_reached"]);
 /** 报告发布的成功码白名单。 */
 const REPORT_SUCCESS_CODES = new Set(["published", "existing"]);
+const REPORT_KNOWN_FAILURE_CODES = new Set([
+  "report_conflict",
+  "invalid_request",
+  "analytics_unavailable",
+  "analysis_evidence_unavailable",
+  "analysis_review_rejected",
+  "analysis_review_unavailable",
+  "analysis_review_input_too_large",
+  "analysis_review_attempt_limit",
+  "analysis_report_result_unavailable",
+]);
+const REVIEW_REASON_CODES = new Set<AnalyticsReportReviewerReasonCode>([
+  "unsupported_claim",
+  "evidence_mismatch",
+  "missing_citation",
+  "insufficient_evidence",
+]);
 const RISK_VALUES = new Set(["low", "medium", "high", "blocked"]);
 const OUTPUTS_PREFIX = "/mnt/user-data/outputs/";
 const SUBAGENT_TYPE_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+const REPORT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const WRITER_ARTIFACT_PATH_RE =
+  /^\/mnt\/user-data\/outputs\/analysis-report-[A-Za-z0-9_-]{1,64}\.md$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -208,6 +245,128 @@ function statusFromToolResult(
   return "completed";
 }
 
+interface WriterReceiptProjection {
+  status: AnalyticsTraceStatus;
+  reviewerStatus: AnalyticsReportReviewerStatus | null;
+  reviewerReasonCode: AnalyticsReportReviewerReasonCode | null;
+  artifactPaths: string[];
+  unparsed: boolean;
+}
+
+function hasOnlyKeys(
+  payload: Record<string, unknown>,
+  allowed: readonly string[],
+): boolean {
+  return Object.keys(payload).every((key) => allowed.includes(key));
+}
+
+function isEvidenceIdList(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.length <= 20 &&
+    value.every((item) => readDigest(item) !== null) &&
+    new Set(value).size === value.length
+  );
+}
+
+/** 只把安全投影中的成功回执解释为审核通过；失败码不能暗示通过或产物存在。 */
+function readWriterReceipt(
+  payload: Record<string, unknown>,
+  isError: boolean,
+): WriterReceiptProjection {
+  const failed = (unparsed = false): WriterReceiptProjection => ({
+    status: "failed",
+    reviewerStatus: null,
+    reviewerReasonCode: null,
+    artifactPaths: [],
+    unparsed,
+  });
+  if (isError) return failed();
+
+  const code = typeof payload.code === "string" ? payload.code : null;
+  if (code === null) return failed(true);
+
+  if (REPORT_SUCCESS_CODES.has(code)) {
+    const evidenceIds = payload.evidence_ids;
+    if (
+      !hasOnlyKeys(payload, [
+        "code",
+        "report_id",
+        "artifact_path",
+        "evidence_ids",
+      ]) ||
+      typeof payload.report_id !== "string" ||
+      !REPORT_ID_RE.test(payload.report_id) ||
+      typeof payload.artifact_path !== "string" ||
+      !WRITER_ARTIFACT_PATH_RE.test(payload.artifact_path) ||
+      !isEvidenceIdList(evidenceIds)
+    ) {
+      return failed(true);
+    }
+    return {
+      status: "completed",
+      reviewerStatus: "approved",
+      reviewerReasonCode: null,
+      artifactPaths: [payload.artifact_path],
+      unparsed: false,
+    };
+  }
+
+  if (code === "analysis_review_rejected") {
+    const reason = payload.reason_code;
+    const validReason =
+      typeof reason === "string" &&
+      REVIEW_REASON_CODES.has(reason as AnalyticsReportReviewerReasonCode);
+    return {
+      status: "rejected",
+      reviewerStatus: "rejected",
+      reviewerReasonCode: validReason
+        ? (reason as AnalyticsReportReviewerReasonCode)
+        : null,
+      artifactPaths: [],
+      unparsed:
+        !hasOnlyKeys(payload, ["code", "reason_code"]) ||
+        (reason !== undefined && !validReason),
+    };
+  }
+
+  if (code === "analysis_review_unavailable") {
+    return {
+      status: "failed",
+      reviewerStatus: "failed",
+      reviewerReasonCode: null,
+      artifactPaths: [],
+      unparsed: !hasOnlyKeys(payload, ["code"]),
+    };
+  }
+
+  if (
+    code === "analysis_review_input_too_large" ||
+    code === "analysis_review_attempt_limit"
+  ) {
+    return {
+      status: "failed",
+      reviewerStatus: "limited",
+      reviewerReasonCode: null,
+      artifactPaths: [],
+      unparsed: !hasOnlyKeys(payload, ["code"]),
+    };
+  }
+
+  if (REPORT_KNOWN_FAILURE_CODES.has(code)) {
+    return {
+      status: "rejected",
+      reviewerStatus: null,
+      reviewerReasonCode: null,
+      artifactPaths: [],
+      unparsed: !hasOnlyKeys(payload, ["code"]),
+    };
+  }
+
+  return failed(true);
+}
+
 interface PendingStep {
   step: AnalyticsTraceStep;
   /** 结果消息是否已经合并过：只有先到先得的"有结果"版本才更新状态。 */
@@ -261,6 +420,8 @@ export function projectAnalyticsTrace(
             artifactPaths: kind === "artifact" ? readPresentedPaths(args) : [],
             subagentType: kind === "delegate" ? readSubagentType(args) : null,
             facts: null,
+            reviewerStatus: null,
+            reviewerReasonCode: null,
             unparsed: kind === "unknown",
           },
         });
@@ -288,6 +449,25 @@ export function projectAnalyticsTrace(
     }
 
     pending.resolved = true;
+
+    if (
+      pending.step.kind === "report" &&
+      pending.step.toolName === "write_analysis_report"
+    ) {
+      if (parsed === null) {
+        pending.step.status = "failed";
+        pending.step.unparsed = true;
+      } else {
+        const result = readWriterReceipt(parsed, isError);
+        pending.step.status = result.status;
+        pending.step.reviewerStatus = result.reviewerStatus;
+        pending.step.reviewerReasonCode = result.reviewerReasonCode;
+        pending.step.artifactPaths = result.artifactPaths;
+        pending.step.unparsed = result.unparsed;
+      }
+      continue;
+    }
+
     pending.step.status = statusFromToolResult(
       pending.step.kind,
       isError,
@@ -312,13 +492,9 @@ export function projectAnalyticsTrace(
         continue;
       }
       const report = isRecord(parsed.report) ? parsed.report : {};
-      const path = readBoundedString(report.artifact_path, 512);
-      if (
-        path !== null &&
-        path.startsWith(OUTPUTS_PREFIX) &&
-        !path.includes("\\")
-      ) {
-        pending.step.artifactPaths = [path];
+      if (!isError && REPORT_SUCCESS_CODES.has(String(parsed.code))) {
+        const paths = readPresentedPaths({ filepaths: [report.artifact_path] });
+        if (paths.length === 1) pending.step.artifactPaths = paths;
       }
       pending.step.facts = null;
       continue;

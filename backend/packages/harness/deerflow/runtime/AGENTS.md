@@ -132,7 +132,10 @@ staging 目录不计入 workspace/output 扫描。模型内部调用仍保留完
 身份沿用安全字段投影，对仍可能成为 writer/Analytics 查询工具的名称前缀和无可靠身份的单个解析壳保守
 遮盖参数，已明确分叉为其他工具的完整名称及其普通参数保持可见。SSE 增量 chunk 按稳定消息 ID/索引
 记住名称分叉；回执仅保留允许字段。该投影只约束平台派生副本，不声称报告 artifact 正文已脱敏；正文
-仍受线程 owner 检查保护。
+仍受线程 owner 检查保护。当前 writer 的安全回执还保留有限的 evidence/Reviewer 决定码；只有
+`analysis_review_rejected` 可携带有限枚举 `reason_code`，且只有 `published` / `existing` 可以投影
+report ID、固定 artifact path 与 evidence IDs。该单一投影同时用于 SSE、持久历史与 API state/history，
+不得从 ToolMessage 原文复制 Reviewer 输入、报告正文或失败附加字段。
 
 **Deferred-tool promotion event deduplication** (`runtime/journal.py`): one
 `RunJournal` owns the lead graph's run-scoped atomic promotion claim. Parallel

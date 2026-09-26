@@ -75,7 +75,22 @@ _SAFE_ANALYTICS_CODES = frozenset(
 _ANALYTICS_DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _ANALYSIS_REPORT_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _ANALYSIS_REPORT_PATH = re.compile(r"^/mnt/user-data/outputs/analysis-report-[A-Za-z0-9_-]{1,64}\.md$")
-_SAFE_ANALYSIS_REPORT_CODES = frozenset({"published", "existing", "report_conflict", "invalid_request", "analytics_unavailable", "analysis_report_result_unavailable"})
+_SAFE_ANALYSIS_REPORT_CODES = frozenset(
+    {
+        "published",
+        "existing",
+        "report_conflict",
+        "invalid_request",
+        "analytics_unavailable",
+        "analysis_evidence_unavailable",
+        "analysis_review_rejected",
+        "analysis_review_unavailable",
+        "analysis_review_input_too_large",
+        "analysis_review_attempt_limit",
+        "analysis_report_result_unavailable",
+    }
+)
+_SAFE_ANALYSIS_REVIEW_REASON_CODES = frozenset({"unsupported_claim", "evidence_mismatch", "missing_citation", "insufficient_evidence"})
 
 
 def _analytics_tool_name(value: Any) -> str | None:
@@ -269,15 +284,20 @@ def _project_analysis_report_result_content(content: Any) -> str:
 
     candidate_code = payload.get("code")
     safe: dict[str, Any] = {"code": candidate_code if isinstance(candidate_code, str) and candidate_code in _SAFE_ANALYSIS_REPORT_CODES else _ANALYSIS_REPORT_RESULT_FALLBACK_CODE}
-    report_id = payload.get("report_id")
-    if isinstance(report_id, str) and _ANALYSIS_REPORT_ID.fullmatch(report_id):
-        safe["report_id"] = report_id
-    artifact_path = payload.get("artifact_path")
-    if isinstance(artifact_path, str) and _ANALYSIS_REPORT_PATH.fullmatch(artifact_path):
-        safe["artifact_path"] = artifact_path
-    evidence_ids = payload.get("evidence_ids")
-    if isinstance(evidence_ids, list) and 0 < len(evidence_ids) <= 20 and all(isinstance(item, str) and _ANALYTICS_DIGEST.fullmatch(item) for item in evidence_ids):
-        safe["evidence_ids"] = evidence_ids
+    if safe["code"] in {"published", "existing"}:
+        report_id = payload.get("report_id")
+        if isinstance(report_id, str) and _ANALYSIS_REPORT_ID.fullmatch(report_id):
+            safe["report_id"] = report_id
+        artifact_path = payload.get("artifact_path")
+        if isinstance(artifact_path, str) and _ANALYSIS_REPORT_PATH.fullmatch(artifact_path):
+            safe["artifact_path"] = artifact_path
+        evidence_ids = payload.get("evidence_ids")
+        if isinstance(evidence_ids, list) and 0 < len(evidence_ids) <= 20 and all(isinstance(item, str) and _ANALYTICS_DIGEST.fullmatch(item) for item in evidence_ids):
+            safe["evidence_ids"] = evidence_ids
+    elif safe["code"] == "analysis_review_rejected":
+        reason_code = payload.get("reason_code")
+        if isinstance(reason_code, str) and reason_code in _SAFE_ANALYSIS_REVIEW_REASON_CODES:
+            safe["reason_code"] = reason_code
     return json.dumps(safe, ensure_ascii=False, separators=(",", ":"))
 
 

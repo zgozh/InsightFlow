@@ -190,6 +190,15 @@ export interface AnalyticsTranslations {
     stepDelegate: string;
     stepArtifact: string;
     stepPublish: string;
+    reviewer: string;
+    reviewerApproved: string;
+    reviewerRejected: string;
+    reviewerFailed: string;
+    reviewerLimited: string;
+    reviewReasonUnsupportedClaim: string;
+    reviewReasonEvidenceMismatch: string;
+    reviewReasonMissingCitation: string;
+    reviewReasonInsufficientEvidence: string;
     statusRunning: string;
     statusCompleted: string;
     statusFailed: string;

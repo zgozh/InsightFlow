@@ -537,6 +537,100 @@ def test_analysis_report_writer_projection_hides_markdown_and_projects_receipt_f
     assert markdown not in json.dumps(event_rows)
 
 
+def test_analysis_report_reviewer_receipts_survive_only_as_safe_sse_history_and_api_fields():
+    import json
+
+    from deerflow.runtime.serialization import project_analytics_event_rows, project_analytics_structured_value, serialize_channel_values_for_api
+
+    sensitive = {
+        "code": "analysis_review_rejected",
+        "reason_code": "evidence_mismatch",
+        "markdown": "REVIEW_MARKDOWN_SENTINEL",
+        "sql": "REVIEW_SQL_SENTINEL",
+        "rows": [["REVIEW_ROW_SENTINEL"]],
+        "token": "REVIEW_TOKEN_SENTINEL",
+        "exception": "REVIEW_EXCEPTION_SENTINEL",
+        "report_id": "REPORT_ID_SENTINEL",
+        "artifact_path": "/mnt/user-data/outputs/analysis-report-run_1.md",
+        "evidence_ids": ["e" * 64],
+    }
+    tool_content = json.dumps(sensitive)
+    raw_message = {
+        "type": "tool",
+        "name": "write_analysis_report",
+        "tool_call_id": "call-review",
+        "content": tool_content,
+        "artifact": {"markdown": "ARTIFACT_SENTINEL"},
+        "additional_kwargs": {"review": "RAW_REVIEW_SENTINEL"},
+        "response_metadata": {"completion": "RAW_COMPLETION_SENTINEL"},
+    }
+
+    # SSE/stream values use the structured projector; state/history reads use
+    # serialize_channel_values_for_api; persisted event reads use event rows.
+    sse = project_analytics_structured_value(raw_message)
+    history = serialize_channel_values_for_api({"messages": [raw_message]})["messages"][0]
+    events = project_analytics_event_rows(
+        [
+            {
+                "run_id": "run_1",
+                "event_type": "subagent.step",
+                "content": {
+                    "kind": "tool",
+                    "tool_name": "write_analysis_report",
+                    "tool_call_id": "call-review",
+                    "text": tool_content,
+                },
+            }
+        ]
+    )
+
+    expected = {"code": "analysis_review_rejected", "reason_code": "evidence_mismatch"}
+    assert json.loads(sse["content"]) == expected
+    assert json.loads(history["content"]) == expected
+    assert json.loads(events[0]["content"]["text"]) == expected
+    encoded = json.dumps({"sse": sse, "history": history, "events": events}, ensure_ascii=False)
+    assert not any(
+        sentinel in encoded
+        for sentinel in (
+            "REVIEW_MARKDOWN_SENTINEL",
+            "REVIEW_SQL_SENTINEL",
+            "REVIEW_ROW_SENTINEL",
+            "REVIEW_TOKEN_SENTINEL",
+            "REVIEW_EXCEPTION_SENTINEL",
+            "REPORT_ID_SENTINEL",
+            "ARTIFACT_SENTINEL",
+            "RAW_REVIEW_SENTINEL",
+            "RAW_COMPLETION_SENTINEL",
+        )
+    )
+
+
+def test_analysis_report_projection_limits_review_reason_and_failure_fields_to_their_codes():
+    import json
+
+    from deerflow.runtime.serialization import project_analytics_structured_value
+
+    def project(code: str, reason_code: str | None = None) -> dict:
+        payload = {"code": code, "markdown": "BODY_SENTINEL", "artifact_path": "/mnt/user-data/outputs/analysis-report-run_1.md", "evidence_ids": ["e" * 64]}
+        if reason_code is not None:
+            payload["reason_code"] = reason_code
+        projected = project_analytics_structured_value({"type": "tool", "name": "write_analysis_report", "content": json.dumps(payload)})
+        return json.loads(projected["content"])
+
+    assert project("analysis_review_rejected", "missing_citation") == {
+        "code": "analysis_review_rejected",
+        "reason_code": "missing_citation",
+    }
+    assert project("analysis_review_rejected", "INTERNAL_SENTINEL") == {"code": "analysis_review_rejected"}
+    for code in (
+        "analysis_review_unavailable",
+        "analysis_review_input_too_large",
+        "analysis_review_attempt_limit",
+        "analysis_evidence_unavailable",
+    ):
+        assert project(code, "unsupported_claim") == {"code": code}
+
+
 def test_structured_projection_masks_partial_analytics_tool_names_in_all_raw_shapes():
     import copy
     import json

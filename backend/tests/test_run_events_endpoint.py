@@ -126,7 +126,12 @@ async def test_list_run_events_projects_legacy_analytics_structures_without_muta
                 "id": "legacy-analytics-call",
                 "name": "query_business_data",
                 "args": {"datasource_id": "ds-1", "sql": "LEGACY_SQL_SENTINEL", "token": "LEGACY_TOKEN_SENTINEL"},
-            }
+            },
+            {
+                "id": "legacy-review-call",
+                "name": "write_analysis_report",
+                "args": {"title": "Synthetic", "markdown": "LEGACY_REVIEW_MARKDOWN_SENTINEL", "evidence_ids": ["a" * 64]},
+            },
         ],
     }
     tool_content = {
@@ -144,6 +149,24 @@ async def test_list_run_events_projects_legacy_analytics_structures_without_muta
             }
         ),
     }
+    review_content = {
+        "type": "tool",
+        "id": "legacy-review-result",
+        "tool_call_id": "legacy-review-call",
+        "name": "write_analysis_report",
+        "content": json.dumps(
+            {
+                "code": "analysis_review_rejected",
+                "reason_code": "missing_citation",
+                "markdown": "LEGACY_REVIEW_MARKDOWN_SENTINEL",
+                "sql": "LEGACY_REVIEW_SQL_SENTINEL",
+                "rows": [["LEGACY_REVIEW_ROW_SENTINEL"]],
+                "token": "LEGACY_REVIEW_TOKEN_SENTINEL",
+                "exception": "LEGACY_REVIEW_EXCEPTION_SENTINEL",
+                "report_id": "LEGACY_REVIEW_REPORT_ID_SENTINEL",
+            }
+        ),
+    }
     stored_rows = [
         {"seq": 1, "run_id": "analytics-run", "event_type": "llm.ai.response", "content": ai_content, "metadata": {}},
         {"seq": 2, "run_id": "analytics-run", "event_type": "llm.tool.result", "content": tool_content, "metadata": {}},
@@ -151,9 +174,10 @@ async def test_list_run_events_projects_legacy_analytics_structures_without_muta
             "seq": 3,
             "run_id": "analytics-run",
             "event_type": "run.end",
-            "content": {"messages": [ai_content, tool_content], "note": "arbitrary model text is preserved"},
+            "content": {"messages": [ai_content, tool_content, review_content], "note": "arbitrary model text is preserved"},
             "metadata": {},
         },
+        {"seq": 7, "run_id": "analytics-run", "event_type": "llm.tool.result", "content": review_content, "metadata": {}},
         {
             "seq": 6,
             "run_id": "other-run",
@@ -225,12 +249,23 @@ async def test_list_run_events_projects_legacy_analytics_structures_without_muta
             "LEGACY_SECRET_SENTINEL",
             "SUBAGENT_LEGACY_SQL_SENTINEL",
             "SUBAGENT_LEGACY_ROW_SENTINEL",
+            "LEGACY_REVIEW_MARKDOWN_SENTINEL",
+            "LEGACY_REVIEW_SQL_SENTINEL",
+            "LEGACY_REVIEW_ROW_SENTINEL",
+            "LEGACY_REVIEW_TOKEN_SENTINEL",
+            "LEGACY_REVIEW_EXCEPTION_SENTINEL",
+            "LEGACY_REVIEW_REPORT_ID_SENTINEL",
         )
     )
     assert events[0]["content"]["tool_calls"][0]["args"] == {"datasource_id": "ds-1"}
     projected_result = json.loads(events[1]["content"]["content"])
     assert projected_result["evidence"]["evidence_id"] == "a" * 64
     assert events[2]["content"]["note"] == "arbitrary model text is preserved"
+    projected_review_event = next(event for event in events if event.get("event_type") == "llm.tool.result" and event["content"].get("name") == "write_analysis_report")
+    assert json.loads(projected_review_event["content"]["content"]) == {
+        "code": "analysis_review_rejected",
+        "reason_code": "missing_citation",
+    }
     assert stored_rows[0]["content"]["tool_calls"][0]["args"]["sql"] == "LEGACY_SQL_SENTINEL"
     assert "LEGACY_ROW_SENTINEL" in stored_rows[1]["content"]["content"]
 

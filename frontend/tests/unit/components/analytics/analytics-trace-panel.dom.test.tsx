@@ -167,7 +167,7 @@ describe("AnalyticsTracePanel", () => {
     const step = screen.getByTestId("analytics-trace-step");
     expect(step.getAttribute("data-status")).toBe("failed");
     expect(
-      within(step).getByText("Unparsed event; the raw record was kept"),
+      within(step).getByText("Unparsed safe event; raw content is hidden"),
     ).toBeTruthy();
     expect(container.textContent).not.toContain("postgres");
   });
@@ -223,5 +223,79 @@ describe("AnalyticsTracePanel", () => {
     ]);
 
     expect(screen.getByText("/mnt/user-data/outputs/report.md")).toBeTruthy();
+  });
+
+  it("shows Reviewer status and finite reasons from current writer receipts only", () => {
+    const path = "/mnt/user-data/outputs/analysis-report-run_1.md";
+    const { container } = renderPanel([
+      ai([
+        {
+          id: "review-approved",
+          name: "write_analysis_report",
+          args: { markdown: "REPORT_BODY_SENTINEL", evidence_ids: [DIGEST] },
+        },
+      ]),
+      tool(
+        "review-approved",
+        JSON.stringify({
+          code: "published",
+          report_id: "report_1",
+          artifact_path: path,
+          evidence_ids: [DIGEST],
+        }),
+      ),
+      ai([
+        {
+          id: "review-rejected",
+          name: "write_analysis_report",
+          args: { markdown: "REJECTED_BODY_SENTINEL" },
+        },
+      ]),
+      tool(
+        "review-rejected",
+        JSON.stringify({
+          code: "analysis_review_rejected",
+          reason_code: "evidence_mismatch",
+        }),
+      ),
+      ai([
+        {
+          id: "review-unavailable",
+          name: "write_analysis_report",
+          args: {},
+        },
+      ]),
+      tool(
+        "review-unavailable",
+        JSON.stringify({ code: "analysis_review_unavailable" }),
+      ),
+      ai([
+        {
+          id: "review-limited",
+          name: "write_analysis_report",
+          args: {},
+        },
+      ]),
+      tool(
+        "review-limited",
+        JSON.stringify({ code: "analysis_review_attempt_limit" }),
+      ),
+    ]);
+
+    const reviewerStatuses = screen.getAllByTestId("analytics-reviewer-status");
+    expect(
+      reviewerStatuses.map((status) =>
+        status.getAttribute("data-reviewer-status"),
+      ),
+    ).toEqual(["approved", "rejected", "failed", "limited"]);
+    expect(container.textContent).toContain("Reviewer: Approved");
+    expect(container.textContent).toContain(
+      "Reviewer: Rejected · Evidence mismatch",
+    );
+    expect(container.textContent).toContain("Reviewer: Could not complete");
+    expect(container.textContent).toContain("Reviewer: Limited");
+    expect(container.textContent).toContain(path);
+    expect(container.textContent).not.toContain("REPORT_BODY_SENTINEL");
+    expect(container.textContent).not.toContain("REJECTED_BODY_SENTINEL");
   });
 });

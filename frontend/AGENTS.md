@@ -72,6 +72,12 @@ Gateway 授权仍是最终边界。
 分析页复用常规聊天 providers 和线程 stream。Analytics trace 只安全投影审核通过的工具名
 与字段，不创建第二份运行状态，也不渲染原始工具 payload。
 
+报告 Reviewer 轨迹只从当前 `write_analysis_report` 的后端安全 ToolMessage 回执派生：只有完整的
+`published` / `existing` 回执能显示复核通过和固定报告产物；拒绝只显示有限 reason code 的本地化文案，
+复核不可用/超限分别显示失败/受限。evidence 预检、发布冲突、未知码或损坏回执不得推断 Reviewer
+结论；普通聊天历史中的 `publish_analysis_report` 与 `task` 映射继续保留。这只是现有消息的纯投影，
+不是第二状态源，也不代表 AS-09 已整体验收。
+
 ## 国际化与样式
 
 InsightFlow 新增的前端文案以中文为主，并进入现有 i18n 体系，同时提供 `zh-CN` 与
