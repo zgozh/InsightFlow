@@ -8,7 +8,7 @@
 
 每个场景在通过时必须提交：执行命令、退出码、关键输出与证据位置。只写「测试通过」不构成验收。
 
-本文件描述目标发布验收，不自动表示当前代码已经具备或通过该场景。当前代码路径、测试 ID、命令实测和未覆盖范围以[Phase 6D1 契约对账矩阵](phase-06d-contract-reconciliation.md)为准；AS-14 目前仍是发布阻塞。
+本文件描述目标发布验收，不自动表示当前代码已经具备或通过该场景。当前代码路径、测试 ID、命令实测和未覆盖范围以[Phase 6D1 契约对账矩阵](phase-06d-contract-reconciliation.md)为准；AS-14 按用户批准的边界验收，限定与证据见[Phase 6F2 AS-14 证据](phase-06f2-as14-boundary-evidence.md)。
 
 ---
 
@@ -166,7 +166,7 @@
 
 依据：已批准的 [Phase 6E2B 运行隔离边界](../prompts/phase-06e2b-controlled-analysis-runtime.md) 与 6E2B1 工具 allowlist 切片。本场景区分平台 Analytics 的 Query Policy 保证和普通聊天 operator MCP 的权限范围。
 
-现行状态：6E2B2B 已接通受控入口。Gateway 只接受持久化分析标记、受信用户、仍绑定的 Analytics services 与成功签发的 run-scoped writer；任何条件不成立都保持 `analysis_mode_unavailable`。除合成 Gateway 生命周期和前端 Playwright 身份断言外，6F1 已在隔离 Compose/NGINX 与合成 PostgreSQL 上完成一次真实模型彩排，证明预建、SDK create、server record、stream 及报告读取使用同一 UUID，并产生受控 query/evidence 与 owner-scoped artifact；另一线程读取为 404。普通聊天路径未改。该单次链路不替代 AS-01 多主体隔离，也未完成 AS-14 全部边界；普通聊天 operator MCP 仍不受平台 Query Policy 保证，AS-14 仍是发布阻塞。详见[6F1 彩排记录](phase-06f1-real-analysis-rehearsal.md)。
+现行状态：AS-14 按批准边界验收。Gateway 只接受持久化 `analysis_mode=true`、受信用户、仍绑定的 Analytics services 与成功签发的 run-scoped writer；任何条件不成立都保持 `analysis_mode_unavailable`。合成 Gateway/工具测试与前端 guard 证据、6F1 隔离 Compose/NGINX 真实模型/PostgreSQL 彩排共同证明受控分析链；真实彩排中的预建、SDK create、server record、stream 及报告读取使用同一 UUID，另一线程读取为 404。普通聊天路径未改，其 operator MCP 不受平台 Query Policy 保证。持久 `analysis_mode` 标记本身就是当前 kind 表示：缺键 legacy 记录是 chat，分析路由不会挂载；显式坏值拒绝。数据库外部直接删除标记后无法与 legacy chat 区分。单条真实链路不替代 AS-01 多主体隔离，也不表示 AS-01..AS-15、Phase 6 或发布整体完成。证据与限制见[Phase 6F2 AS-14 证据](phase-06f2-as14-boundary-evidence.md)和[6F1 彩排记录](phase-06f1-real-analysis-rehearsal.md)。
 
 ## AS-15 四服务默认 Compose 启动（four-service default Compose startup）
 

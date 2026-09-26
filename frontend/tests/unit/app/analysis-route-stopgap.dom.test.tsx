@@ -122,6 +122,26 @@ describe("controlled analysis route admission", () => {
     expect(state.metadataCalls).toEqual(["verified-analysis-thread"]);
   });
 
+  it("does not mount analysis for a legacy thread without a persisted marker", () => {
+    state.threadId = "legacy-thread-without-analysis-marker";
+    state.metadata = {
+      data: { metadata: {} },
+      isError: false,
+      isFetching: false,
+      isLoading: false,
+    };
+
+    renderAnalysisRoute("en-US");
+
+    expect(
+      screen.getByText(
+        clientTranslations["en-US"].analysisUnavailable.wrongThread,
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText("analysis runtime mounted")).toBeNull();
+    expect(state.mountedMode).toBeUndefined();
+  });
+
   it("keeps missing and corrupt analysis ids outside the chat runtime", () => {
     state.threadId = "missing-analysis-thread";
     state.metadata.data = null;
