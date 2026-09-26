@@ -23,6 +23,7 @@ list and pass the flag.
 from __future__ import annotations
 
 import logging
+import re
 import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -75,6 +76,7 @@ from deerflow.subagents.capacity import configured_subagent_max_running
 from deerflow.tracing import build_tracing_callbacks
 
 logger = logging.getLogger(__name__)
+_SAFE_ANALYSIS_RUN_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 _NON_INTERACTIVE_DISABLED_TOOL_NAMES = frozenset({"ask_clarification"})
 
@@ -1128,16 +1130,22 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
         runtime_context = getattr(runtime, "context", None)
         reviewer = runtime_context.get(ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY) if isinstance(runtime_context, Mapping) else None
         bind_lead_model = getattr(reviewer, "bind_lead_model", None)
+        raw_run_id = runtime_context.get("run_id") if isinstance(runtime_context, Mapping) else None
+        safe_run_id = raw_run_id if isinstance(raw_run_id, str) and _SAFE_ANALYSIS_RUN_ID.fullmatch(raw_run_id) else "unknown"
         if callable(bind_lead_model):
             try:
-                bind_lead_model(
+                binding_succeeded = bind_lead_model(
                     principal_id=runtime_context.get("user_id"),
                     thread_id=runtime_context.get("thread_id"),
                     run_id=runtime_context.get("run_id"),
                     model=lead_model,
                 )
             except Exception:  # noqa: BLE001 - 无法绑定时报告能力保持 fail-closed
-                logger.warning("Analysis report Reviewer model binding failed closed")
+                binding_succeeded = False
+            if not binding_succeeded:
+                logger.warning("event=analysis_report_reviewer stage=binding_failed run_id=%s", safe_run_id)
+        else:
+            logger.warning("event=analysis_report_reviewer stage=binding_unavailable run_id=%s", safe_run_id)
 
     graph = create_agent(
         model=lead_model,

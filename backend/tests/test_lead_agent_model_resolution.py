@@ -213,6 +213,58 @@ def test_make_lead_agent_uses_server_auth_identity_for_all_user_scoped_inputs(mo
     }
 
 
+def test_analysis_lead_logs_reviewer_binding_failure_with_only_safe_run_identity(monkeypatch, caplog):
+    import logging
+    from types import SimpleNamespace
+
+    from deerflow.constants import ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY
+    from deerflow.persistence.thread_meta import THREAD_ANALYSIS_MODE_METADATA_KEY
+
+    app_config = _make_app_config([_make_model("safe-model", supports_thinking=True)])
+    run_context = {
+        "user_id": "owner-safe-id",
+        "thread_id": "thread-safe-id",
+        "run_id": "run-safe-id",
+        "model_name": "safe-model",
+        THREAD_ANALYSIS_MODE_METADATA_KEY: True,
+    }
+    reviewer = MagicMock()
+    reviewer.bind_lead_model.return_value = False
+    run_context[ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY] = reviewer
+    runtime = SimpleNamespace(context=run_context)
+    lead_model = _PolicyBypassModel()
+
+    import deerflow.tools as tools_module
+
+    monkeypatch.setattr(tools_module, "get_available_tools", lambda **kwargs: [])
+    monkeypatch.setattr(lead_agent_module, "build_middlewares", lambda *args, **kwargs: [])
+    monkeypatch.setattr(lead_agent_module, "_load_enabled_available_skills", lambda *args, **kwargs: [])
+    monkeypatch.setattr(lead_agent_module, "apply_prompt_template", lambda **kwargs: "system prompt")
+    monkeypatch.setattr(lead_agent_module, "create_chat_model", lambda **kwargs: lead_model)
+    monkeypatch.setattr(lead_agent_module, "create_agent", lambda **kwargs: kwargs)
+    monkeypatch.setattr(lead_agent_module, "build_tracing_callbacks", lambda: [])
+    caplog.set_level(logging.WARNING, logger=lead_agent_module.__name__)
+
+    lead_agent_module._make_lead_agent(
+        {
+            "context": run_context,
+            "configurable": {"__pregel_runtime": runtime},
+        },
+        app_config=app_config,
+    )
+
+    assert reviewer.bind_lead_model.call_args.kwargs == {
+        "principal_id": "owner-safe-id",
+        "thread_id": "thread-safe-id",
+        "run_id": "run-safe-id",
+        "model": lead_model,
+    }
+    assert "stage=binding_failed" in caplog.text
+    assert "run_id=run-safe-id" in caplog.text
+    assert "owner-safe-id" not in caplog.text
+    assert "thread-safe-id" not in caplog.text
+
+
 def test_make_lead_agent_applies_custom_agent_memory_opt_out(monkeypatch):
     app_config = _make_app_config([_make_model("safe-model", supports_thinking=False)])
     app_config.memory = MemoryConfig(enabled=True, mode="tool")

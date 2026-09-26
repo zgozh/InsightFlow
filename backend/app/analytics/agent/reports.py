@@ -32,7 +32,7 @@ from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 
 from app.analytics.agent.evidence import ANALYSIS_EVIDENCE_UNAVAILABLE, AnalysisRunEvidenceCollector, canonical_json
-from app.analytics.agent.reviewer import AnalysisReportReviewerCapability
+from app.analytics.agent.reviewer import AnalysisReportReviewerCapability, log_reviewer_failure_stage
 from app.analytics.agent.runtime import get_bound_analytics_services, trusted_principal, trusted_thread_run
 from app.analytics.domain import AnalysisReport, ReportPublishCode, ReportStatus
 from deerflow.constants import ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY, ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY, ANALYSIS_REPORT_WRITER_CONTEXT_KEY
@@ -192,6 +192,7 @@ async def write_analysis_report(
 
     reviewer = context.get(ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY) if isinstance(context, Mapping) else None
     if not isinstance(reviewer, AnalysisReportReviewerCapability) or not reviewer.matches(principal_id, thread_id, run_id):
+        log_reviewer_failure_stage("capability_unavailable", run_id)
         return _payload("analysis_review_unavailable")
     try:
         review = await reviewer.review(
@@ -204,6 +205,7 @@ async def write_analysis_report(
             snapshots=snapshots,
         )
     except Exception:  # noqa: BLE001 - 复核能力异常不向模型回显且绝不继续发布
+        log_reviewer_failure_stage("reviewer_internal_error", run_id)
         return _payload("analysis_review_unavailable")
     if review.code != "approved":
         if review.code == "analysis_review_rejected" and review.reason_code is not None:

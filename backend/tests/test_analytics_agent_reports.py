@@ -318,9 +318,14 @@ async def test_report_writer_writes_then_indexes_and_returns_only_a_safe_receipt
 
 
 @pytest.mark.asyncio
-async def test_report_writer_requires_current_run_reviewer_before_any_write(monkeypatch, tmp_path):
+async def test_report_writer_requires_current_run_reviewer_before_any_write(monkeypatch, tmp_path, caplog):
     """Reviewer 缺失时，合法 evidence 也不能越过复核直接发布。"""
 
+    import logging
+
+    from app.analytics.agent import reviewer as reviewer_module
+
+    caplog.set_level(logging.WARNING, logger=reviewer_module.__name__)
     capability = _writer_capability(monkeypatch, tmp_path)
     collector, evidence_id = _successful_run_evidence()
     runtime = _writer_runtime(capability, evidence_collector=collector)
@@ -337,6 +342,8 @@ async def test_report_writer_requires_current_run_reviewer_before_any_write(monk
 
     assert isinstance(result, str)
     assert _body(result) == {"code": "analysis_review_unavailable"}
+    assert "stage=capability_unavailable" in caplog.text
+    assert "run_id=run-1" in caplog.text
     assert repo.reports == []
     assert not capability.output_path.exists()
 

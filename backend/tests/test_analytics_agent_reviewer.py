@@ -153,6 +153,31 @@ async def test_reviewer_uses_the_bound_lead_model_without_tools_or_inherited_run
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("model_response", "expected_stage", "private_sentinel"),
+    [
+        (RuntimeError("REVIEWER_EXCEPTION_SECRET_SENTINEL"), "provider_error", "REVIEWER_EXCEPTION_SECRET_SENTINEL"),
+        ("REVIEWER_RESPONSE_SECRET_SENTINEL", "invalid_response", "REVIEWER_RESPONSE_SECRET_SENTINEL"),
+    ],
+)
+async def test_reviewer_failure_logs_only_safe_stage_and_run_id(caplog, model_response, expected_stage, private_sentinel):
+    import logging
+
+    from app.analytics.agent import reviewer as reviewer_module
+
+    caplog.set_level(logging.WARNING, logger=reviewer_module.__name__)
+    capability, _model, snapshot, evidence_id = _capability(responses=[model_response])
+
+    result = await _review(capability, snapshot, evidence_id, markdown="# REVIEWER_INPUT_SECRET_SENTINEL\n")
+
+    assert result.code == "analysis_review_unavailable"
+    assert f"stage={expected_stage}" in caplog.text
+    assert "run_id=run-1" in caplog.text
+    assert private_sentinel not in caplog.text
+    assert "REVIEWER_INPUT_SECRET_SENTINEL" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_deepseek_reviewer_uses_the_legacy_token_field_on_the_real_sdk_wire_body():
     """Pin DeepSeek's wire contract through ChatOpenAI and an offline HTTP transport."""
 
@@ -302,13 +327,18 @@ async def test_reviewer_serializes_concurrent_content_and_never_grants_more_than
 
 
 @pytest.mark.asyncio
-async def test_reviewer_timeout_fails_closed_and_cancellation_propagates(monkeypatch):
+async def test_reviewer_timeout_fails_closed_and_cancellation_propagates(monkeypatch, caplog):
+    import logging
+
     from app.analytics.agent import reviewer as reviewer_module
 
+    caplog.set_level(logging.WARNING, logger=reviewer_module.__name__)
     monkeypatch.setattr(reviewer_module, "ANALYSIS_REVIEWER_TIMEOUT_SECONDS", 0.01)
     timeout_capability, timeout_model, snapshot, evidence_id = _capability(delay_seconds=0.1)
     timed_out = await _review(timeout_capability, snapshot, evidence_id)
     assert timed_out.code == "analysis_review_unavailable"
+    assert "stage=timeout" in caplog.text
+    assert "run_id=run-1" in caplog.text
     assert len(timeout_model.messages_seen) == 1
 
     monkeypatch.setattr(reviewer_module, "ANALYSIS_REVIEWER_TIMEOUT_SECONDS", 30)

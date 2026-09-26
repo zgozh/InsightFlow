@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -21,6 +22,30 @@ MAX_ANALYSIS_REVIEWER_OUTPUT_TOKENS = 256
 MAX_ANALYSIS_REVIEWER_ATTEMPTS = 2
 ANALYSIS_REVIEWER_TIMEOUT_SECONDS = 20
 _SAFE_THREAD_RUN_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_REVIEWER_FAILURE_STAGES = frozenset(
+    {
+        "capability_unavailable",
+        "input_invalid",
+        "input_serialization_failed",
+        "input_too_large",
+        "model_unbound",
+        "attempt_limit",
+        "provider_error",
+        "timeout",
+        "invalid_response",
+        "reviewer_internal_error",
+    }
+)
+logger = logging.getLogger(__name__)
+
+
+def log_reviewer_failure_stage(stage: str, run_id: object) -> None:
+    """记录固定阶段和经过约束的 run 标识，不接收自由文本诊断信息。"""
+
+    safe_stage = stage if stage in _REVIEWER_FAILURE_STAGES else "reviewer_internal_error"
+    safe_run_id = run_id if isinstance(run_id, str) and _SAFE_THREAD_RUN_ID.fullmatch(run_id) else "unknown"
+    logger.warning("event=analysis_report_reviewer stage=%s run_id=%s", safe_stage, safe_run_id)
+
 
 _REASON_CODES = frozenset(
     {
@@ -139,6 +164,7 @@ class AnalysisReportReviewerCapability:
         """串行复核有界 run-owned 快照；只返回稳定结构化结论。"""
 
         if self.__closed or not self.matches(principal_id, thread_id, run_id):
+            log_reviewer_failure_stage("capability_unavailable", self.__run_id)
             return AnalysisReportReviewResult("analysis_review_unavailable")
         if (
             not isinstance(title, str)
@@ -151,17 +177,20 @@ class AnalysisReportReviewerCapability:
             or any(not isinstance(snapshot, AnalyticsQueryToolResult) or snapshot.evidence is None for snapshot in snapshots)
             or tuple(snapshot.evidence.evidence_id for snapshot in snapshots if snapshot.evidence is not None) != evidence_ids
         ):
+            log_reviewer_failure_stage("input_invalid", self.__run_id)
             return AnalysisReportReviewResult("analysis_review_unavailable")
 
         try:
             title_bytes = title.encode("utf-8", errors="strict")
             markdown_bytes = markdown.encode("utf-8", errors="strict")
         except UnicodeEncodeError:
+            log_reviewer_failure_stage("input_serialization_failed", self.__run_id)
             return AnalysisReportReviewResult("analysis_review_unavailable")
         # 结果快照最多 16 MiB；先用规范列/行字节数作保守下界，避免为明显超限
         # 的并发 writer 请求复制整份结果到 JSON 临时字符串。
         minimum_input_bytes = len(_SYSTEM_PROMPT.encode("utf-8")) + len(title_bytes) + len(markdown_bytes) + sum(snapshot.evidence.byte_count for snapshot in snapshots if snapshot.evidence is not None)
         if minimum_input_bytes > MAX_ANALYSIS_REVIEWER_INPUT_BYTES:
+            log_reviewer_failure_stage("input_too_large", self.__run_id)
             return AnalysisReportReviewResult("analysis_review_input_too_large")
 
         fingerprint = hashlib.sha256(
@@ -175,12 +204,17 @@ class AnalysisReportReviewerCapability:
         ).hexdigest()
 
         async with self.__lock:
-            if self.__closed or self.__model is None:
+            if self.__closed:
+                log_reviewer_failure_stage("capability_unavailable", self.__run_id)
+                return AnalysisReportReviewResult("analysis_review_unavailable")
+            if self.__model is None:
+                log_reviewer_failure_stage("model_unbound", self.__run_id)
                 return AnalysisReportReviewResult("analysis_review_unavailable")
             cached = self.__decisions.get(fingerprint)
             if cached is not None:
                 return cached
             if self.__attempts >= MAX_ANALYSIS_REVIEWER_ATTEMPTS:
+                log_reviewer_failure_stage("attempt_limit", self.__run_id)
                 return AnalysisReportReviewResult("analysis_review_attempt_limit")
 
             payload = {
@@ -192,6 +226,7 @@ class AnalysisReportReviewerCapability:
             try:
                 payload_json = canonical_json(payload)
             except (TypeError, ValueError):
+                log_reviewer_failure_stage("input_serialization_failed", self.__run_id)
                 return AnalysisReportReviewResult("analysis_review_unavailable")
             messages = [
                 SystemMessage(content=_SYSTEM_PROMPT),
@@ -199,6 +234,7 @@ class AnalysisReportReviewerCapability:
             ]
             input_bytes = sum(len(str(message.content).encode("utf-8", errors="strict")) for message in messages)
             if input_bytes > MAX_ANALYSIS_REVIEWER_INPUT_BYTES:
+                log_reviewer_failure_stage("input_too_large", self.__run_id)
                 return AnalysisReportReviewResult("analysis_review_input_too_large")
 
             self.__attempts += 1
@@ -228,11 +264,16 @@ class AnalysisReportReviewerCapability:
                     )
             except asyncio.CancelledError:
                 raise
-            except Exception:  # noqa: BLE001 - 超时/供应商错误只转稳定 fail-closed 码
+            except TimeoutError:
+                log_reviewer_failure_stage("timeout", self.__run_id)
+                return AnalysisReportReviewResult("analysis_review_unavailable")
+            except Exception:  # noqa: BLE001 - 供应商错误只转稳定 fail-closed 码
+                log_reviewer_failure_stage("provider_error", self.__run_id)
                 return AnalysisReportReviewResult("analysis_review_unavailable")
 
             decision = _parse_review_response(response)
             if decision is None:
+                log_reviewer_failure_stage("invalid_response", self.__run_id)
                 return AnalysisReportReviewResult("analysis_review_unavailable")
             self.__decisions[fingerprint] = decision
             return decision
