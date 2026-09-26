@@ -541,6 +541,24 @@ def normalize_input(raw_input: dict[str, Any] | None, *, trusted_internal: bool 
     return result
 
 
+def _normalize_external_analysis_input(raw_input: dict[str, Any] | None) -> dict[str, Any]:
+    """Accept only fresh human messages from external controlled-analysis runs."""
+    if not isinstance(raw_input, dict):
+        raise HTTPException(status_code=422, detail={"code": "analysis_input_rejected"})
+    raw_messages = raw_input.get("messages")
+    if not isinstance(raw_messages, list) or not raw_messages:
+        raise HTTPException(status_code=422, detail={"code": "analysis_input_rejected"})
+    try:
+        normalized = normalize_input(raw_input)
+    except HTTPException:
+        # Do not echo caller-controlled malformed message details at this boundary.
+        raise HTTPException(status_code=422, detail={"code": "analysis_input_rejected"}) from None
+    messages = normalized.get("messages")
+    if not isinstance(messages, list) or not messages or any(not isinstance(message, HumanMessage) for message in messages):
+        raise HTTPException(status_code=422, detail={"code": "analysis_input_rejected"})
+    return normalized
+
+
 _DEFAULT_ASSISTANT_ID = "lead_agent"
 
 
@@ -1658,13 +1676,21 @@ async def start_run(
         if analysis_principal_id is None or not _analysis_services_available(request):
             raise analysis_mode_unavailable_error()
 
+    is_internal_caller = getattr(getattr(request, "state", None), "auth_source", None) == AUTH_SOURCE_INTERNAL
+    command = getattr(body, "command", None)
+    external_analysis_input = None
+    if analysis_mode and not is_internal_caller and not (command and command.get("resume") is not None):
+        # Existing checkpoint history comes from the server. Never let an
+        # external analysis request claim prior AI/tool results as new input.
+        external_analysis_input = _normalize_external_analysis_input(body.input)
+
     owner_context_token = set_current_user(SimpleNamespace(id=owner_user_id)) if owner_user_id else None
     try:
         agent_factory = resolve_agent_factory(body.assistant_id)
-        is_internal_caller = getattr(getattr(request, "state", None), "auth_source", None) == AUTH_SOURCE_INTERNAL
-        command = getattr(body, "command", None)
         if command and command.get("resume") is not None:
             graph_input = Command(resume=command["resume"])
+        elif external_analysis_input is not None:
+            graph_input = external_analysis_input
         else:
             graph_input = normalize_input(body.input, trusted_internal=is_internal_caller)
         # deerflow_trace_id is server-issued, so the caller's value is replaced

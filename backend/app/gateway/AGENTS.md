@@ -176,6 +176,11 @@ PATCH、分支请求和 run 的 `context` / `configurable` 均不能设置或清
 `analysis_mode_unavailable` 错误拒绝。只有 Gateway 新生成、未绑定既有线程的 stateless
 聊天可在元数据行建立前运行。6E2B 完成工具隔离前，不得移除此门禁或回退到普通聊天。
 
+非 internal analysis run 的 `input.messages` 路径只接收非空列表，且所有条目必须规范化为 `HumanMessage`；
+外部 AI/system/tool/function 消息、缺失或畸形 messages 均在 Agent 工厂和 run admission 前以
+`analysis_input_rejected`（422）拒绝。已有对话历史由服务端 checkpoint 加载；普通 chat 的通用
+`normalize_input` 兼容语义、受信 internal 调用及独立的 `command.resume` 路径保持不变。
+
 报告 writer 的 Gateway 能力是服务端内部上下文，不是请求参数：只有持久化 analysis 标记已解析、
 认证 principal 与 run owner 一致且线程元数据检查成功后，Gateway 才能为当前 run 创建能力；能力
 固定 owner/thread/run、outputs 根目录和唯一 `.md` 路径。`__analysis_report_writer` 必须与其他
