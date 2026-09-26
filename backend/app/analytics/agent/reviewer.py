@@ -11,6 +11,7 @@ from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
 
 from app.analytics.agent.evidence import AnalyticsQueryToolResult, canonical_json
 
@@ -203,10 +204,27 @@ class AnalysisReportReviewerCapability:
             self.__attempts += 1
             try:
                 async with asyncio.timeout(ANALYSIS_REVIEWER_TIMEOUT_SECONDS):
-                    response = await self.__model.ainvoke(
+                    reviewer_model = self.__model
+                    invocation_kwargs: dict[str, Any] = {self.__token_field: MAX_ANALYSIS_REVIEWER_OUTPUT_TOKENS}
+                    if isinstance(reviewer_model, ChatOpenAI) and reviewer_model.model_name == "deepseek-flash":
+                        # langchain-openai 把兼容层的 max_tokens 重写为
+                        # max_completion_tokens；DeepSeek Chat Completions 要求旧字段。
+                        # 仅为 Reviewer 复制 Lead 模型并清除默认 token 上限，再通过
+                        # SDK 的 extra_body 保留其他模型配置、强制唯一的 256 上限。
+                        extra_body = dict(reviewer_model.extra_body or {})
+                        for token_field in ("max_completion_tokens", "max_output_tokens"):
+                            extra_body.pop(token_field, None)
+                        extra_body["max_tokens"] = MAX_ANALYSIS_REVIEWER_OUTPUT_TOKENS
+                        model_kwargs = dict(reviewer_model.model_kwargs)
+                        for token_field in ("max_tokens", "max_completion_tokens", "max_output_tokens"):
+                            model_kwargs.pop(token_field, None)
+                        reviewer_model = reviewer_model.model_copy(update={"max_tokens": None, "model_kwargs": model_kwargs})
+                        invocation_kwargs = {"extra_body": extra_body}
+
+                    response = await reviewer_model.ainvoke(
                         messages,
                         config={"callbacks": [], "tags": [], "metadata": {}},
-                        **{self.__token_field: MAX_ANALYSIS_REVIEWER_OUTPUT_TOKENS},
+                        **invocation_kwargs,
                     )
             except asyncio.CancelledError:
                 raise

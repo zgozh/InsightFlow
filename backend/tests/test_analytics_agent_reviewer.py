@@ -7,12 +7,14 @@ import json
 from decimal import Decimal
 from typing import Any
 
+import httpx
 import pytest
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables.config import var_child_runnable_config
+from langchain_openai import ChatOpenAI
 from pydantic import Field, PrivateAttr
 
 from app.analytics.agent.evidence import AnalyticsQueryEvidence, AnalyticsQueryToolResult, canonical_json
@@ -148,6 +150,64 @@ async def test_reviewer_uses_the_bound_lead_model_without_tools_or_inherited_run
     assert review_payload["evidence_ids"] == [evidence_id]
     assert review_payload["successful_queries"][0]["rows"] == [[42]]
     assert "sql" not in review_payload["successful_queries"][0]
+
+
+@pytest.mark.asyncio
+async def test_deepseek_reviewer_uses_the_legacy_token_field_on_the_real_sdk_wire_body():
+    """Pin DeepSeek's wire contract through ChatOpenAI and an offline HTTP transport."""
+
+    wire_bodies: list[dict[str, Any]] = []
+    wire_metadata: list[tuple[str | None, str]] = []
+    response_body = {
+        "id": "offline-review",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "deepseek-flash",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": '{"approved":true,"reason_code":"approved"}'},
+                "finish_reason": "stop",
+            }
+        ],
+    }
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        wire_bodies.append(json.loads(request.content))
+        wire_metadata.append((request.headers.get("authorization"), str(request.url)))
+        return httpx.Response(200, json=response_body)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    model = ChatOpenAI(
+        model="deepseek-flash",
+        api_key="offline-test-key",
+        base_url="https://offline.example/v1",
+        http_async_client=client,
+        max_retries=0,
+        max_tokens=99,
+        extra_body={"synthetic_option": "preserved"},
+    )
+    snapshot, evidence_id = _successful_snapshot()
+    capability = create_analysis_report_reviewer_capability(principal_id="owner-1", thread_id="thread-1", run_id="run-1")
+    assert capability.bind_lead_model(principal_id="owner-1", thread_id="thread-1", run_id="run-1", model=model)
+
+    try:
+        result = await _review(capability, snapshot, evidence_id)
+    finally:
+        await client.aclose()
+
+    assert result.code == "approved"
+    assert len(wire_bodies) == 1
+    assert wire_metadata == [("Bearer offline-test-key", "https://offline.example/v1/chat/completions")]
+    assert model.model_name == "deepseek-flash"
+    assert model.max_tokens == 99
+    body = wire_bodies[0]
+    assert body["model"] == "deepseek-flash"
+    assert body["max_tokens"] == MAX_ANALYSIS_REVIEWER_OUTPUT_TOKENS
+    assert "max_completion_tokens" not in body
+    assert "max_output_tokens" not in body
+    assert "tools" not in body
+    assert body["synthetic_option"] == "preserved"
 
 
 @pytest.mark.asyncio
