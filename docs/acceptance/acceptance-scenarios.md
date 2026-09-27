@@ -111,7 +111,7 @@
 
 依据：报告 §7、§8（Report Writer 能力边界）、§11（`analysis_reports`）、§14 E2E（下载报告）。
 
-现行状态边界：6F1 已在隔离合成 PostgreSQL/真实模型链中观察到 Gateway run-scoped writer 登记 `published` 索引、生成 Markdown artifact、按同一所有者读取 200，以及跨线程读取 404；该单次样例核对了预期合成数值与 evidence 关联。系统没有 Reviewer 复核或通用数字/evidence 校验机制，样例不代表 artifact 正文无敏感内容，完整 AS-10 仍未验收。细节见[6F1 彩排记录](phase-06f1-real-analysis-rehearsal.md)。
+现行状态边界：6F1 已在隔离合成 PostgreSQL/真实模型链中观察到 Gateway run-scoped writer 登记 `published` 索引、生成 Markdown artifact、按同一所有者读取 200，以及跨线程读取 404；该单次样例核对了预期合成数值与 evidence 关联。6F3E10 的固定真实 run `63cfc92a-97d9-446d-ad21-58d71ff97821` 另观察到一次 Reviewer 拒绝、随后有效 `published` 回执；同 run 只读索引 HTTP 200、唯一匹配状态 `published`，owner artifact GET 200、随机异线程 GET 404，且未读取 artifact 正文。因此不能再说系统“没有 Reviewer 复核”，但这仅证明一个真实样例中的 Reviewer 门与报告发布/所有者路径。没有通用数字/evidence 校验机制，也未实测 Web 下载、逐项数字核验或完整 AS-10；单例不证明 artifact 正文无敏感内容。细节见[6F1 彩排记录](phase-06f1-real-analysis-rehearsal.md)。
 
 ## AS-11 计划分析（scheduled analysis）
 
