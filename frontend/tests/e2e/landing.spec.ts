@@ -26,32 +26,72 @@ test.describe("Landing page", () => {
   }) => {
     await page.goto("/");
 
-    const desktopWorkspace = page
+    const desktopRepository = page
       .locator("header nav")
-      .getByRole("link", { name: "Workspace", exact: true });
-    await expect(desktopWorkspace).toHaveAttribute(
+      .getByRole("link", { name: "GitHub repository", exact: true });
+    await expect(desktopRepository).toHaveAttribute(
       "href",
       "https://github.com/zgozh/InsightFlow",
     );
-    await expect(desktopWorkspace).toHaveAttribute("target", "_blank");
-    await expect(desktopWorkspace).toHaveAttribute(
+    await expect(desktopRepository).toHaveAttribute("target", "_blank");
+    await expect(desktopRepository).toHaveAttribute(
       "rel",
       "noopener noreferrer",
     );
 
     await page.setViewportSize({ width: 375, height: 812 });
     await page.getByRole("button", { name: "Open menu" }).click();
-    const mobileWorkspace = page.getByRole("link", {
-      name: "Workspace",
+    const mobileRepository = page.getByRole("link", {
+      name: "GitHub repository",
       exact: true,
     });
-    await expect(mobileWorkspace).toBeVisible();
-    await expect(mobileWorkspace).toHaveAttribute(
+    await expect(mobileRepository).toBeVisible();
+    await expect(mobileRepository).toHaveAttribute(
       "href",
       "https://github.com/zgozh/InsightFlow",
     );
-    await expect(mobileWorkspace).toHaveAttribute("target", "_blank");
-    await expect(mobileWorkspace).toHaveAttribute("rel", "noopener noreferrer");
+    await expect(mobileRepository).toHaveAttribute("target", "_blank");
+    await expect(mobileRepository).toHaveAttribute(
+      "rel",
+      "noopener noreferrer",
+    );
+  });
+
+  test("keeps hero copy clear of the black hole at desktop and mobile sizes", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.goto("/");
+
+    const copy = page.getByTestId("hero-copy");
+    const art = page.getByTestId("hero-art");
+    await expect(copy).toBeVisible();
+    await expect(art).toBeVisible();
+
+    const desktopCopy = await copy.boundingBox();
+    const desktopArt = await art.boundingBox();
+    if (!desktopCopy || !desktopArt) {
+      throw new Error("Desktop hero regions must have visible bounds");
+    }
+    expect(desktopCopy.x + desktopCopy.width + 16).toBeLessThanOrEqual(
+      desktopArt.x,
+    );
+    await page.screenshot({
+      path: "test-results/phase-06f3f12-fix-01-desktop-1280x720.png",
+    });
+
+    await page.setViewportSize({ width: 375, height: 812 });
+    const mobileCopy = await copy.boundingBox();
+    const mobileArt = await art.boundingBox();
+    if (!mobileCopy || !mobileArt) {
+      throw new Error("Mobile hero regions must have visible bounds");
+    }
+    expect(mobileCopy.y + mobileCopy.height + 8).toBeLessThanOrEqual(
+      mobileArt.y,
+    );
+    await page.screenshot({
+      path: "test-results/phase-06f3f12-fix-01-mobile-375x812.png",
+    });
   });
 
   test("loads the red-orange favicon and keeps static art without canvas", async ({

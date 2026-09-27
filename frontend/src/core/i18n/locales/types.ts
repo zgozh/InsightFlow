@@ -84,7 +84,7 @@ export interface Translations {
   };
 
   home: {
-    workspace: string;
+    repository: string;
   };
 
   // Welcome

@@ -98,7 +98,7 @@ export const enUS: Translations = {
 
   // Home
   home: {
-    workspace: "Workspace",
+    repository: "GitHub repository",
   },
 
   // Welcome

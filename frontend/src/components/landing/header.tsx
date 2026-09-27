@@ -17,7 +17,7 @@ export async function Header({ className, homeURL, locale }: HeaderProps) {
   // 缺省入口回到站内首页：产品品牌不应再把上游 GitHub 仓库当作自己的主页。
   // 只有显式给出 http(s) 地址时才作为外部链接，否则一律站内跳转。
   const isExternalHome = homeURL?.startsWith("http") ?? false;
-  // Phase 5 删除了上游文档站与博客：页头只保留品牌词与进入工作台的入口。
+  // 首页页头只展示品牌与产品仓库入口；进入工作台由 Hero CTA 承担。
   return (
     <header
       className={cn(
@@ -42,7 +42,7 @@ export async function Header({ className, homeURL, locale }: HeaderProps) {
           rel="noopener noreferrer"
           className="text-secondary-foreground hover:text-foreground transition-colors"
         >
-          {t.home.workspace}
+          {t.home.repository}
         </a>
       </nav>
       <MobileNav
@@ -50,7 +50,7 @@ export async function Header({ className, homeURL, locale }: HeaderProps) {
         links={[
           {
             href: PRODUCT_REPOSITORY_URL,
-            label: t.home.workspace,
+            label: t.home.repository,
             external: true,
           },
         ]}
