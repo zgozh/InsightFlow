@@ -11,7 +11,7 @@ import httpx
 import pytest
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables.config import var_child_runnable_config
 from langchain_openai import ChatOpenAI
@@ -154,13 +154,13 @@ async def test_reviewer_uses_the_bound_lead_model_without_tools_or_inherited_run
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("model_response", "expected_stage", "private_sentinel"),
+    ("model_response", "expected_stage", "expected_category", "private_sentinel"),
     [
-        (RuntimeError("REVIEWER_EXCEPTION_SECRET_SENTINEL"), "provider_error", "REVIEWER_EXCEPTION_SECRET_SENTINEL"),
-        ("REVIEWER_RESPONSE_SECRET_SENTINEL", "invalid_response", "REVIEWER_RESPONSE_SECRET_SENTINEL"),
+        (RuntimeError("REVIEWER_EXCEPTION_SECRET_SENTINEL"), "provider_error", None, "REVIEWER_EXCEPTION_SECRET_SENTINEL"),
+        ("REVIEWER_RESPONSE_SECRET_SENTINEL", "invalid_response", "json_syntax_error", "REVIEWER_RESPONSE_SECRET_SENTINEL"),
     ],
 )
-async def test_reviewer_failure_logs_only_safe_stage_and_run_id(caplog, model_response, expected_stage, private_sentinel):
+async def test_reviewer_failure_logs_only_safe_stage_and_run_id(caplog, model_response, expected_stage, expected_category, private_sentinel):
     import logging
 
     from app.analytics.agent import reviewer as reviewer_module
@@ -173,12 +173,93 @@ async def test_reviewer_failure_logs_only_safe_stage_and_run_id(caplog, model_re
     assert result.code == "analysis_review_unavailable"
     assert f"stage={expected_stage}" in caplog.text
     assert "run_id=run-1" in caplog.text
+    if expected_category is not None:
+        assert f"category={expected_category}" in caplog.text
     assert private_sentinel not in caplog.text
     assert "REVIEWER_INPUT_SECRET_SENTINEL" not in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_deepseek_reviewer_uses_the_legacy_token_field_on_the_real_sdk_wire_body():
+@pytest.mark.parametrize(
+    ("response", "expected_category", "expected_finish_reason", "private_sentinels"),
+    [
+        (HumanMessage(content="NOT_AIMESSAGE_SECRET_SENTINEL"), "not_ai_message", "missing", ("NOT_AIMESSAGE_SECRET_SENTINEL",)),
+        (
+            AIMessage(content="", tool_calls=[{"id": "TOOL_CALL_SECRET_SENTINEL", "name": "private-tool", "args": {}}]),
+            "tool_call_response",
+            "missing",
+            ("TOOL_CALL_SECRET_SENTINEL", "private-tool"),
+        ),
+        (
+            AIMessage(content=[{"type": "text", "text": "NON_STRING_CONTENT_SECRET_SENTINEL"}]),
+            "content_not_string",
+            "missing",
+            ("NON_STRING_CONTENT_SECRET_SENTINEL",),
+        ),
+        (AIMessage(content="\ud800"), "content_encoding_error", "missing", ("\ud800",)),
+        (AIMessage(content="", response_metadata={"finish_reason": "stop"}), "empty_output", "stop", ()),
+        (
+            AIMessage(content="x" * 2049, response_metadata={"finish_reason": "length"}),
+            "output_too_large",
+            "length",
+            (),
+        ),
+        (
+            AIMessage(content='{"approved":true,"approved":false,"reason_code":"approved"}'),
+            "duplicate_json_key",
+            "missing",
+            (),
+        ),
+        (
+            AIMessage(content="JSON_BODY_SECRET_SENTINEL", response_metadata={"finish_reason": "PRIVATE_FINISH_REASON_SENTINEL"}),
+            "json_syntax_error",
+            "other",
+            ("JSON_BODY_SECRET_SENTINEL", "PRIVATE_FINISH_REASON_SENTINEL"),
+        ),
+        (AIMessage(content="[]"), "response_not_object", "missing", ()),
+        (
+            AIMessage(content='{"approved":true,"reason_code":"approved","PRIVATE_FIELD_SENTINEL":"x"}'),
+            "response_schema_mismatch",
+            "missing",
+            ("PRIVATE_FIELD_SENTINEL",),
+        ),
+        (
+            AIMessage(content='{"approved":"true","reason_code":"approved"}'),
+            "field_type_or_value_invalid",
+            "missing",
+            (),
+        ),
+        (
+            AIMessage(content='{"approved":true,"reason_code":"unsupported_claim"}'),
+            "decision_mismatch",
+            "missing",
+            (),
+        ),
+    ],
+)
+async def test_reviewer_invalid_response_logs_only_closed_categories(
+    caplog, response, expected_category, expected_finish_reason, private_sentinels
+):
+    import logging
+
+    from app.analytics.agent import reviewer as reviewer_module
+
+    caplog.set_level(logging.WARNING, logger=reviewer_module.__name__)
+    capability, _model, snapshot, evidence_id = _capability(responses=[response])
+
+    result = await _review(capability, snapshot, evidence_id)
+
+    assert result.code == "analysis_review_unavailable"
+    assert "stage=invalid_response" in caplog.text
+    assert f"category={expected_category}" in caplog.text
+    assert f"finish_reason={expected_finish_reason}" in caplog.text
+    assert "run_id=run-1" in caplog.text
+    for sentinel in private_sentinels:
+        assert sentinel not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_deepseek_reviewer_uses_bounded_tokens_on_the_real_sdk_wire_body():
     """Pin DeepSeek's wire contract through ChatOpenAI and an offline HTTP transport."""
 
     wire_bodies: list[dict[str, Any]] = []
@@ -229,10 +310,58 @@ async def test_deepseek_reviewer_uses_the_legacy_token_field_on_the_real_sdk_wir
     body = wire_bodies[0]
     assert body["model"] == "deepseek-flash"
     assert body["max_tokens"] == MAX_ANALYSIS_REVIEWER_OUTPUT_TOKENS
+    assert body["reasoning_effort"] == "none"
     assert "max_completion_tokens" not in body
     assert "max_output_tokens" not in body
     assert "tools" not in body
     assert body["synthetic_option"] == "preserved"
+
+
+@pytest.mark.asyncio
+async def test_other_openai_compatible_reviewer_does_not_get_deepseek_effort_override():
+    wire_bodies: list[dict[str, Any]] = []
+    response_body = {
+        "id": "offline-review",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "compatible-test-model",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": '{"approved":true,"reason_code":"approved"}'},
+                "finish_reason": "stop",
+            }
+        ],
+    }
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        wire_bodies.append(json.loads(request.content))
+        return httpx.Response(200, json=response_body)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    model = ChatOpenAI(
+        model="compatible-test-model",
+        api_key="offline-test-key",
+        base_url="https://offline.example/v1",
+        http_async_client=client,
+        max_retries=0,
+        max_tokens=99,
+        extra_body={"synthetic_option": "preserved"},
+    )
+    snapshot, evidence_id = _successful_snapshot()
+    capability = create_analysis_report_reviewer_capability(principal_id="owner-1", thread_id="thread-1", run_id="run-1")
+    assert capability.bind_lead_model(principal_id="owner-1", thread_id="thread-1", run_id="run-1", model=model)
+
+    try:
+        result = await _review(capability, snapshot, evidence_id)
+    finally:
+        await client.aclose()
+
+    assert result.code == "approved"
+    assert len(wire_bodies) == 1
+    assert "reasoning_effort" not in wire_bodies[0]
+    assert "thinking" not in wire_bodies[0]
+    assert wire_bodies[0]["synthetic_option"] == "preserved"
 
 
 @pytest.mark.asyncio

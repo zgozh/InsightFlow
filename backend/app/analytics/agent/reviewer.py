@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -36,14 +37,48 @@ _REVIEWER_FAILURE_STAGES = frozenset(
         "reviewer_internal_error",
     }
 )
+_REVIEWER_RESPONSE_FAILURE_CATEGORIES = frozenset(
+    {
+        "not_ai_message",
+        "tool_call_response",
+        "content_not_string",
+        "content_encoding_error",
+        "empty_output",
+        "output_too_large",
+        "duplicate_json_key",
+        "json_syntax_error",
+        "response_not_object",
+        "response_schema_mismatch",
+        "field_type_or_value_invalid",
+        "decision_mismatch",
+    }
+)
+_REVIEWER_FINISH_REASON_CATEGORIES = frozenset({"stop", "length", "tool_calls", "other", "missing"})
 logger = logging.getLogger(__name__)
 
 
-def log_reviewer_failure_stage(stage: str, run_id: object) -> None:
+def log_reviewer_failure_stage(
+    stage: str,
+    run_id: object,
+    *,
+    category: object | None = None,
+    finish_reason: object | None = None,
+) -> None:
     """记录固定阶段和经过约束的 run 标识，不接收自由文本诊断信息。"""
 
     safe_stage = stage if stage in _REVIEWER_FAILURE_STAGES else "reviewer_internal_error"
     safe_run_id = run_id if isinstance(run_id, str) and _SAFE_THREAD_RUN_ID.fullmatch(run_id) else "unknown"
+    if safe_stage == "invalid_response":
+        safe_category = category if isinstance(category, str) and category in _REVIEWER_RESPONSE_FAILURE_CATEGORIES else "response_classification_unavailable"
+        safe_finish_reason = finish_reason if isinstance(finish_reason, str) and finish_reason in _REVIEWER_FINISH_REASON_CATEGORIES else "missing"
+        logger.warning(
+            "event=analysis_report_reviewer stage=%s run_id=%s category=%s finish_reason=%s",
+            safe_stage,
+            safe_run_id,
+            safe_category,
+            safe_finish_reason,
+        )
+        return
     logger.warning("event=analysis_report_reviewer stage=%s run_id=%s", safe_stage, safe_run_id)
 
 
@@ -248,14 +283,16 @@ class AnalysisReportReviewerCapability:
                         # 仅为 Reviewer 复制 Lead 模型并清除默认 token 上限，再通过
                         # SDK 的 extra_body 保留其他模型配置、强制唯一的 256 上限。
                         extra_body = dict(reviewer_model.extra_body or {})
-                        for token_field in ("max_completion_tokens", "max_output_tokens"):
-                            extra_body.pop(token_field, None)
+                        for field in ("max_completion_tokens", "max_output_tokens", "reasoning_effort", "thinking"):
+                            extra_body.pop(field, None)
                         extra_body["max_tokens"] = MAX_ANALYSIS_REVIEWER_OUTPUT_TOKENS
                         model_kwargs = dict(reviewer_model.model_kwargs)
-                        for token_field in ("max_tokens", "max_completion_tokens", "max_output_tokens"):
-                            model_kwargs.pop(token_field, None)
+                        for field in ("max_tokens", "max_completion_tokens", "max_output_tokens", "reasoning_effort", "thinking"):
+                            model_kwargs.pop(field, None)
                         reviewer_model = reviewer_model.model_copy(update={"max_tokens": None, "model_kwargs": model_kwargs})
-                        invocation_kwargs = {"extra_body": extra_body}
+                        # DeepSeek 默认高思考模式会在 256-token 上限内消耗完预算，
+                        # 留下空的最终 content。Reviewer 只需有限 JSON 判定，关闭思考以保留输出预算。
+                        invocation_kwargs = {"extra_body": extra_body, "reasoning_effort": "none"}
 
                     response = await reviewer_model.ainvoke(
                         messages,
@@ -271,9 +308,14 @@ class AnalysisReportReviewerCapability:
                 log_reviewer_failure_stage("provider_error", self.__run_id)
                 return AnalysisReportReviewResult("analysis_review_unavailable")
 
-            decision = _parse_review_response(response)
+            decision, failure_category = _parse_review_response_diagnostic(response)
             if decision is None:
-                log_reviewer_failure_stage("invalid_response", self.__run_id)
+                log_reviewer_failure_stage(
+                    "invalid_response",
+                    self.__run_id,
+                    category=failure_category,
+                    finish_reason=_finish_reason_category(response),
+                )
                 return AnalysisReportReviewResult("analysis_review_unavailable")
             self.__decisions[fingerprint] = decision
             return decision
@@ -292,38 +334,72 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
         if key in result:
-            raise ValueError("duplicate_key")
+            raise _DuplicateJSONKeyError("duplicate_json_key")
         result[key] = value
     return result
 
 
-def _parse_review_response(response: object) -> AnalysisReportReviewResult | None:
-    if not isinstance(response, AIMessage) or response.tool_calls or response.invalid_tool_calls or any(key in response.additional_kwargs for key in ("tool_calls", "function_call")) or not isinstance(response.content, str):
-        return None
+class _DuplicateJSONKeyError(ValueError):
+    """仅供内部解析分类使用，不携带重复键名称。"""
+
+
+def _parse_review_response_diagnostic(response: object) -> tuple[AnalysisReportReviewResult | None, str | None]:
+    if not isinstance(response, AIMessage):
+        return None, "not_ai_message"
+    if response.tool_calls or response.invalid_tool_calls or any(key in response.additional_kwargs for key in ("tool_calls", "function_call")):
+        return None, "tool_call_response"
+    if not isinstance(response.content, str):
+        return None, "content_not_string"
     try:
         raw = response.content.encode("utf-8", errors="strict")
     except UnicodeEncodeError:
-        return None
-    if not raw or len(raw) > MAX_ANALYSIS_REVIEWER_OUTPUT_BYTES:
-        return None
+        return None, "content_encoding_error"
+    if not raw:
+        return None, "empty_output"
+    if len(raw) > MAX_ANALYSIS_REVIEWER_OUTPUT_BYTES:
+        return None, "output_too_large"
     try:
         payload = json.loads(response.content, object_pairs_hook=_unique_object)
+    except _DuplicateJSONKeyError:
+        return None, "duplicate_json_key"
     except (TypeError, ValueError):
-        return None
-    if (
-        not isinstance(payload, dict)
-        or set(payload) != {"approved", "reason_code"}
-        or type(payload["approved"]) is not bool
-        or not isinstance(payload["reason_code"], str)
-        or payload["reason_code"] not in _REASON_CODES
-        or (payload["approved"] and payload["reason_code"] != "approved")
-        or (not payload["approved"] and payload["reason_code"] == "approved")
-    ):
-        return None
-    return AnalysisReportReviewResult(
-        "approved" if payload["approved"] else "analysis_review_rejected",
-        payload["reason_code"],
+        return None, "json_syntax_error"
+    if not isinstance(payload, dict):
+        return None, "response_not_object"
+    if set(payload) != {"approved", "reason_code"}:
+        return None, "response_schema_mismatch"
+    if type(payload["approved"]) is not bool or not isinstance(payload["reason_code"], str) or payload["reason_code"] not in _REASON_CODES:
+        return None, "field_type_or_value_invalid"
+    if (payload["approved"] and payload["reason_code"] != "approved") or (not payload["approved"] and payload["reason_code"] == "approved"):
+        return None, "decision_mismatch"
+    return (
+        AnalysisReportReviewResult(
+            "approved" if payload["approved"] else "analysis_review_rejected",
+            payload["reason_code"],
+        ),
+        None,
     )
+
+
+def _parse_review_response(response: object) -> AnalysisReportReviewResult | None:
+    """保留严格解析器的原有私有返回契约。"""
+
+    return _parse_review_response_diagnostic(response)[0]
+
+
+def _finish_reason_category(response: object) -> str:
+    if not isinstance(response, AIMessage) or not isinstance(response.response_metadata, Mapping):
+        return "missing"
+    raw_finish_reason = response.response_metadata.get("finish_reason")
+    if raw_finish_reason is None:
+        return "missing"
+    if not isinstance(raw_finish_reason, str):
+        return "other"
+    if raw_finish_reason in {"stop", "length"}:
+        return raw_finish_reason
+    if raw_finish_reason in {"tool_calls", "function_call"}:
+        return "tool_calls"
+    return "other"
 
 
 def create_analysis_report_reviewer_capability(*, principal_id: str, thread_id: str, run_id: str) -> AnalysisReportReviewerCapability:
