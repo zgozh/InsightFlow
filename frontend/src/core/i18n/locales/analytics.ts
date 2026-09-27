@@ -164,6 +164,7 @@ export interface AnalyticsTranslations {
     statusPublished: string;
     createdAt: string;
     openAnalysis: string;
+    downloadReport: string;
     empty: string;
   };
   trace: {

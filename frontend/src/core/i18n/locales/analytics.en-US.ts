@@ -178,6 +178,7 @@ export const analyticsEnUS: {
       statusPublished: "Published",
       createdAt: "Created",
       openAnalysis: "Open the analysis",
+      downloadReport: "Download report",
       empty: "No reports published yet.",
     },
     trace: {

@@ -391,7 +391,7 @@ describe("AuditHistoryList", () => {
 });
 
 describe("ReportCatalogList", () => {
-  it("分析链接包含百分号编码后的 thread id", () => {
+  it("提供基于受保护产物路由的报告下载，同时保留分析链接", () => {
     render(
       wrap(
         <ReportCatalogList
@@ -399,21 +399,51 @@ describe("ReportCatalogList", () => {
         />,
       ),
     );
-    const link = screen.getByRole("link", { name: "Open the analysis" });
-    expect(link.getAttribute("href")).toBe(
+    const analysisLink = screen.getByRole("link", {
+      name: "Open the analysis",
+    });
+    expect(analysisLink.getAttribute("href")).toBe(
       `/workspace/analysis/${encodeURIComponent("thread 1/two")}`,
     );
-    expect(link.getAttribute("href")).not.toContain("outputs");
+    const downloadLink = screen.getByRole("link", {
+      name: "Download report",
+    });
+    expect(downloadLink.getAttribute("href")).toBe(
+      "/api/threads/thread%201%2Ftwo/artifacts/mnt/user-data/outputs/revenue.md?download=true",
+    );
+    expect(downloadLink.getAttribute("download")).toBe("");
+    expect(screen.getAllByRole("link")).toHaveLength(2);
   });
 
-  it("只展示登记元数据，不构造产物直链", () => {
-    render(wrap(<ReportCatalogList reports={[reportView()]} />));
-    const text = document.body.textContent ?? "";
-    expect(text).toContain("Revenue review");
-    expect(text).toContain("Published");
-    expect(text).toContain("/mnt/user-data/outputs/revenue.md");
-    expect(text).toContain("aaaaaaaa…aaaa");
-    // 唯一的链接是分析会话，没有第二个"打开产物"的 URL。
-    expect(screen.getAllByRole("link").length).toBe(1);
+  it("报告下载链接在中英文环境均有明确标签并保留登记信息", () => {
+    const previousLocaleCookie = document.cookie
+      .split(";")
+      .map((cookie) => cookie.trim())
+      .find((cookie) => cookie.startsWith("locale="));
+    try {
+      for (const [locale, downloadLabel, analysisLabel] of [
+        ["zh-CN", "下载报告", "打开对应分析"],
+        ["en-US", "Download report", "Open the analysis"],
+      ] as const) {
+        document.cookie = `locale=${locale}; path=/`;
+        const { unmount } = render(
+          <I18nProvider initialLocale={locale}>
+            <ReportCatalogList reports={[reportView()]} />
+          </I18nProvider>,
+        );
+        expect(screen.getByRole("link", { name: downloadLabel })).toBeTruthy();
+        expect(screen.getByRole("link", { name: analysisLabel })).toBeTruthy();
+        expect(document.body.textContent).toContain("Revenue review");
+        expect(document.body.textContent).toContain(
+          "/mnt/user-data/outputs/revenue.md",
+        );
+        expect(document.body.textContent).toContain("aaaaaaaa…aaaa");
+        unmount();
+      }
+    } finally {
+      document.cookie = previousLocaleCookie
+        ? `${previousLocaleCookie}; path=/`
+        : "locale=; max-age=0; path=/";
+    }
   });
 });

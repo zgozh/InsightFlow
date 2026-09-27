@@ -22,6 +22,8 @@ Baseline: DeerFlow `v2.1.0-rc0` (`769589e8daee14c2587a634b6b43bd96471a41a1`), im
 
 6F3F2 Fix 01 只拆分忽略 browser helper 的等待点，并对同一 run 做一次浏览器复核：报告卡片再次匹配；分析入口点击完成、目标路由命中，owner thread metadata GET 为 `200`，但 trace trigger 在 20 秒内未挂载。由此精确定位到 trace trigger 挂载前，仍不能区分服务端分析 marker 与前端路由/挂载运行态；未到 trace panel/steps 或 artifact 下载，没有新模型/Gateway run。临时浏览器目录已清理，生产代码未改，AS-09/10 仍未验收；Fix01 报告见下。
 
+6F3F6 在报告卡增加“下载报告”入口，复用 `urlOfArtifact` 与既有 Gateway owner-check 路由；定点 DOM 测试 16/16 通过，中英文标签与原分析入口均受测。固定验收栈只更新 frontend 容器，其余四容器 ID 与三卷保持不变。用同一已发布 run 做一次 Chromium owner 流程：报告卡下载点击收到完成的 `.md` download event；同一登录上下文独立 GET HTTP 200、同源与路径匹配、未重定向且 `Content-Disposition` 为 attachment，未读取正文。没有新模型/Gateway run。该单例闭合报告卡下载入口及本次 owner GET，不代表 AS-10 的通用数字/evidence 核验或完整验收；本轮具体命令与脱敏读回已单独记录供复验。
+
 Phase 6E3A 已为 Analytics 结构化调用/结果的单模式及多模式 SSE、subagent step、RunJournal、Gateway 历史读取与 checkpoint seed 加入输出副本投影；7 个受影响后端测试文件定点验证为 240 passed / 1 条现存 Starlette deprecation warning，Ruff check 与 format --check 通过。Fix 01 修复模糊流式身份不再终止普通 run，并在名称分叉为 `query_business_data_export` 后恢复普通参数可见；真实 `run_agent` SSE/history 合成哨兵回归与序列化定点共 69 passed，内部模型消息保持原样，Ruff check/format 与 diff check 通过。**6E3A+Fix 01 的定点复验已通过，仍待 GPT 复验**，不代表 AS-13 整体验收完成；真实 Gateway/模型端到端和可选第三方 tracing 导出未验证，任意用户/模型文本与 artifact 正文不在保证范围。
 
 Phase 2 is delivered in four independently reviewed slices: **2A** deterministic SQL policy core, **2B1** semantic authorization core, **2B2** governed datasource execution, and **2C** persistence and delivery. A slice is not complete until its own gates and review pass.

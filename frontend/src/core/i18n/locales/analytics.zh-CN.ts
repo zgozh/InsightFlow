@@ -172,6 +172,7 @@ export const analyticsZhCN: {
       statusPublished: "已发布",
       createdAt: "创建时间",
       openAnalysis: "打开对应分析",
+      downloadReport: "下载报告",
       empty: "还没有发布的报告。",
     },
     trace: {

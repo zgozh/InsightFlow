@@ -24,6 +24,7 @@ import {
   CircleCheckIcon,
   CircleMinusIcon,
   CircleXIcon,
+  DownloadIcon,
   TriangleAlertIcon,
 } from "lucide-react";
 import Link from "next/link";
@@ -49,6 +50,7 @@ import type {
   QueryRisk,
   ReportStatus,
 } from "@/core/analytics/types";
+import { urlOfArtifact } from "@/core/artifacts/utils";
 import { useI18n } from "@/core/i18n/hooks";
 import { cn } from "@/lib/utils";
 
@@ -820,9 +822,8 @@ const REPORT_STATUS_LABEL: Record<ReportStatus, "statusPublished"> = {
 /**
  * 报告列表。
  *
- * "打开对应分析"指向 `/workspace/analysis/{thread_id}`——也就是分析会话本身，产物文件由既有
- * 会话内的产物面板负责打开。这里**不**构造任何产物直链、不请求产物字节：产物访问权属于
- * 会话路由，前端自行拼一个公开 URL 会把授权边界搬到客户端。
+ * 下载动作只用共享工具构造同源 Gateway 产物 URL；URL 本身不是授权凭证，
+ * 每次请求仍由 Gateway 的 `threads:read` owner check 决定能否读取。
  */
 export function ReportCatalogList({
   reports,
@@ -878,18 +879,30 @@ export function ReportCatalogList({
               ))}
             </ul>
           </div>
-          <Button
-            asChild
-            variant="outline"
-            className="min-h-11 min-w-11 self-start"
-          >
-            <Link
-              href={`/workspace/analysis/${encodeURIComponent(report.thread_id)}`}
-              data-testid="report-open-analysis"
-            >
-              {r.openAnalysis}
-            </Link>
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button asChild variant="outline" className="min-h-11 min-w-11">
+              <a
+                href={urlOfArtifact({
+                  filepath: report.artifact_path,
+                  threadId: report.thread_id,
+                  download: true,
+                })}
+                download
+                data-testid="report-download"
+              >
+                <DownloadIcon className="size-4" aria-hidden="true" />
+                {r.downloadReport}
+              </a>
+            </Button>
+            <Button asChild variant="outline" className="min-h-11 min-w-11">
+              <Link
+                href={`/workspace/analysis/${encodeURIComponent(report.thread_id)}`}
+                data-testid="report-open-analysis"
+              >
+                {r.openAnalysis}
+              </Link>
+            </Button>
+          </div>
         </li>
       ))}
     </ul>
