@@ -42,7 +42,7 @@ function ExistingAnalysisThread({ threadId }: { threadId: string }) {
   const { t } = useI18n();
   const metadata = useThreadMetadata(threadId);
 
-  if (metadata.isLoading || metadata.isFetching) {
+  if (metadata.isLoading) {
     return <AnalysisRouteState message={t.analysisUnavailable.loading} />;
   }
   if (metadata.isError) {

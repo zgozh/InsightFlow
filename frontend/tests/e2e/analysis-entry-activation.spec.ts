@@ -109,6 +109,59 @@ test.describe("controlled analysis entry", () => {
     expect(streamed).toBe(false);
   });
 
+  test("keeps an existing analysis thread open during metadata refetch", async ({
+    page,
+  }) => {
+    const threadId = "existing-analysis-thread";
+    let metadataGetCount = 0;
+    let releaseSecondMetadataGet!: () => void;
+    let secondMetadataGetStarted!: () => void;
+    const secondMetadataGetStartedPromise = new Promise<void>((resolve) => {
+      secondMetadataGetStarted = resolve;
+    });
+    const secondMetadataGetGate = new Promise<void>((resolve) => {
+      releaseSecondMetadataGet = resolve;
+    });
+
+    mockLangGraphAPI(page, {
+      threads: [
+        {
+          thread_id: threadId,
+          title: "Synthetic existing analysis",
+          metadata: { analysis_mode: true },
+          messages: [],
+        },
+      ],
+    });
+    await page.route(`**/api/langgraph/threads/${threadId}`, async (route) => {
+      if (route.request().method() === "GET") {
+        metadataGetCount += 1;
+        if (metadataGetCount === 2) {
+          secondMetadataGetStarted();
+          await secondMetadataGetGate;
+        }
+      }
+      await route.fallback();
+    });
+
+    try {
+      await page.goto(`/workspace/analysis/${threadId}`);
+      await secondMetadataGetStartedPromise;
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+          }),
+      );
+
+      expect(metadataGetCount).toBe(2);
+      await expect(page.getByTestId("analytics-trace-trigger")).toBeAttached();
+      await expect(page.locator("#analysis-state-title")).toHaveCount(0);
+    } finally {
+      releaseSecondMetadataGet();
+    }
+  });
+
   test("does not mount analysis for a regular chat id", async ({ page }) => {
     let streamed = false;
     mockLangGraphAPI(page, {
