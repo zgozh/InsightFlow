@@ -1,4 +1,4 @@
-"""In-memory RunEventStore. Used when run_events.backend=memory (default) and in tests.
+"""In-memory RunEventStore. Used when run_events.backend=memory is explicit and in tests.
 
 Thread-safe for single-process async usage (no threading locks needed
 since all mutations happen within the same event loop).

@@ -89,7 +89,7 @@ def test_appconfig_descriptions_retain_original_field_documentation():
         "logging": "Structured logging settings: whether request trace ids appear in log records, and in which format.",
         "database": "memory, sqlite, or postgres",
         "sandbox": "Sandbox provider",
-        "run_events": "memory for dev",
+        "run_events": "db by default",
         "checkpointer": "state-persistence checkpointer",
         "stream_bridge": "Stream bridge",
     }

@@ -263,7 +263,7 @@ class AppConfig(BaseModel):
         default_factory=RunEventsConfig,
         description=format_field_description(
             "run_events",
-            field_doc="Run-event store backend (memory for dev, db for production queries, jsonl for lightweight single-node persistence).",
+            field_doc="Run-event store backend (db by default, reusing the application database; memory for temporary process-local runs; jsonl for lightweight single-node persistence).",
         ),
     )
     scheduler: SchedulerConfig = Field(

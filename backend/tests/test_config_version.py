@@ -193,6 +193,13 @@ def _load_repo_example() -> dict:
         return yaml.safe_load(f) or {}
 
 
+def test_example_uses_db_for_run_event_persistence_by_default():
+    example = _load_repo_example()
+
+    assert example["database"]["backend"] == "sqlite"
+    assert example["run_events"]["backend"] == "db"
+
+
 def _merge_missing(target: dict, source: dict) -> None:
     """Add-missing-keys-only recursive merge mirroring scripts/config-upgrade.sh."""
     for key, value in source.items():

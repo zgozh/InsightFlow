@@ -45,6 +45,10 @@ Size is governed by budget, not by a single file-count target. The upstream base
 
 **Security coverage overrides file-count reduction.** The coverage matrix takes priority over the file-count budget: a reduction that removes runtime, SQL-safety or key E2E regression coverage is not an acceptable way to reach the target. A "minimal" repository below roughly 650 tracked files would require removing Scheduler, MCP, Memory or a large part of the runtime test suite, and is out of scope for the current enterprise-grade goal.
 
+## Recent acceptance update
+
+6F3F9 将 `run_events.backend` 默认改为共享应用数据库，并在固定验收配置中显式启用；配置/存储定点测试 5 passed，Ruff check 与 format 检查通过。一次 run 在 Gateway 尚未重载启动配置时运行，仍使用旧 memory store，重启后旧 feed 丢失且不可补回；不把它算作持久化证据。配置生效后的普通 synthetic chat run 状态为 `error`，但同一 owner 的 messages（2 条，seq 2..3）与 events（5 条，seq 1..5）在单独 Gateway 重启前后保持一致，SQLite 同 run event 计数为 5。验证只证明失败 run 的 SQLite 事件持久性；模型成功与 AS-09 完整 SSE/无思维链验收仍未完成。固定项目 5 容器、3 个命名卷保留。
+
 ## Delivery and rollback
 
 - Phase 5B uses one independent commit per approved batch (B1–B5), with B5 depending on the retained state from earlier batches.

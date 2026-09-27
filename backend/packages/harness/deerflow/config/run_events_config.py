@@ -3,10 +3,10 @@
 Controls where run events (messages + execution traces) are persisted.
 
 Backends:
-- memory: In-memory storage, data lost on restart. Suitable for
-  development and testing.
-- db: SQL database via SQLAlchemy ORM. Provides full query capability.
-  Suitable for production deployments.
+- db: SQL database via SQLAlchemy ORM, using the application database. The
+  config-file default uses SQLite and survives Gateway restarts.
+- memory: In-memory storage, data lost on restart. Suitable for explicitly
+  configured temporary runs and tests.
 - jsonl: Append-only JSONL files. Lightweight alternative for
   single-node deployments that need persistence without a database.
 """
@@ -20,8 +20,8 @@ from pydantic import BaseModel, Field
 
 class RunEventsConfig(BaseModel):
     backend: Literal["memory", "db", "jsonl"] = Field(
-        default="memory",
-        description="Storage backend for run events. 'memory' for development (no persistence), 'db' for production (SQL queries), 'jsonl' for lightweight single-node persistence.",
+        default="db",
+        description="Storage backend for run events. 'db' reuses the application database and persists across Gateway restarts, 'memory' is temporary and process-local, and 'jsonl' is lightweight single-node persistence.",
     )
     max_trace_content: int = Field(
         default=10240,

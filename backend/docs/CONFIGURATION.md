@@ -39,6 +39,12 @@ Gateway 请求会通过 `get_app_config()` 读取应用配置。模型、工具�
 `database.backend: memory` 时不会运行 Analytics 迁移，Analytics API 返回 503。多 worker
 部署应按示例配置 run ownership 与 Redis stream bridge，并确保实例时钟同步。
 
+`run_events.backend` 默认是 `db`，复用 `database` 选择的应用数据库；按示例配置时写入
+SQLite 应用库，并在 Gateway 重启后保留。`memory` 仅适合显式选择的临时/开发运行，进程
+退出后 events/messages 丢失；切换到持久后端不会补回此前未持久化的事件。`db` 要求
+`database.backend` 为 `sqlite` 或 `postgres`；若应用数据库仍为 `memory`，运行时会回退到
+内存事件存储。单节点且希望独立文件存储时可显式选择 `jsonl`。
+
 `auth` 管理本地登录与 OIDC 登录选项。PAT、账户偏好、thread/run 隔离及服务端授权由
 Gateway 控制；客户端提供的身份字段不能覆盖认证上下文。
 

@@ -367,6 +367,7 @@ def test_app_config_coerces_commented_out_object_sections(tmp_path, monkeypatch)
     assert type(config.guardrails).__name__ == "GuardrailsConfig"
     assert type(config.tool_output).__name__ == "ToolOutputConfig"
     assert type(config.run_events).__name__ == "RunEventsConfig"
+    assert config.run_events.backend == "db"
 
 
 def test_app_config_null_required_section_still_errors(tmp_path, monkeypatch):
