@@ -55,7 +55,7 @@ Size is governed by budget, not by a single file-count target. The upstream base
 
 6F3F12 Fix 01 将首页外链明确命名为「GitHub 仓库」，并调整首屏布局：桌面左侧文案、右侧像素黑洞，移动端文案在上、黑洞在下。Chromium 定点 Playwright 验证外链目标/新标签属性及 1280×720、375×812 文案与插画区域不重叠，目视截图保存在忽略的 `frontend/test-results/phase-06f3f12-fix-01-{desktop-1280x720,mobile-375x812}.png`。没有重建固定 Docker 栈或发模型请求。
 
-6F3F13 固定验收栈前端刷新未执行：只读检查发现 `insightflow-acceptance-local` 的 5 个容器全部退出（Gateway exit 137），按提示词停线，没有构建、重启或替换任何容器。旧 Frontend container/image ID、Compose 文件、Nginx 入口映射与退出状态记录于[验收证据](acceptance/phase-06f3f13-local-frontend-refresh.md)；等待主会话裁决是否恢复固定栈后再做部署验证。
+6F3F13 首轮只读前置检查发现固定验收栈已停止；Fix 01 获准后以原 ID 恢复五个既有容器，Gateway 首次启动即 healthy（原 exit 137 的根因未知），并仅刷新 Frontend。新 Frontend 镜像 `sha256:2802c7b1be7f1fdd7aba55c703a9441441b16608aee8f4dab53db40f2d5edbfb`、容器 `2b275c7b6fd58ed0b7a7b19555b2020ed1007ab56f549f51c512f6b44f23cead`；旧镜像 `sha256:52eaffb601a2e5de810b69532787021a054a4c9e929e4a58324e5ea5c9b59347` 保留为本地 rollback tag。真实 Nginx `/` 与 `/health` 为 200，Chromium 核对 GitHub 外链、`/workspace` CTA、SVG favicon，以及 1280×720/375×812 黑洞布局；其他四个容器 ID 与三个命名卷保持不变。Compose 渲染的 Nginx 端口与既有容器有漂移，因此只用 `--no-deps` 刷新 Frontend；完整命令、ID、截图与未验证项见[验收证据](acceptance/phase-06f3f13-local-frontend-refresh.md)。
 
 ## Delivery and rollback
 
