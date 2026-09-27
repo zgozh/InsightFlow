@@ -237,9 +237,7 @@ async def test_reviewer_failure_logs_only_safe_stage_and_run_id(caplog, model_re
         ),
     ],
 )
-async def test_reviewer_invalid_response_logs_only_closed_categories(
-    caplog, response, expected_category, expected_finish_reason, private_sentinels
-):
+async def test_reviewer_invalid_response_logs_only_closed_categories(caplog, response, expected_category, expected_finish_reason, private_sentinels):
     import logging
 
     from app.analytics.agent import reviewer as reviewer_module
