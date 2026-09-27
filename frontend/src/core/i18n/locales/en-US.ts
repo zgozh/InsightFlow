@@ -3,6 +3,7 @@ import {
   ListChecksIcon,
   MicroscopeIcon,
   PenLineIcon,
+  SparklesIcon,
 } from "lucide-react";
 
 import { analyticsEnUS } from "./analytics.en-US";
@@ -327,6 +328,12 @@ export const enUS: Translations = {
         prompt:
           "Check the connected dataset for missing values and unusual changes. Show the evidence and limits of the analysis.",
         icon: ListChecksIcon,
+      },
+      {
+        suggestion: "Make a little surprise",
+        prompt:
+          "Create a small, self-contained interactive HTML page about [theme] that can be previewed in the sandbox. Add one simple click interaction and brief instructions; avoid external dependencies.",
+        icon: SparklesIcon,
       },
     ],
     pleaseWaitStreaming: "Please wait for the current response to finish.",

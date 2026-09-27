@@ -28,6 +28,12 @@ export default function MetricsPage() {
   const isAdmin = useAnalyticsIsAdmin();
   const catalogue = useAnalyticsMetrics();
   const adminList = useAdminMetrics(isAdmin);
+  const adminSection = isAdmin ? (
+    <MetricAdminSection
+      metrics={adminList.metrics}
+      isError={adminList.isError}
+    />
+  ) : null;
 
   useEffect(() => {
     document.title = `${m.title} - ${t.pages.appName}`;
@@ -50,15 +56,11 @@ export default function MetricsPage() {
         isError: catalogue.isError,
         count: catalogue.metrics.length,
       })}
-      emptyMessage={t.analytics.common.empty}
+      emptyMessage={isAdmin ? m.adminEmpty : m.empty}
+      emptySupplement={adminSection}
     >
       <MetricCatalogTable metrics={catalogue.metrics} />
-      {isAdmin && (
-        <MetricAdminSection
-          metrics={adminList.metrics}
-          isError={adminList.isError}
-        />
-      )}
+      {adminSection}
     </AnalyticsPage>
   );
 }

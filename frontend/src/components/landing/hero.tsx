@@ -1,15 +1,12 @@
 "use client";
 
 import { ChevronRightIcon } from "lucide-react";
-import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useRef } from "react";
 
 import { Button } from "@/components/ui/button";
-import { useRenderActivity } from "@/core/dom/render-activity";
 import { cn } from "@/lib/utils";
 
-const Galaxy = dynamic(() => import("@/components/ui/galaxy"), { ssr: false });
+import { PixelBlackHole } from "./pixel-black-hole";
 
 export type HeroProps = {
   className?: string;
@@ -32,9 +29,6 @@ export function Hero({
   description,
   enterLabel,
 }: HeroProps) {
-  const galaxyContainerRef = useRef<HTMLDivElement>(null);
-  const renderGalaxy = useRenderActivity(galaxyContainerRef);
-
   return (
     <div
       className={cn(
@@ -42,20 +36,16 @@ export function Hero({
         className,
       )}
     >
-      <div
-        ref={galaxyContainerRef}
-        className="absolute inset-0 z-0 bg-black/40"
-      >
-        {renderGalaxy && (
-          <Galaxy
-            mouseRepulsion={false}
-            starSpeed={0.2}
-            density={0.6}
-            glowIntensity={0.35}
-            twinkleIntensity={0.3}
-            speed={0.5}
-          />
-        )}
+      <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden bg-black/40">
+        <PixelBlackHole />
+        <div
+          className="absolute inset-0"
+          aria-hidden="true"
+          style={{
+            background:
+              "radial-gradient(ellipse at center, rgba(8, 8, 10, 0.66) 0%, rgba(8, 8, 10, 0.15) 42%, rgba(8, 8, 10, 0.04) 76%), linear-gradient(to bottom, rgba(5, 5, 7, 0.12), transparent 38%, rgba(5, 5, 7, 0.5))",
+          }}
+        />
       </div>
       <div className="container-md relative z-10 mx-auto flex min-h-[92svh] flex-col items-center justify-center px-4 pt-20 pb-14">
         <h1 className="text-center text-5xl leading-tight font-bold break-words md:text-6xl">
@@ -64,7 +54,10 @@ export function Hero({
         <p className="mt-6 max-w-4xl text-center text-2xl leading-snug font-semibold text-balance md:text-4xl">
           {headline}
         </p>
-        <p className="text-muted-foreground mt-6 max-w-3xl text-center text-base leading-7 sm:text-lg">
+        <p
+          className="mt-6 max-w-3xl text-center text-base leading-7 text-zinc-100 sm:text-lg"
+          style={{ textShadow: "0 1px 8px rgba(0, 0, 0, .95)" }}
+        >
           {description}
         </p>
         <Link href="/workspace">

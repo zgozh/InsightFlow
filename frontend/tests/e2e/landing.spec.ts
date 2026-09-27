@@ -6,9 +6,12 @@ test.describe("Landing page", () => {
   test("renders the InsightFlow header and hero section", async ({ page }) => {
     await page.goto("/");
 
-    await expect(
-      page.locator("header").first().getByText("InsightFlow", { exact: true }),
-    ).toBeVisible();
+    const brand = page
+      .locator("header")
+      .first()
+      .getByRole("link", { name: "InsightFlow", exact: true });
+    await expect(brand).toBeVisible();
+    await expect(brand).toHaveAttribute("href", "/");
     await expect(page.locator("h1")).toHaveCount(1);
     await expect(page.locator("h1")).toContainText("InsightFlow");
 
@@ -18,11 +21,111 @@ test.describe("Landing page", () => {
     ).toBeVisible();
   });
 
+  test("uses the product repository as an external desktop and mobile entry", async ({
+    page,
+  }) => {
+    await page.goto("/");
+
+    const desktopWorkspace = page
+      .locator("header nav")
+      .getByRole("link", { name: "Workspace", exact: true });
+    await expect(desktopWorkspace).toHaveAttribute(
+      "href",
+      "https://github.com/zgozh/InsightFlow",
+    );
+    await expect(desktopWorkspace).toHaveAttribute("target", "_blank");
+    await expect(desktopWorkspace).toHaveAttribute(
+      "rel",
+      "noopener noreferrer",
+    );
+
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.getByRole("button", { name: "Open menu" }).click();
+    const mobileWorkspace = page.getByRole("link", {
+      name: "Workspace",
+      exact: true,
+    });
+    await expect(mobileWorkspace).toBeVisible();
+    await expect(mobileWorkspace).toHaveAttribute(
+      "href",
+      "https://github.com/zgozh/InsightFlow",
+    );
+    await expect(mobileWorkspace).toHaveAttribute("target", "_blank");
+    await expect(mobileWorkspace).toHaveAttribute("rel", "noopener noreferrer");
+  });
+
+  test("loads the red-orange favicon and keeps static art without canvas", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
+        configurable: true,
+        value: () => null,
+      });
+    });
+    await page.goto("/");
+
+    await expect(
+      page.locator('head link[rel~="icon"][href="/favicon.svg"]'),
+    ).toHaveCount(1);
+    await expect(
+      page.locator('head link[rel~="icon"][href*="favicon.ico"]'),
+    ).toHaveCount(0);
+    const icon = await page.evaluate(async () => {
+      const link = document.querySelector<HTMLLinkElement>(
+        'head link[rel~="icon"][href="/favicon.svg"]',
+      );
+      if (!link) throw new Error("SVG favicon link is missing");
+      const response = await fetch(link.href, { cache: "no-store" });
+      const image = new Image();
+      image.src = link.href;
+      await image.decode();
+      return {
+        status: response.status,
+        contentType: response.headers.get("content-type"),
+        width: image.naturalWidth,
+        height: image.naturalHeight,
+      };
+    });
+    expect(icon.status).toBe(200);
+    expect(icon.contentType).toContain("image/svg+xml");
+    expect(icon.width).toBe(32);
+    expect(icon.height).toBe(32);
+    await expect(page.getByTestId("black-hole-static")).toBeVisible();
+    await expect(page.getByTestId("black-hole-motion")).toHaveAttribute(
+      "data-motion-active",
+      "false",
+    );
+  });
+
+  test("pauses hero particles for reduced motion and when scrolled offscreen", async ({
+    page,
+  }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto("/");
+
+    await expect(page.getByTestId("black-hole-static")).toBeVisible();
+    await expect(page.getByTestId("black-hole-motion")).toHaveAttribute(
+      "data-motion-active",
+      "false",
+    );
+
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await expect(page.getByTestId("black-hole-motion")).toHaveAttribute(
+      "data-motion-active",
+      "true",
+    );
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await expect(page.getByTestId("black-hole-motion")).toHaveAttribute(
+      "data-motion-active",
+      "false",
+    );
+  });
+
   test("keeps upstream CTAs out of the product UI", async ({ page }) => {
     await page.goto("/");
 
-    // Phase 4 只替换用户可见品牌与默认入口：上游归属仍保留在 MIT LICENSE、README 与设置里的
-    // 「关于」，但产品 UI 不再出现官网 / 仓库 / 问题反馈 / 支持邮箱 / star 导流。
+    // 产品仓库入口是上方明确配置的 GitHub 链接；此处只禁止上游官网、上游仓库等旧导流。
     for (const banned of [
       "deerflow.tech",
       "support@deerflow.tech",

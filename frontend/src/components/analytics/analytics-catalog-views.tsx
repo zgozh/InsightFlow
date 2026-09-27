@@ -251,6 +251,7 @@ export interface AnalyticsPageProps {
   onRetry?: () => void;
   isEmpty?: boolean;
   emptyMessage?: string;
+  emptySupplement?: ReactNode;
   children?: ReactNode;
 }
 
@@ -270,6 +271,7 @@ export function AnalyticsPage({
   onRetry,
   isEmpty = false,
   emptyMessage,
+  emptySupplement,
   children,
 }: AnalyticsPageProps) {
   const { t } = useI18n();
@@ -306,9 +308,12 @@ export function AnalyticsPage({
     );
   } else if (isEmpty) {
     body = (
-      <p role="status" className="text-muted-foreground text-sm">
-        {emptyMessage ?? t.analytics.common.empty}
-      </p>
+      <>
+        <p role="status" className="text-muted-foreground text-sm">
+          {emptyMessage ?? t.analytics.common.empty}
+        </p>
+        {emptySupplement}
+      </>
     );
   } else {
     body = children;

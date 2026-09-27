@@ -51,6 +51,8 @@ Size is governed by budget, not by a single file-count target. The upstream base
 
 6F3F11 在固定验收栈完成一条真实 Chromium 普通聊天路径：通过 NGINX 登录，UI 选择 `deepseek-flash` 后单次发送，run `success`，1 次 LLM 响应、0 工具调用；messages 2 条、events 5 条，刷新后同一会话的用户消息与 AI 回复仍可见，run messages/events 读回计数一致。固定栈未重建。本轮按 GPT 裁决保留真实 UI SDK 当前已有的 `recursion_limit=1000`（非 helper 新注入的低上限）；这是普通聊天路径的单次证据，不外推到 Analytics/Reviewer 或 AS-09 完整验收。
 
+6F3F12 为首页新增原创红橙像素黑洞 SVG 轮廓及轻量 Canvas 粒子增强；静态画面服务端可见，动态层复用可见性/页面状态/`prefers-reduced-motion` 观察器，DPR 上限 1.5、移动端粒子减至 7。新增显式 SVG favicon 元数据，Chromium 实际取回并解码 32×32 图标，未生成 `favicon.ico` 图标链接。首页品牌仍回 `/`，桌面/移动 Workspace 链接改指向 GitHub 产品仓库并带安全新标签属性，主 CTA 仍进入 `/workspace`。聊天双语欢迎示例新增“创建一个小惊喜 / Make a little surprise”，验证仅填可编辑输入且不自动发送。Analytics 数据源、指标、报告、历史空态改为中英说明；管理员空目录继续呈现既有创建控制，普通用户文案指出管理员配置/授权前提，报告/审计明确数据出现时机。前端 Analytics 页面 DOM 定点 27/27，桌面/375px landing 与 chat Playwright 41 项通过，修正 favicon 固有尺寸断言后的定点浏览器用例 1/1，管理员 Analytics 空态浏览器用例 1/1；TypeScript、受影响文件 ESLint、Prettier 检查通过。Playwright auth-disabled fixture 固定管理员身份，因此普通用户空态由 DOM 单测覆盖、未做普通用户浏览器模拟。没有启动 Docker、发模型请求或验收真实分析链；本地 Git `origin` 为 `git@github.com:zgozh/InsightFlow.git`，本轮未 push。
+
 ## Delivery and rollback
 
 - Phase 5B uses one independent commit per approved batch (B1–B5), with B5 depending on the retained state from earlier batches.

@@ -32,6 +32,13 @@ export default function DatasourcesPage() {
   const catalogue = useAnalyticsDatasources();
   // enabled=false 时普通用户不会发起管理员查询，也就不会顺带拿到管理员字段。
   const adminList = useAdminDatasources(isAdmin);
+  const adminSection = isAdmin ? (
+    <DatasourceAdminSection
+      datasources={adminList.datasources}
+      isLoading={adminList.isLoading}
+      isError={adminList.isError}
+    />
+  ) : null;
 
   useEffect(() => {
     document.title = `${d.title} - ${t.pages.appName}`;
@@ -54,16 +61,11 @@ export default function DatasourcesPage() {
         isError: catalogue.isError,
         count: catalogue.datasources.length,
       })}
-      emptyMessage={t.analytics.common.empty}
+      emptyMessage={isAdmin ? d.adminEmpty : d.empty}
+      emptySupplement={adminSection}
     >
       <DatasourceCatalogTable datasources={catalogue.datasources} />
-      {isAdmin && (
-        <DatasourceAdminSection
-          datasources={adminList.datasources}
-          isLoading={adminList.isLoading}
-          isError={adminList.isError}
-        />
-      )}
+      {adminSection}
     </AnalyticsPage>
   );
 }

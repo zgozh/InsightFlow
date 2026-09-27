@@ -212,6 +212,41 @@ async function mockAnalyticsAPI(page: Page) {
   );
 }
 
+async function mockEmptyAnalyticsCatalogs(page: Page) {
+  for (const [path, body] of [
+    ["datasources", { datasources: [] }],
+    ["metrics", { metrics: [] }],
+    [
+      "reports",
+      {
+        reports: [],
+        has_more: false,
+        next_before_created_at: null,
+        next_before_id: null,
+      },
+    ],
+    [
+      "audits",
+      {
+        audits: [],
+        has_more: false,
+        next_before_started_at: null,
+        next_before_id: null,
+      },
+    ],
+    ["admin/datasources", { datasources: [] }],
+    ["admin/metrics", { metrics: [] }],
+  ] as const) {
+    await page.route(`**/api/analytics/${path}**`, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(body),
+      }),
+    );
+  }
+}
+
 async function openWorkspacePage(page: Page, path: string) {
   mockLangGraphAPI(page, {
     threads: [
@@ -340,6 +375,36 @@ test.describe("InsightFlow workspace", () => {
     expect(text).not.toContain("SELECT");
     expect(text).not.toContain("secret_ref");
     expect(text).not.toContain("plan_id");
+  });
+
+  test("administrator empty catalogs explain configuration and expose existing controls", async ({
+    page,
+  }) => {
+    mockLangGraphAPI(page);
+    await mockAnalyticsAPI(page);
+    await mockEmptyAnalyticsCatalogs(page);
+
+    await page.goto("/workspace/datasources");
+    await expect(page.getByRole("status")).toContainText(
+      "No data sources are registered yet",
+    );
+    await expect(page.getByTestId("datasource-create-form")).toBeVisible();
+
+    await page.goto("/workspace/metrics");
+    await expect(page.getByRole("status")).toContainText(
+      "No metrics are defined yet",
+    );
+    await expect(page.getByTestId("metric-create-form")).toBeVisible();
+
+    await page.goto("/workspace/history");
+    await expect(page.getByRole("status")).toContainText(
+      "after a governed query runs",
+    );
+
+    await page.goto("/workspace/reports");
+    await expect(page.getByRole("status")).toContainText(
+      "after an analysis writes and publishes one",
+    );
   });
 
   for (const path of [

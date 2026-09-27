@@ -46,7 +46,7 @@ export default function HistoryPage() {
       isEmpty={
         !history.isLoading && !history.isError && history.audits.length === 0
       }
-      emptyMessage={t.analytics.common.empty}
+      emptyMessage={h.empty}
     >
       <AuditHistoryList
         audits={history.audits}

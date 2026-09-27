@@ -66,6 +66,8 @@ export interface AnalyticsTranslations {
   datasource: {
     title: string;
     description: string;
+    empty: string;
+    adminEmpty: string;
     name: string;
     engine: string;
     status: string;
@@ -120,6 +122,8 @@ export interface AnalyticsTranslations {
   metric: {
     title: string;
     description: string;
+    empty: string;
+    adminEmpty: string;
     key: string;
     name: string;
     expression: string;
@@ -140,6 +144,7 @@ export interface AnalyticsTranslations {
   history: {
     title: string;
     description: string;
+    empty: string;
     phase: string;
     status: string;
     code: string;

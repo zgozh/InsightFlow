@@ -69,7 +69,11 @@ export const analyticsZhCN: {
     datasource: {
       title: "数据源",
       description:
-        "登记受治理的分析数据源。凭据只保留密钥引用，真实密钥由服务端解析。",
+        "查看可用于受治理分析的数据源。管理员负责登记数据源、数据模型和访问策略；真实凭据只由服务端解析。",
+      empty:
+        "当前账号还没有可用的数据源。请联系管理员登记数据源并授予访问权限。",
+      adminEmpty:
+        "还没有登记数据源。请先新建数据源，再配置数据模型和访问策略。",
       name: "名称",
       engine: "引擎",
       status: "状态",
@@ -125,7 +129,10 @@ export const analyticsZhCN: {
     },
     metric: {
       title: "指标",
-      description: "集中维护指标口径，避免同一名称在不同报告里被重复定义。",
+      description:
+        "查看分析使用的指标定义。管理员创建并启用指标，确保报告中的口径一致。",
+      empty: "当前账号还没有可用指标。请联系管理员定义并启用指标。",
+      adminEmpty: "还没有指标定义。新建并启用指标后，分析才可引用。",
       key: "指标键",
       name: "指标名称",
       expression: "表达式",
@@ -148,6 +155,7 @@ export const analyticsZhCN: {
       title: "审计历史",
       description:
         "每一次受控查询的执行记录。管理员可以看到完整字段，其他角色只看到与本人相关的部分。",
+      empty: "暂无审计记录；受控查询执行后会在此留下记录。",
       phase: "阶段",
       status: "状态",
       code: "代码",
@@ -173,7 +181,7 @@ export const analyticsZhCN: {
       createdAt: "创建时间",
       openAnalysis: "打开对应分析",
       downloadReport: "下载报告",
-      empty: "还没有发布的报告。",
+      empty: "尚无已发布报告；分析写入并发布报告后会显示在此处。",
     },
     trace: {
       title: "工具事件轨迹",

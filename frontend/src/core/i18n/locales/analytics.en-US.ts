@@ -68,7 +68,11 @@ export const analyticsEnUS: {
     datasource: {
       title: "Data sources",
       description:
-        "Register the datasources available for governed analysis. Only a secret reference is stored; the server resolves the real credential.",
+        "Review the data sources available for governed analysis. Administrators register sources, schemas, and access policies; real credentials are resolved only on the server.",
+      empty:
+        "No data sources are currently available to your account. Ask an administrator to register a source and grant access.",
+      adminEmpty:
+        "No data sources are registered yet. Create a source, then configure its schema and access policy.",
       name: "Name",
       engine: "Engine",
       status: "Status",
@@ -128,7 +132,11 @@ export const analyticsEnUS: {
     metric: {
       title: "Metrics",
       description:
-        "Keep metric definitions in one place so the same name is not redefined differently across reports.",
+        "Review metric definitions used in analysis. Administrators create and activate metrics so reports use consistent definitions.",
+      empty:
+        "No active metrics are available to your account. Ask an administrator to define and activate one.",
+      adminEmpty:
+        "No metrics are defined yet. Create a metric and activate it before analyses can use it.",
       key: "Metric key",
       name: "Metric name",
       expression: "Expression",
@@ -153,6 +161,8 @@ export const analyticsEnUS: {
       title: "Audit history",
       description:
         "An execution record for every governed query. Administrators see the full row; other roles see only their own entries.",
+      empty:
+        "No audit entries yet. A record appears after a governed query runs.",
       phase: "Phase",
       status: "Status",
       code: "Code",
@@ -179,7 +189,8 @@ export const analyticsEnUS: {
       createdAt: "Created",
       openAnalysis: "Open the analysis",
       downloadReport: "Download report",
-      empty: "No reports published yet.",
+      empty:
+        "No reports published yet. Reports appear here after an analysis writes and publishes one.",
     },
     trace: {
       title: "Tool event trace",

@@ -3,6 +3,7 @@ import {
   ListChecksIcon,
   MicroscopeIcon,
   PenLineIcon,
+  SparklesIcon,
 } from "lucide-react";
 
 import { analyticsZhCN } from "./analytics.zh-CN";
@@ -300,6 +301,12 @@ export const zhCN: Translations = {
         suggestion: "数据质量",
         prompt: "检查已连接数据中的缺失值和异常变化，说明判断依据与分析限制。",
         icon: ListChecksIcon,
+      },
+      {
+        suggestion: "创建一个小惊喜",
+        prompt:
+          "围绕[主题]创建一个可在沙箱中预览的独立交互式 HTML 小页面，加入一个简单点击互动和简短说明；不要依赖外部资源。",
+        icon: SparklesIcon,
       },
     ],
     pleaseWaitStreaming: "请等待当前响应完成。",

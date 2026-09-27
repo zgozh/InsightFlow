@@ -14,7 +14,7 @@ import type {
   MetricView,
   QueryAuditView,
 } from "@/core/analytics/types";
-import { DEFAULT_LOCALE } from "@/core/i18n";
+import { DEFAULT_LOCALE, type Locale } from "@/core/i18n";
 import { I18nProvider } from "@/core/i18n/context";
 
 /**
@@ -123,8 +123,8 @@ rs.mock("@/core/analytics/hooks", () => ({
   useRetireMetric: () => ({ mutate: rs.fn(), isPending: false, error: null }),
 }));
 
-function wrap(node: ReactNode) {
-  return <I18nProvider initialLocale={DEFAULT_LOCALE}>{node}</I18nProvider>;
+function wrap(node: ReactNode, locale: Locale = DEFAULT_LOCALE) {
+  return <I18nProvider initialLocale={locale}>{node}</I18nProvider>;
 }
 
 const DIGEST = "c".repeat(64);
@@ -254,6 +254,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  document.cookie = "locale=; max-age=0; path=/";
   rs.restoreAllMocks();
 });
 
@@ -273,9 +274,28 @@ describe("/workspace/datasources", () => {
     expect(mocks.catalogueDatasources.refetch).toHaveBeenCalledTimes(1);
   });
 
-  it("空目录显示空状态", () => {
+  it("普通用户的空目录说明需要管理员登记并授权", () => {
     render(wrap(<DatasourcesPage />));
-    expect(screen.getByRole("status").textContent).toBe("Nothing here yet");
+    expect(screen.getByRole("status").textContent).toBe(
+      "No data sources are currently available to your account. Ask an administrator to register a source and grant access.",
+    );
+  });
+
+  it("管理员的空目录指向数据源、模型与策略配置", () => {
+    mocks.isAdmin = true;
+    render(wrap(<DatasourcesPage />));
+    expect(screen.getByRole("status").textContent).toBe(
+      "No data sources are registered yet. Create a source, then configure its schema and access policy.",
+    );
+    expect(screen.getByTestId("datasource-create-form")).toBeTruthy();
+  });
+
+  it("中文普通用户空目录也说明授权前提", () => {
+    document.cookie = "locale=zh-CN; path=/; SameSite=Lax";
+    render(wrap(<DatasourcesPage />, "zh-CN"));
+    expect(screen.getByRole("status").textContent).toBe(
+      "当前账号还没有可用的数据源。请联系管理员登记数据源并授予访问权限。",
+    );
   });
 
   it("服务端 403 渲染禁止态，客户端身份不是授权结论", () => {
@@ -329,9 +349,20 @@ describe("/workspace/metrics", () => {
     expect(mocks.catalogueMetrics.refetch).toHaveBeenCalledTimes(1);
   });
 
-  it("空目录显示空状态", () => {
+  it("普通用户的空指标目录说明管理员配置前提", () => {
     render(wrap(<MetricsPage />));
-    expect(screen.getByRole("status").textContent).toBe("Nothing here yet");
+    expect(screen.getByRole("status").textContent).toBe(
+      "No active metrics are available to your account. Ask an administrator to define and activate one.",
+    );
+  });
+
+  it("管理员的空指标目录说明新建与启用", () => {
+    mocks.isAdmin = true;
+    render(wrap(<MetricsPage />));
+    expect(screen.getByRole("status").textContent).toBe(
+      "No metrics are defined yet. Create a metric and activate it before analyses can use it.",
+    );
+    expect(screen.getByTestId("metric-create-form")).toBeTruthy();
   });
 
   it("expression 作为纯文本展示，不执行也不包装成 SQL", () => {
@@ -381,9 +412,11 @@ describe("/workspace/history", () => {
     expect(mocks.auditHistory.refresh).toHaveBeenCalledTimes(1);
   });
 
-  it("空历史显示空状态", () => {
+  it("空历史说明受控查询后才会生成审计记录", () => {
     render(wrap(<HistoryPage />));
-    expect(screen.getByRole("status").textContent).toBe("Nothing here yet");
+    expect(screen.getByRole("status").textContent).toBe(
+      "No audit entries yet. A record appears after a governed query runs.",
+    );
   });
 
   it("只渲染安全字段，绝不出现 SQL、凭据或令牌", () => {
@@ -454,7 +487,7 @@ describe("/workspace/reports", () => {
   it("空状态使用报告专属文案", () => {
     render(wrap(<ReportsPage />));
     expect(screen.getByRole("status").textContent).toBe(
-      "No reports published yet.",
+      "No reports published yet. Reports appear here after an analysis writes and publishes one.",
     );
   });
 

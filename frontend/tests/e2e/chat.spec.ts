@@ -127,8 +127,9 @@ test.describe("Chat workspace", () => {
       "Web research",
       "Evidence brief",
       "Data quality",
+      "Make a little surprise",
     ];
-    await expect(examples.getByRole("button")).toHaveCount(4);
+    await expect(examples.getByRole("button")).toHaveCount(5);
     for (const label of englishExamples) {
       await expect(examples.getByRole("button", { name: label })).toBeVisible();
     }
@@ -141,6 +142,12 @@ test.describe("Chat workspace", () => {
     await expect(textarea).toHaveValue(
       "Analyze the connected sales data by month. Compare total revenue and ask me for any missing data before reaching a conclusion.",
     );
+    await examples
+      .getByRole("button", { name: "Make a little surprise" })
+      .click();
+    await expect(textarea).toHaveValue(
+      "Create a small, self-contained interactive HTML page about [theme] that can be previewed in the sandbox. Add one simple click interaction and brief instructions; avoid external dependencies.",
+    );
     expect(runRequests).toBe(0);
 
     await page.evaluate(() => {
@@ -151,7 +158,13 @@ test.describe("Chat workspace", () => {
     const localizedTextarea = page.getByPlaceholder("今天我能为你做些什么？");
     await expect(localizedTextarea).toBeVisible({ timeout: 15_000 });
     const localizedExamples = page.locator('[data-slot="suggestions-list"]');
-    for (const label of ["经营分析", "网页研究", "证据摘要", "数据质量"]) {
+    for (const label of [
+      "经营分析",
+      "网页研究",
+      "证据摘要",
+      "数据质量",
+      "创建一个小惊喜",
+    ]) {
       await expect(
         localizedExamples.getByRole("button", { name: label }),
       ).toBeVisible();
@@ -159,6 +172,14 @@ test.describe("Chat workspace", () => {
     await localizedExamples.getByRole("button", { name: "网页研究" }).click();
     await expect(localizedTextarea).toHaveValue(
       "研究[主题]的近期可靠来源，比较主要发现并附上来源链接。",
+    );
+    await localizedExamples
+      .getByRole("button", {
+        name: "创建一个小惊喜",
+      })
+      .click();
+    await expect(localizedTextarea).toHaveValue(
+      "围绕[主题]创建一个可在沙箱中预览的独立交互式 HTML 小页面，加入一个简单点击互动和简短说明；不要依赖外部资源。",
     );
     expect(runRequests).toBe(0);
   });
@@ -174,7 +195,7 @@ test.describe("Chat workspace", () => {
     await expect(textarea).toBeVisible({ timeout: 15_000 });
     const examples = page.locator('[data-slot="suggestions-list"]');
     const buttons = examples.getByRole("button");
-    await expect(buttons).toHaveCount(4);
+    await expect(buttons).toHaveCount(5);
 
     const measurements = await buttons.evaluateAll((elements) =>
       elements.map((element) => {

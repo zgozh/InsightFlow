@@ -16,6 +16,7 @@ import {
 export type MobileNavLink = {
   href: string;
   label: string;
+  external?: boolean;
 };
 
 export function MobileNav({
@@ -38,16 +39,29 @@ export function MobileNav({
           <SheetTitle className="font-serif text-xl">{title}</SheetTitle>
         </SheetHeader>
         <nav className="flex flex-col gap-1 px-4 text-base font-medium">
-          {links.map((link) => (
-            <Link
-              key={link.href}
-              href={link.href}
-              onClick={() => setOpen(false)}
-              className="text-secondary-foreground hover:text-foreground rounded-md py-2 transition-colors"
-            >
-              {link.label}
-            </Link>
-          ))}
+          {links.map((link) =>
+            link.external ? (
+              <a
+                key={link.href}
+                href={link.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setOpen(false)}
+                className="text-secondary-foreground hover:text-foreground rounded-md py-2 transition-colors"
+              >
+                {link.label}
+              </a>
+            ) : (
+              <Link
+                key={link.href}
+                href={link.href}
+                onClick={() => setOpen(false)}
+                className="text-secondary-foreground hover:text-foreground rounded-md py-2 transition-colors"
+              >
+                {link.label}
+              </Link>
+            ),
+          )}
         </nav>
       </SheetContent>
     </Sheet>
