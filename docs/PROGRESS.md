@@ -49,6 +49,8 @@ Size is governed by budget, not by a single file-count target. The upstream base
 
 6F3F9 将 `run_events.backend` 默认改为共享应用数据库，并在固定验收配置中显式启用；配置/存储定点测试 5 passed，Ruff check 与 format 检查通过。一次 run 在 Gateway 尚未重载启动配置时运行，仍使用旧 memory store，重启后旧 feed 丢失且不可补回；不把它算作持久化证据。配置生效后的普通 synthetic chat run 状态为 `error`，但同一 owner 的 messages（2 条，seq 2..3）与 events（5 条，seq 1..5）在单独 Gateway 重启前后保持一致，SQLite 同 run event 计数为 5。验证只证明失败 run 的 SQLite 事件持久性；模型成功与 AS-09 完整 SSE/无思维链验收仍未完成。固定项目 5 容器、3 个命名卷保留。
 
+6F3F11 在固定验收栈完成一条真实 Chromium 普通聊天路径：通过 NGINX 登录，UI 选择 `deepseek-flash` 后单次发送，run `success`，1 次 LLM 响应、0 工具调用；messages 2 条、events 5 条，刷新后同一会话的用户消息与 AI 回复仍可见，run messages/events 读回计数一致。固定栈未重建。本轮按 GPT 裁决保留真实 UI SDK 当前已有的 `recursion_limit=1000`（非 helper 新注入的低上限）；这是普通聊天路径的单次证据，不外推到 Analytics/Reviewer 或 AS-09 完整验收。
+
 ## Delivery and rollback
 
 - Phase 5B uses one independent commit per approved batch (B1–B5), with B5 depending on the retained state from earlier batches.
