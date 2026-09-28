@@ -99,6 +99,7 @@ export const enUS: Translations = {
   // Home
   home: {
     repository: "GitHub repository",
+    openMenu: "Open menu",
   },
 
   // Welcome

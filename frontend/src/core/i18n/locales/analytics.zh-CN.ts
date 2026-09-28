@@ -25,6 +25,7 @@ export const analyticsZhCN: {
     landingWorkflowBody:
       "提出问题后，系统先规划取数路径，再探查数据目录，随后提交受控查询。中间结果可以委派给子任务并行处理，产物与报告在发布时绑定证据编号。全流程以结构化事件记录，不展示也不需要模型的思维过程。",
     aboutTitle: "关于 InsightFlow",
+    aboutSlogan: "源于开源，回馈开源。",
     aboutDerivation:
       "InsightFlow 是 DeerFlow v2.1.0-rc0 的深度重构派生版本：保留上游的 MIT 许可与版权归属，在此基础上重建为受治理的企业数据分析产品。上游项目由 ByteDance 及 DeerFlow 社区维护。",
     aboutLicense:

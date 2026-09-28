@@ -21,16 +21,18 @@ export type MobileNavLink = {
 
 export function MobileNav({
   links,
+  menuLabel,
   title,
 }: {
   links: MobileNavLink[];
+  menuLabel: string;
   title: string;
 }) {
   const [open, setOpen] = useState(false);
   return (
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger asChild className="sm:hidden">
-        <Button variant="ghost" size="icon" aria-label="Open menu">
+        <Button variant="ghost" size="icon" aria-label={menuLabel}>
           <MenuIcon className="size-5" />
         </Button>
       </SheetTrigger>

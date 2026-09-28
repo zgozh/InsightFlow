@@ -46,6 +46,7 @@ export async function Header({ className, homeURL, locale }: HeaderProps) {
         </a>
       </nav>
       <MobileNav
+        menuLabel={t.home.openMenu}
         title={t.branding.productName}
         links={[
           {

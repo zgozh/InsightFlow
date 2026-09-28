@@ -23,6 +23,7 @@ export interface BrandingTranslations {
   landingWorkflowTitle: string;
   landingWorkflowBody: string;
   aboutTitle: string;
+  aboutSlogan: string;
   /** 上游派生说明。必须保留，不得删除。 */
   aboutDerivation: string;
   aboutLicense: string;

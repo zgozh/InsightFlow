@@ -59,6 +59,8 @@ Size is governed by budget, not by a single file-count target. The upstream base
 
 6F3F14 从原容器恢复固定验收栈，登录与小惊喜可编辑预填均通过；精确 `deepseek-flash` 在 UI 中选中。只点击提交一次，但临时夹具未观察到 `/runs/stream`，有限 Nginx 访问日志也无匹配，故 UI 提交是否到达 Gateway、是否形成 run 均未证实；没有真实 HTML artifact 或预览证据，不重试、不宣称通过。完整恢复命令、状态、截图与下一步建议见[验收证据](acceptance/phase-06f3f14-real-surprise-artifact-trial.md)。
 
+6F3F15 将首页展示固定为页级 `zh-CN`，显式标记首页容器语言，并仅在首页覆写搜索/分享描述为现有中文 tagline；全站 `DEFAULT_LOCALE`、根 `html lang` 与工作台语言解析不变。Footer 改用传入的品牌词条，中英 slogan 与移动菜单无障碍名称均保留双语。首页 Playwright 10/10，`pnpm typecheck`、受影响文件 ESLint 与 Prettier 通过；固定验收栈 Nginx 上首页定点 Playwright 2/2，将截图改为完整页后桌面/移动布局用例复跑 1/1，1280×720、375×812 黑洞与无横向溢出断言通过，完整页截图见 `frontend/test-results/phase-06f3f15-{desktop-1280x720,mobile-375x812}.png`。固定项目仅替换 Frontend：新容器 `99cbc3a9301fa501bafff71a75959eb932ad785eca2de6aa5496e77f77d0f684`、镜像 `sha256:7ec6ef1502830d6fd61a620a1a95af9c7b65d112a9782c9a6d7772a39d3f3426`；原镜像 `sha256:2802c7b1be7f1fdd7aba55c703a9441441b16608aee8f4dab53db40f2d5edbfb` 留存为 `insightflow-acceptance-local-frontend:rollback-6f3f15`。Gateway/Nginx/PostgreSQL/Redis 容器与三个命名卷未变，Nginx `/` 和 `/health` 均 HTTP 200；未发模型请求。工作台语言切换未单独重跑，本切片没有修改其解析链路。
+
 ## Delivery and rollback
 
 - Phase 5B uses one independent commit per approved batch (B1–B5), with B5 depending on the retained state from earlier batches.

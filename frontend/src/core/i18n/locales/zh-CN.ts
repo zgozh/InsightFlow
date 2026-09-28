@@ -95,6 +95,7 @@ export const zhCN: Translations = {
   // Home
   home: {
     repository: "GitHub 仓库",
+    openMenu: "打开菜单",
   },
 
   // Welcome

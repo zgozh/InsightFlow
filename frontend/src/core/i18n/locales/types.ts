@@ -85,6 +85,7 @@ export interface Translations {
 
   home: {
     repository: string;
+    openMenu: string;
   };
 
   // Welcome

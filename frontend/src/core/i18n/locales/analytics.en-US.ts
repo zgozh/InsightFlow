@@ -24,6 +24,7 @@ export const analyticsEnUS: {
     landingWorkflowBody:
       "You ask a question; the system plans its retrieval path, inspects the data catalog, then submits a governed query. Intermediate results can be delegated to parallel subtasks, and artifacts and reports bind an evidence identifier when they are published. The whole run is recorded as structured events — the model's thought process is neither shown nor required.",
     aboutTitle: "About InsightFlow",
+    aboutSlogan: "Originated from Open Source, give back to Open Source.",
     aboutDerivation:
       "InsightFlow is a deep refactor derived from DeerFlow v2.1.0-rc0. It keeps the upstream MIT licence and copyright attribution and rebuilds the product around governed enterprise analytics. The upstream project is maintained by ByteDance and the DeerFlow community.",
     aboutLicense:

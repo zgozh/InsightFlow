@@ -10,13 +10,27 @@ import {
   ShieldCheckIcon,
   TableIcon,
 } from "lucide-react";
+import { type Metadata } from "next";
 
 import { Footer } from "@/components/landing/footer";
 import { Header } from "@/components/landing/header";
 import { Hero } from "@/components/landing/hero";
 import { Section } from "@/components/landing/section";
-import { DEFAULT_LOCALE } from "@/core/i18n/locale";
+import { type Locale } from "@/core/i18n/locale";
+import { analyticsZhCN } from "@/core/i18n/locales/analytics.zh-CN";
 import { getI18n } from "@/core/i18n/server";
+
+const LANDING_LOCALE: Locale = "zh-CN";
+const { branding } = analyticsZhCN;
+
+export const metadata: Metadata = {
+  description: branding.tagline,
+  openGraph: {
+    title: branding.productName,
+    description: branding.tagline,
+    siteName: branding.productName,
+  },
+};
 
 /**
  * 落地页保留四件事：价值主张、治理能力、工作流、进入工作台。
@@ -25,11 +39,11 @@ import { getI18n } from "@/core/i18n/server";
  * 以及分析轨迹的六个阶段），而不是另写一套营销文案：落地页描述的必须是产品真的做的事，
  * 两处文案一旦分开维护就会立刻漂移。展示的是结构化事件投影，不是模型的思维过程。
  *
- * 词条在服务端解析：客户端组件（Hero）只能接收纯字符串，遇到函数的词条无法跨 RSC 边界。
- * 这里显式传入 DEFAULT_LOCALE，避免读 cookie 把首页从静态渲染拖成动态渲染。
+ * 词条在服务端按首页固定中文 locale 解析：客户端组件（Hero）只能接收纯字符串，
+ * 遇到函数的词条无法跨 RSC 边界。显式传入页级 locale，避免读取 cookie 改变首页语言或静态渲染。
  */
 export default async function LandingPage() {
-  const { t } = await getI18n(DEFAULT_LOCALE);
+  const { t } = await getI18n(LANDING_LOCALE);
   const governanceLayers = [
     { icon: DatabaseIcon, label: t.analytics.datasource.title },
     { icon: TableIcon, label: t.analytics.schema.title },
@@ -46,8 +60,11 @@ export default async function LandingPage() {
   ];
 
   return (
-    <div className="min-h-screen w-full overflow-x-clip bg-[#0a0a0a]">
-      <Header locale={DEFAULT_LOCALE} />
+    <div
+      lang={LANDING_LOCALE}
+      className="min-h-screen w-full overflow-x-clip bg-[#0a0a0a]"
+    >
+      <Header locale={LANDING_LOCALE} />
       <main className="flex w-full flex-col">
         <Hero
           productName={t.branding.productName}
@@ -97,7 +114,7 @@ export default async function LandingPage() {
           </ol>
         </Section>
       </main>
-      <Footer />
+      <Footer branding={t.branding} />
     </div>
   );
 }

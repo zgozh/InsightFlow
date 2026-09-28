@@ -3,9 +3,18 @@ import { expect, test } from "@playwright/test";
 import { mockLangGraphAPI } from "./utils/mock-api";
 
 test.describe("Landing page", () => {
-  test("renders the InsightFlow header and hero section", async ({ page }) => {
+  test("renders Chinese-first landing content without changing the locale cookie", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
     await page.goto("/");
+    await page
+      .context()
+      .addCookies([{ name: "locale", value: "en-US", url: page.url() }]);
+    await page.reload();
 
+    await expect(page.locator('[lang="zh-CN"]')).toBeVisible();
+    await expect(page.locator("html")).toHaveAttribute("lang", "en-US");
     const brand = page
       .locator("header")
       .first()
@@ -13,12 +22,65 @@ test.describe("Landing page", () => {
     await expect(brand).toBeVisible();
     await expect(brand).toHaveAttribute("href", "/");
     await expect(page.locator("h1")).toHaveCount(1);
-    await expect(page.locator("h1")).toContainText("InsightFlow");
-
-    // Hero 的唯一 CTA：进入工作台。
+    await expect(page.locator("h1")).toHaveText("InsightFlow");
     await expect(
-      page.getByRole("link", { name: /enter the workspace/i }),
+      page.getByText("让每一个数据结论都有据可查", { exact: true }),
     ).toBeVisible();
+    await expect(
+      page.getByText("InsightFlow 把自然语言分析落在受控 SQL 与语义授权之上", {
+        exact: false,
+      }),
+    ).toBeVisible();
+
+    await expect(
+      page.getByRole("link", { name: "进入工作台", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("治理先于自动化", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("数据源凭据只以密钥引用形式登记", { exact: false }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("从问题到可复核的结论", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("提出问题后，系统先规划取数路径", { exact: false }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("源于开源，回馈开源。", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("InsightFlow 是 DeerFlow v2.1.0-rc0 的深度重构派生版本", {
+        exact: false,
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("本项目依据 MIT 许可证分发", { exact: false }),
+    ).toBeVisible();
+    await expect(page.locator('meta[name="description"]')).toHaveAttribute(
+      "content",
+      "受治理的企业数据分析工作台",
+    );
+    await expect(
+      page.locator('meta[property="og:description"]'),
+    ).toHaveAttribute("content", "受治理的企业数据分析工作台");
+
+    await page.setViewportSize({ width: 375, height: 812 });
+    await expect(
+      page.getByText("让每一个数据结论都有据可查", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("InsightFlow 把自然语言分析落在受控 SQL 与语义授权之上", {
+        exact: false,
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "进入工作台", exact: true }),
+    ).toBeVisible();
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+      .toBeLessThanOrEqual(375);
   });
 
   test("uses the product repository as an external desktop and mobile entry", async ({
@@ -28,7 +90,7 @@ test.describe("Landing page", () => {
 
     const desktopRepository = page
       .locator("header nav")
-      .getByRole("link", { name: "GitHub repository", exact: true });
+      .getByRole("link", { name: "GitHub 仓库", exact: true });
     await expect(desktopRepository).toHaveAttribute(
       "href",
       "https://github.com/zgozh/InsightFlow",
@@ -40,9 +102,9 @@ test.describe("Landing page", () => {
     );
 
     await page.setViewportSize({ width: 375, height: 812 });
-    await page.getByRole("button", { name: "Open menu" }).click();
+    await page.getByRole("button", { name: "打开菜单" }).click();
     const mobileRepository = page.getByRole("link", {
-      name: "GitHub repository",
+      name: "GitHub 仓库",
       exact: true,
     });
     await expect(mobileRepository).toBeVisible();
@@ -77,7 +139,8 @@ test.describe("Landing page", () => {
       desktopArt.x,
     );
     await page.screenshot({
-      path: "test-results/phase-06f3f12-fix-01-desktop-1280x720.png",
+      path: "test-results/phase-06f3f15-desktop-1280x720.png",
+      fullPage: true,
     });
 
     await page.setViewportSize({ width: 375, height: 812 });
@@ -89,8 +152,10 @@ test.describe("Landing page", () => {
     expect(mobileCopy.y + mobileCopy.height + 8).toBeLessThanOrEqual(
       mobileArt.y,
     );
+    await expect(page.getByTestId("black-hole-static")).toBeVisible();
     await page.screenshot({
-      path: "test-results/phase-06f3f12-fix-01-mobile-375x812.png",
+      path: "test-results/phase-06f3f15-mobile-375x812.png",
+      fullPage: true,
     });
   });
 
@@ -196,7 +261,7 @@ test.describe("Landing page", () => {
 
     await page.goto("/");
 
-    await page.getByRole("link", { name: /enter the workspace/i }).click();
+    await page.getByRole("link", { name: "进入工作台", exact: true }).click();
 
     // `/workspace` 是既有的默认入口，会重定向到新建会话。
     await page.waitForURL("**/workspace/chats/new");
