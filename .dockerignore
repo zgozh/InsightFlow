@@ -1,4 +1,9 @@
 **/.env
+.env.*
+config.yaml
+extensions_config.json
+.reviews/
+.analytics-demo/
 Dockerfile
 .dockerignore
 .git

@@ -1615,8 +1615,9 @@ async def get_thread_history(
 ) -> list[HistoryEntry]:
     """Get materialized graph state history for a thread.
 
-    Only the latest (first) checkpoint carries the ``messages`` key to
-    avoid duplicating the complete conversation across every entry.
+    Only the latest (first) checkpoint carries current ``messages`` and
+    ``artifacts`` values to avoid duplicating the conversation and report
+    index across every entry.
     """
     checkpointer = get_checkpointer(request)
     try:
@@ -1648,6 +1649,10 @@ async def get_thread_history(
                 values["thread_data"] = thread_data
 
             if is_latest_checkpoint:
+                artifacts = materialized_values.get("artifacts")
+                if isinstance(artifacts, list):
+                    values["artifacts"] = artifacts
+
                 messages = materialized_values.get("messages")
                 if messages:
                     serialized_msgs = serialize_channel_values_for_api({"messages": messages}).get("messages", [])

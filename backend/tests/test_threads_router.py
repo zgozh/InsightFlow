@@ -1709,6 +1709,34 @@ def test_get_thread_history_returns_iso_for_legacy_checkpoint_metadata() -> None
         assert _ISO_TIMESTAMP_RE.match(entry["created_at"]), entry
 
 
+def test_get_thread_history_projects_artifacts_from_latest_checkpoint(monkeypatch) -> None:
+    app, _store, _checkpointer = _build_thread_app()
+    thread_id = "history-artifact-projection"
+    artifact_paths = ["/mnt/user-data/outputs/star-surprise.html"]
+    snapshot = SimpleNamespace(
+        values={"artifacts": artifact_paths},
+        config={"configurable": {"thread_id": thread_id, "checkpoint_id": "artifact-checkpoint"}},
+        parent_config=None,
+        metadata={},
+        next=(),
+        created_at="2026-09-28T00:00:00+00:00",
+    )
+    accessor = SimpleNamespace(ahistory=AsyncMock(return_value=[snapshot]))
+
+    async def build_accessor(_request, *, thread_id, checkpoint_id=None):
+        assert thread_id == "history-artifact-projection"
+        return accessor, {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
+
+    monkeypatch.setattr(threads, "build_thread_checkpoint_state_accessor", build_accessor)
+
+    with TestClient(app) as client:
+        response = client.post(f"/api/threads/{thread_id}/history", json={"limit": 1})
+
+    assert response.status_code == 200, response.text
+    values = response.json()[0]["values"]
+    assert values["artifacts"] == artifact_paths
+
+
 def test_get_thread_history_associates_tool_messages_from_checkpoint_turn() -> None:
     app, _store, checkpointer = _build_thread_app()
     app.state.run_event_store = SimpleNamespace(find_latest_ai_message_run_ids=AsyncMock(return_value={}))
