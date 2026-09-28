@@ -49,6 +49,8 @@ Size is governed by budget, not by a single file-count target. The upstream base
 
 6F3F17 定位到固定验收实例的 ignored `.analytics-demo/config.yaml` 缺少普通 Lead 所需 `write_file`，不是已证实的模型或生产装配缺陷；在保留原字节备份后仅补入该工具，Gateway 热加载并解析到 `write_file`。唯一新 `deepseek-flash` 合成 Gateway run 为 `success`，结构化轨迹含 `write_file` 与 `present_files`，同 owner 的预期 HTML artifact 路由 HTTP 200；正文未读取。工具结果的 messages/events 投影计数存在差异，真实浏览器小惊喜提交/预览仍未验收；上游 `surprise-me` 技能已在 51f2bee 删除。无生产代码、容器重启或全套测试。详见[6F3F17 证据](acceptance/phase-06f3f17-surprise-toolchain-diagnosis.md)。
 
+6F3F18 用既有 6F3F17 artifact 做了一次无模型真实浏览器预览前置检查：登录与目标聊天路由成功，但等待 25 秒未出现由 `thread.values.artifacts` 驱动的 `artifact-trigger`，因此按门禁未发新小惊喜 UI/model run。固定栈 5 容器/3 卷、入口 29384 与已加载 `write_file` 未变。最小阻塞位于既有 thread artifact state 到聊天 UI 面板的投影链；未能区分 SDK 历史/state 与前端投影，未改生产代码。报告列明需验收项、残差和不重跑证据，见[6F3F18 记录](acceptance/phase-06f3f18-surprise-browser-acceptance.md)。
+
 6F3F9 将 `run_events.backend` 默认改为共享应用数据库，并在固定验收配置中显式启用；配置/存储定点测试 5 passed，Ruff check 与 format 检查通过。一次 run 在 Gateway 尚未重载启动配置时运行，仍使用旧 memory store，重启后旧 feed 丢失且不可补回；不把它算作持久化证据。配置生效后的普通 synthetic chat run 状态为 `error`，但同一 owner 的 messages（2 条，seq 2..3）与 events（5 条，seq 1..5）在单独 Gateway 重启前后保持一致，SQLite 同 run event 计数为 5。验证只证明失败 run 的 SQLite 事件持久性；模型成功与 AS-09 完整 SSE/无思维链验收仍未完成。固定项目 5 容器、3 个命名卷保留。
 
 6F3F11 在固定验收栈完成一条真实 Chromium 普通聊天路径：通过 NGINX 登录，UI 选择 `deepseek-flash` 后单次发送，run `success`，1 次 LLM 响应、0 工具调用；messages 2 条、events 5 条，刷新后同一会话的用户消息与 AI 回复仍可见，run messages/events 读回计数一致。固定栈未重建。本轮按 GPT 裁决保留真实 UI SDK 当前已有的 `recursion_limit=1000`（非 helper 新注入的低上限）；这是普通聊天路径的单次证据，不外推到 Analytics/Reviewer 或 AS-09 完整验收。
