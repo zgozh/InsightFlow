@@ -61,6 +61,8 @@ Size is governed by budget, not by a single file-count target. The upstream base
 
 6F3F15 将首页展示固定为页级 `zh-CN`，显式标记首页容器语言，并仅在首页覆写搜索/分享描述为现有中文 tagline；全站 `DEFAULT_LOCALE`、根 `html lang` 与工作台语言解析不变。Footer 改用传入的品牌词条，中英 slogan 与移动菜单无障碍名称均保留双语。首页 Playwright 10/10，`pnpm typecheck`、受影响文件 ESLint 与 Prettier 通过；固定验收栈 Nginx 上首页定点 Playwright 2/2，将截图改为完整页后桌面/移动布局用例复跑 1/1，1280×720、375×812 黑洞与无横向溢出断言通过，完整页截图见 `frontend/test-results/phase-06f3f15-{desktop-1280x720,mobile-375x812}.png`。固定项目仅替换 Frontend：新容器 `99cbc3a9301fa501bafff71a75959eb932ad785eca2de6aa5496e77f77d0f684`、镜像 `sha256:7ec6ef1502830d6fd61a620a1a95af9c7b65d112a9782c9a6d7772a39d3f3426`；原镜像 `sha256:2802c7b1be7f1fdd7aba55c703a9441441b16608aee8f4dab53db40f2d5edbfb` 留存为 `insightflow-acceptance-local-frontend:rollback-6f3f15`。Gateway/Nginx/PostgreSQL/Redis 容器与三个命名卷未变，Nginx `/` 和 `/health` 均 HTTP 200；未发模型请求。工作台语言切换未单独重跑，本切片没有修改其解析链路。
 
+6F3F16 在固定验收栈上用既有 DPAPI 验收管理员、准确的 `deepseek-flash` 模型名与正常聊天 API 格式创建一条新 chat thread 并发送唯一一次真实 Gateway run。登录、模型清单、线程创建与 stream 均 HTTP 200；请求的 `Content-Location` 与 thread/run UUID 一致。流关闭时有 `gap`，因此按同一 owner 状态/历史 API 继续只读读回，最终 run `success`；持久 messages 为 1 条 human + 1 条 AI response，events 为 5 条，其中只有 1 条 `llm.ai.response`，没有 AI tool call 或 ToolMessage。预期 HTML artifact owner GET 为 404；最早可证断点是模型响应后未产生 `write_file`/`present_files` 调用。未读取模型正文，没有 artifact 可供浏览器预览；API run 成功不等于聊天 UI 提交成功。无第二次 Gateway/model run、无产品代码/服务/卷改动；线程保留。完整脱敏证据见[6F3F16 记录](acceptance/phase-06f3f16-direct-agent-artifact-trial.md)。
+
 ## Delivery and rollback
 
 - Phase 5B uses one independent commit per approved batch (B1–B5), with B5 depending on the retained state from earlier batches.
