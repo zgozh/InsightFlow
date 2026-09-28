@@ -57,6 +57,8 @@ Size is governed by budget, not by a single file-count target. The upstream base
 
 6F3F13 首轮只读前置检查发现固定验收栈已停止；Fix 01 获准后以原 ID 恢复五个既有容器，Gateway 首次启动即 healthy（原 exit 137 的根因未知），并仅刷新 Frontend。新 Frontend 镜像 `sha256:2802c7b1be7f1fdd7aba55c703a9441441b16608aee8f4dab53db40f2d5edbfb`、容器 `2b275c7b6fd58ed0b7a7b19555b2020ed1007ab56f549f51c512f6b44f23cead`；旧镜像 `sha256:52eaffb601a2e5de810b69532787021a054a4c9e929e4a58324e5ea5c9b59347` 保留为本地 rollback tag。真实 Nginx `/` 与 `/health` 为 200，Chromium 核对 GitHub 外链、`/workspace` CTA、SVG favicon，以及 1280×720/375×812 黑洞布局；其他四个容器 ID 与三个命名卷保持不变。Compose 渲染的 Nginx 端口与既有容器有漂移，因此只用 `--no-deps` 刷新 Frontend；完整命令、ID、截图与未验证项见[验收证据](acceptance/phase-06f3f13-local-frontend-refresh.md)。
 
+6F3F14 从原容器恢复固定验收栈，登录与小惊喜可编辑预填均通过；精确 `deepseek-flash` 在 UI 中选中。只点击提交一次，但临时夹具未观察到 `/runs/stream`，有限 Nginx 访问日志也无匹配，故 UI 提交是否到达 Gateway、是否形成 run 均未证实；没有真实 HTML artifact 或预览证据，不重试、不宣称通过。完整恢复命令、状态、截图与下一步建议见[验收证据](acceptance/phase-06f3f14-real-surprise-artifact-trial.md)。
+
 ## Delivery and rollback
 
 - Phase 5B uses one independent commit per approved batch (B1–B5), with B5 depending on the retained state from earlier batches.
