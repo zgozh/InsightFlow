@@ -20,6 +20,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { useSettingsDialog } from "@/components/workspace/settings";
+import { getWorkspaceNavigationActiveState } from "@/components/workspace/workspace-nav-state";
 import { useI18n } from "@/core/i18n/hooks";
 
 /**
@@ -32,13 +33,7 @@ export function WorkspaceNavChatList() {
   const { t } = useI18n();
   const pathname = usePathname();
   const { openSettings } = useSettingsDialog();
-
-  // 分析会话与审计链路同属分析工作台：/workspace/chats 是会话列表，
-  // /workspace/analysis 是新的分析路由前缀。新建分析页单独高亮，避免两个条目同时点亮。
-  const isAnalysisRoute =
-    pathname.startsWith("/workspace/chats") ||
-    (pathname.startsWith("/workspace/analysis") &&
-      pathname !== "/workspace/analysis/new");
+  const activeNavigation = getWorkspaceNavigationActiveState(pathname);
 
   return (
     <>
@@ -46,7 +41,7 @@ export function WorkspaceNavChatList() {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
-              isActive={pathname === "/workspace/analysis/new"}
+              isActive={activeNavigation.newAnalysis}
               tooltip={t.analytics.nav.newAnalysis}
               asChild
             >
@@ -61,7 +56,7 @@ export function WorkspaceNavChatList() {
           </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
-              isActive={isAnalysisRoute}
+              isActive={activeNavigation.analysis}
               tooltip={t.analytics.nav.analysis}
               asChild
             >

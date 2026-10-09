@@ -664,6 +664,22 @@ def _make_minimal_app_config():
     )
 
 
+def test_apply_prompt_template_uses_insightflow_identity(monkeypatch):
+    config = _make_minimal_app_config()
+    monkeypatch.setattr("deerflow.config.get_app_config", lambda: config)
+    monkeypatch.setattr(prompt_module, "get_or_new_skill_storage", lambda app_config=None: SimpleNamespace(load_skills=lambda enabled_only=True: []))
+    monkeypatch.setattr(prompt_module, "get_agent_soul", lambda agent_name=None, **kwargs: "")
+
+    prompt = prompt_module.apply_prompt_template(app_config=config)
+
+    assert "You are InsightFlow Assistant, an AI assistant in InsightFlow for general chat and controlled business analysis." in prompt
+    assert "open-source super agent" not in prompt
+    assert "DeerFlow 2.0" not in prompt
+    assert "deerflow" not in prompt.casefold()
+    assert "deer-flow" not in prompt.casefold()
+    assert "github.com/bytedance/deer-flow" not in prompt.casefold()
+
+
 def test_apply_prompt_template_legacy_path_does_not_mention_describe_skill(monkeypatch):
     """When skill_names is None (legacy path), critical_reminders must not
     reference describe_skill (the tool is not registered in legacy mode)."""

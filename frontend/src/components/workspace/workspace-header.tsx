@@ -15,6 +15,8 @@ import { useI18n } from "@/core/i18n/hooks";
 import { env } from "@/env";
 import { cn } from "@/lib/utils";
 
+import { getWorkspaceNavigationActiveState } from "./workspace-nav-state";
+
 /**
  * 侧边栏折叠态只剩图标，品牌名退化成一个短标识。
  *
@@ -33,6 +35,7 @@ export function WorkspaceHeader({ className }: { className?: string }) {
   const { t } = useI18n();
   const { state } = useSidebar();
   const pathname = usePathname();
+  const activeNavigation = getWorkspaceNavigationActiveState(pathname);
   const productName = t.branding.productName;
   return (
     <>
@@ -66,10 +69,7 @@ export function WorkspaceHeader({ className }: { className?: string }) {
       </div>
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton
-            isActive={pathname === "/workspace/chats/new"}
-            asChild
-          >
+          <SidebarMenuButton isActive={activeNavigation.newChat} asChild>
             <Link className="text-muted-foreground" href="/workspace/chats/new">
               <MessageSquarePlus size={16} />
               <span>{t.sidebar.newChat}</span>
