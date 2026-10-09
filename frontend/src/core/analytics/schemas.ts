@@ -20,6 +20,10 @@ import { z } from "zod";
 import {
   COLUMN_ACCESSES,
   COLUMN_SENSITIVITIES,
+  ANALYSIS_STAGE_CODES,
+  ANALYSIS_STAGE_RISKS,
+  ANALYSIS_STAGE_STATUSES,
+  ANALYSIS_STAGES,
   DATASOURCE_ENGINES,
   DATASOURCE_STATUSES,
   METRIC_STATUSES,
@@ -144,6 +148,32 @@ export const metricListSchema = z
   .object({ metrics: z.array(metricViewSchema) })
   .strict();
 
+/** Principal 标识可用于权限路由，但不能包含首尾空白或控制字符。 */
+export const metricPrincipalIdSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .refine(
+    (value) =>
+      value.trim() === value && !/[\u0000-\u001f\u007f-\u009f]/.test(value),
+    "invalid principal identifier",
+  );
+
+export const metricGrantListSchema = z
+  .object({ principal_ids: z.array(metricPrincipalIdSchema) })
+  .strict();
+
+export const metricGrantResponseSchema = z
+  .object({
+    principal_id: metricPrincipalIdSchema,
+    granted: z.literal(true),
+  })
+  .strict();
+
+export const metricGrantRemovalSchema = z
+  .object({ removed: z.literal(true) })
+  .strict();
+
 export const columnSchemaViewSchema = z
   .object({
     name: z.string().min(1).max(255),
@@ -250,6 +280,31 @@ export const analysisReportPageSchema = z
   })
   .strict();
 
+/** Analysis stage payload is shared by live custom SSE and persisted run events. */
+export const analysisStagePayloadSchema = z
+  .object({
+    type: z.literal("analysis_stage"),
+    version: z.literal(1),
+    run_id: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+    seq: z.number().int().min(1).max(2147483647),
+    stage: z.enum(ANALYSIS_STAGES),
+    status: z.enum(ANALYSIS_STAGE_STATUSES),
+    duration_ms: z.number().int().min(0).max(86400000).optional(),
+    row_count: z.number().int().min(0).max(1000000).optional(),
+    byte_count: z.number().int().min(0).max(16777216).optional(),
+    input_tokens: z.number().int().min(0).max(10000000).optional(),
+    output_tokens: z.number().int().min(0).max(10000000).optional(),
+    risk: z.enum(ANALYSIS_STAGE_RISKS).optional(),
+    cached: z.boolean().optional(),
+    code: z.enum(ANALYSIS_STAGE_CODES).optional(),
+    evidence_ids: z
+      .array(z.string().regex(/^[0-9a-f]{64}$/))
+      .max(20)
+      .refine((values) => new Set(values).size === values.length)
+      .optional(),
+  })
+  .strict();
+
 /** 服务端的稳定错误体：`{"detail": {"code": "..."}}`。 */
 export const analyticsErrorBodySchema = z
   .object({
@@ -262,6 +317,11 @@ export type AdminDatasourceViewParsed = z.infer<
   typeof adminDatasourceViewSchema
 >;
 export type MetricViewParsed = z.infer<typeof metricViewSchema>;
+export type MetricGrantListParsed = z.infer<typeof metricGrantListSchema>;
+export type MetricGrantResponseParsed = z.infer<
+  typeof metricGrantResponseSchema
+>;
+export type MetricGrantRemovalParsed = z.infer<typeof metricGrantRemovalSchema>;
 export type SchemaSnapshotViewParsed = z.infer<typeof schemaSnapshotViewSchema>;
 export type AccessPolicyViewParsed = z.infer<typeof accessPolicyViewSchema>;
 export type QueryAuditViewParsed = z.infer<typeof queryAuditViewSchema>;

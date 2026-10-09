@@ -17,6 +17,9 @@ export const analyticsEnUS: {
     landingDescription:
       "InsightFlow puts natural-language analysis on top of controlled SQL and semantic authorization. The model can only submit queries that pass policy validation, every execution leaves an audit record you can review, and each answer carries an evidence identifier. Trustworthy analysis, governed definitions, accountable results.",
     landingEnter: "Enter the workspace",
+    blackHolePhotoCredit:
+      "Tab icon photo: EHT Collaboration (cropped and resized)",
+    blackHolePhotoSource: "Original / ESO",
     landingSecurityTitle: "Governance before automation",
     landingSecurityBody:
       "Datasource credentials are registered as secret references and never reach the browser. Queries are parsed, rewritten, and validated row by row in the controlled SQL layer; functions, joins, and sensitive columns outside the grant are rejected outright. The policy version, schema version, and result digest are written into the audit record, so any extraction can be traced back to the authorization state in force at the time.",
@@ -24,11 +27,11 @@ export const analyticsEnUS: {
     landingWorkflowBody:
       "You ask a question; the system plans its retrieval path, inspects the data catalog, then submits a governed query. Intermediate results can be delegated to parallel subtasks, and artifacts and reports bind an evidence identifier when they are published. The whole run is recorded as structured events — the model's thought process is neither shown nor required.",
     aboutTitle: "About InsightFlow",
-    aboutSlogan: "Originated from Open Source, give back to Open Source.",
-    aboutDerivation:
-      "InsightFlow is a deep refactor derived from DeerFlow v2.1.0-rc0. It keeps the upstream MIT licence and copyright attribution and rebuilds the product around governed enterprise analytics. The upstream project is maintained by ByteDance and the DeerFlow community.",
+    aboutSlogan: "Governed analysis, reviewable conclusions.",
+    aboutProject:
+      "InsightFlow is an individually maintained business analytics workbench built around data catalogs, authorized queries, evidence review, and report publication.",
     aboutLicense:
-      "This project is distributed under the MIT License. Original copyright remains with the DeerFlow upstream authors; the full licence text ships in the LICENSE file at the repository root.",
+      "InsightFlow is released under the MIT License. See the repository root LICENSE for the full terms and copyright notices.",
   },
 
   analytics: {
@@ -88,6 +91,10 @@ export const analyticsEnUS: {
       statusActive: "Active",
       statusDisabled: "Disabled",
       statusUnhealthy: "Connection failing",
+      analyzeAction: "Analyze with this data source",
+      analyzeLabel: (name: string) => `Analyze data source “${name}”`,
+      analysisPrompt: (name: string) =>
+        `Within the data sources and grants available to my account, analyze business performance using the data source “${name}” and summarize the main findings.`,
     },
     schema: {
       title: "Data model",
@@ -135,7 +142,7 @@ export const analyticsEnUS: {
       description:
         "Review metric definitions used in analysis. Administrators create and activate metrics so reports use consistent definitions.",
       empty:
-        "No active metrics are available to your account. Ask an administrator to define and activate one.",
+        "No active metrics are available to your account. Ask an administrator to define one, activate it, and grant you access.",
       adminEmpty:
         "No metrics are defined yet. Create a metric and activate it before analyses can use it.",
       key: "Metric key",
@@ -157,6 +164,31 @@ export const analyticsEnUS: {
         "New analyses can no longer reference it. Definitions already pinned in published reports are unaffected.",
       versionMustAdvance:
         "Editing an active metric requires advancing its version.",
+      analyzeAction: "Analyze this metric",
+      analyzeLabel: (key: string, name: string) =>
+        `Analyze metric “${name}” (${key})`,
+      analysisPrompt: (key: string, name: string) =>
+        `Within the grants available to my account, analyze changes in the metric “${name}” (${key}) according to its definition and summarize the main findings.`,
+      grants: {
+        action: "Grant access",
+        title: "Metric access grants",
+        description:
+          "You can grant access to a draft in advance. Users can see the definition in the metric catalogue after it is activated. Data-source queries still require a separate data-source access policy.",
+        principalId: "User principal ID",
+        principalHint:
+          "Enter the principal ID of an existing account. Account search is not available here.",
+        listTitle: "Granted principal IDs",
+        empty: "No users have access yet.",
+        submit: "Grant access",
+        submitting: "Granting…",
+        revoke: "Revoke",
+        revoking: "Revoking…",
+        invalidPrincipal:
+          "Enter 1–64 characters without leading or trailing whitespace or control characters.",
+        operationFailed: "The operation failed. Try again.",
+        granted: "Access granted.",
+        revoked: "Access revoked.",
+      },
     },
     history: {
       title: "Audit history",
@@ -230,6 +262,72 @@ export const analyticsEnUS: {
       statusCompleted: "Completed",
       statusFailed: "Failed",
       statusRejected: "Rejected",
+    },
+    analysisStages: {
+      title: "Analysis stages",
+      description: "Only reported safe stages and observations are shown.",
+      empty: "This run has no stage events yet.",
+      loading: "Loading stage events…",
+      unavailable: "Stage events are temporarily unavailable.",
+      runStatus: "Run status",
+      duration: "Duration",
+      rows: "Rows",
+      bytes: "Bytes",
+      inputTokens: "Input tokens",
+      outputTokens: "Output tokens",
+      risk: "Risk",
+      code: "Stage note",
+      reused: "Reused",
+      stages: {
+        workflow: "Workflow",
+        catalog: "Catalog",
+        sql: "SQL execution",
+        authorization: "Authorization",
+        execution: "Execution",
+        data: "Data",
+        writer: "Report writing",
+        reviewer: "Review",
+        publish: "Publish",
+      },
+      statuses: {
+        running: "Running",
+        succeeded: "Succeeded",
+        failed: "Failed",
+        blocked: "Blocked",
+        cancelled: "Cancelled",
+      },
+      risks: {
+        LOW: "Low",
+        MEDIUM: "Medium",
+        HIGH: "High",
+        BLOCKED: "Blocked",
+      },
+      runStatuses: {
+        pending: "Pending",
+        running: "Running",
+        error: "Failed",
+        success: "Succeeded",
+        timeout: "Timed out",
+        interrupted: "Interrupted",
+      },
+      codes: {
+        ok: "Completed",
+        unavailable: "Unavailable",
+        invalid_request: "Invalid request",
+        invalid_response: "Invalid response",
+        numeric_validation_failed: "Numeric validation failed",
+        attempt_limit: "Attempt limit reached",
+        input_too_large: "Input exceeds the limit",
+        policy_denied: "Denied by policy",
+        cost_limit: "Cost limit reached",
+        query_failed: "Query failed",
+        query_timeout: "Query timed out",
+        result_limit_reached: "Result limit reached",
+        evidence_unavailable: "Evidence unavailable",
+        review_rejected: "Review rejected",
+        report_conflict: "Report conflict",
+        cancelled: "Cancelled",
+      },
     },
     analysis: {
       newTitle: "New analysis",

@@ -25,9 +25,11 @@ from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.messages.utils import convert_to_messages
 from langgraph.types import Command
 
-from app.analytics.agent.evidence import create_analysis_run_evidence_collector
+from app.analytics.agent.evidence_bridge import create_durable_analysis_run_evidence_collector
 from app.analytics.agent.reviewer import create_analysis_report_reviewer_capability
+from app.analytics.agent.roles import create_analysis_roles_capability
 from app.analytics.agent.runtime import get_bound_analytics_services
+from app.gateway.analysis_query_artifacts import create_analysis_query_artifact_capability
 from app.gateway.analysis_report_writer import create_analysis_report_writer_capability
 from app.gateway.auth_disabled import AUTH_SOURCE_INTERNAL, AUTH_SOURCE_PAT, AUTH_SOURCE_SESSION
 from app.gateway.authz import require_cancel_permission_if
@@ -50,7 +52,13 @@ from deerflow.agents.middlewares.tool_transform_meta import TOOL_TRANSFORMS_KEY
 from deerflow.agents.middlewares.view_image_middleware import _IMAGE_CONTEXT_MESSAGE_MARKER_KEY
 from deerflow.config.app_config import get_app_config
 from deerflow.config.database_config import resolve_checkpoint_graph_cache_max
-from deerflow.constants import ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY, ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY, ANALYSIS_REPORT_WRITER_CONTEXT_KEY
+from deerflow.constants import (
+    ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY,
+    ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY,
+    ANALYSIS_REPORT_WRITER_CONTEXT_KEY,
+    ANALYSIS_ROLES_CONTEXT_KEY,
+    DEERFLOW_ANALYSIS_RUN_ID_METADATA_KEY,
+)
 from deerflow.persistence.thread_meta import THREAD_ANALYSIS_MODE_METADATA_KEY
 from deerflow.runtime import (
     END_SENTINEL,
@@ -136,11 +144,18 @@ def _analysis_principal_id(request: Request, internal_owner_id: str | None) -> s
 
 
 def _analysis_services_available(request: Request) -> bool:
-    """Require the startup bundle and its runtime tool binding to match."""
+    """确认请求绑定的 Analytics 服务与已启用的启动 bundle 一致，并提供耐久证据仓储接口。"""
 
     try:
         services = getattr(request.app.state, "analytics_services", None)
-        return services is not None and getattr(getattr(services, "config", None), "enabled", None) is True and get_bound_analytics_services() is services
+        repository = getattr(services, "analysis_evidence_repository", None)
+        return (
+            services is not None
+            and getattr(getattr(services, "config", None), "enabled", None) is True
+            and callable(getattr(repository, "put", None))
+            and callable(getattr(repository, "get_many", None))
+            and get_bound_analytics_services() is services
+        )
     except Exception:
         return False
 
@@ -613,6 +628,7 @@ _SERVER_OWNED_RUNTIME_CONTEXT_KEYS: frozenset[str] = (
             "langgraph_auth_user_id",
             THREAD_ANALYSIS_MODE_METADATA_KEY,
             ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY,
+            ANALYSIS_ROLES_CONTEXT_KEY,
             ANALYSIS_REPORT_WRITER_CONTEXT_KEY,
             ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY,
             # Server-owned pinned project snapshot (spec §7.1): resolved once
@@ -844,6 +860,7 @@ def resolve_agent_factory(assistant_id: str | None):
 # ``AppConfig.max_recursion_limit``.
 _DEFAULT_RECURSION_LIMIT = 100
 _DEFAULT_MAX_RECURSION_LIMIT = 1000
+_ANALYSIS_RECURSION_LIMIT = 16
 
 
 def _resolve_gateway_recursion_limits() -> tuple[int, int]:
@@ -1409,8 +1426,9 @@ async def apply_checkpoint_to_run_config(
     body: Any,
     thread_id: str,
     request: Request,
-) -> None:
-    """Validate an optional run checkpoint and attach it to RunnableConfig."""
+    owner_user_id: str | None = None,
+) -> str | None:
+    """校验显式 checkpoint，并只返回 owner/thread 已验证的终结来源 run。"""
     checkpoint = getattr(body, "checkpoint", None)
     checkpoint_id = getattr(body, "checkpoint_id", None)
     checkpoint_ns = ""
@@ -1431,7 +1449,7 @@ async def apply_checkpoint_to_run_config(
         checkpoint_map = checkpoint.get("checkpoint_map")
 
     if not checkpoint_id:
-        return
+        return None
 
     read_config: dict[str, Any] = {
         "configurable": {
@@ -1460,6 +1478,31 @@ async def apply_checkpoint_to_run_config(
     configurable["checkpoint_id"] = str(checkpoint_id)
     if checkpoint_map is not None:
         configurable["checkpoint_map"] = checkpoint_map
+
+    checkpoint_metadata = getattr(checkpoint_tuple, "metadata", None)
+    producer_run_id = checkpoint_metadata.get(DEERFLOW_ANALYSIS_RUN_ID_METADATA_KEY) if isinstance(checkpoint_metadata, Mapping) else None
+    if (
+        not isinstance(producer_run_id, str)
+        or not producer_run_id
+        or producer_run_id != producer_run_id.strip()
+        or len(producer_run_id) > 64
+        or not producer_run_id.isascii()
+        or any(not (character.isalnum() or character in "_-") for character in producer_run_id)
+        or not owner_user_id
+    ):
+        return None
+
+    try:
+        producer = await get_run_manager(request).get(
+            producer_run_id,
+            user_id=owner_user_id,
+            raise_on_store_error=True,
+        )
+    except Exception:
+        return None
+    if producer is None or producer.thread_id != thread_id or producer.user_id != owner_user_id or producer.status not in {RunStatus.success, RunStatus.error, RunStatus.timeout, RunStatus.interrupted}:
+        return None
+    return producer_run_id
 
 
 async def ensure_checkpoint_history_seeded(
@@ -1706,10 +1749,18 @@ async def start_run(
         run_metadata[DEERFLOW_TRACE_METADATA_KEY] = ensure_trace_id()
 
         config = build_run_config(thread_id, body.config, run_metadata, assistant_id=body.assistant_id)
+        if analysis_mode:
+            config["recursion_limit"] = _ANALYSIS_RECURSION_LIMIT
         config_metadata = config.get("metadata")
         if isinstance(config_metadata, dict):
             config_metadata.pop(THREAD_ANALYSIS_MODE_METADATA_KEY, None)
-        await apply_checkpoint_to_run_config(config, body=body, thread_id=thread_id, request=request)
+        checkpoint_producer_run_id = await apply_checkpoint_to_run_config(
+            config,
+            body=body,
+            thread_id=thread_id,
+            request=request,
+            owner_user_id=owner_user_id if analysis_mode else None,
+        )
 
         # Merge DeerFlow-specific context overrides into both ``configurable`` and ``context``.
         # The ``context`` field is a custom extension for the langgraph-compat layer
@@ -1832,36 +1883,79 @@ async def start_run(
                 analysis_report_writer=None,
                 analysis_evidence_collector=None,
                 analysis_report_reviewer=None,
+                analysis_roles=None,
             )
             run_config_context = config.get("context")
             report_owner = run_config_context.get("user_id") if isinstance(run_config_context, Mapping) else None
             if analysis_mode:
                 writer_capability = None
+                query_artifact_capability = None
+                producer_query_artifact_capability = None
                 evidence_collector = None
                 report_reviewer = None
+                analysis_roles = None
                 try:
-                    if metadata_failure is None and isinstance(report_owner, str) and report_owner == analysis_principal_id and report_owner == record.user_id:
+                    analytics_services = getattr(request.app.state, "analytics_services", None)
+                    evidence_repository = getattr(analytics_services, "analysis_evidence_repository", None)
+                    if (
+                        metadata_failure is None
+                        and isinstance(report_owner, str)
+                        and report_owner == analysis_principal_id
+                        and report_owner == record.user_id
+                        and callable(getattr(evidence_repository, "put", None))
+                        and callable(getattr(evidence_repository, "get_many", None))
+                    ):
                         writer_capability = create_analysis_report_writer_capability(
                             principal_id=report_owner,
                             thread_id=thread_id,
                             run_id=record.run_id,
                         )
-                        evidence_collector = create_analysis_run_evidence_collector(
+                        query_artifact_capability = create_analysis_query_artifact_capability(
                             principal_id=report_owner,
                             thread_id=thread_id,
                             run_id=record.run_id,
+                        )
+                        if checkpoint_producer_run_id is not None:
+                            producer_query_artifact_capability = create_analysis_query_artifact_capability(
+                                principal_id=report_owner,
+                                thread_id=thread_id,
+                                run_id=checkpoint_producer_run_id,
+                            )
+                        evidence_collector = create_durable_analysis_run_evidence_collector(
+                            principal_id=report_owner,
+                            thread_id=thread_id,
+                            run_id=record.run_id,
+                            repository=evidence_repository,
+                            artifact_capability=query_artifact_capability,
+                            producer_run_id=checkpoint_producer_run_id,
+                            producer_artifact_capability=producer_query_artifact_capability,
                         )
                         report_reviewer = create_analysis_report_reviewer_capability(
                             principal_id=report_owner,
                             thread_id=thread_id,
                             run_id=record.run_id,
                         )
+                        analysis_event_store = getattr(request.app.state, "run_event_store", None)
+                        if not callable(getattr(analysis_event_store, "put", None)):
+                            raise ValueError("analysis_stage_unavailable")
+                        analysis_roles = create_analysis_roles_capability(
+                            principal_id=report_owner,
+                            thread_id=thread_id,
+                            run_id=record.run_id,
+                            event_store=analysis_event_store,
+                        )
                 except Exception:
                     # 任一单 run 能力无法签发时，该 run 不得降级进入普通图。
+                    for capability in (writer_capability, evidence_collector, report_reviewer, analysis_roles):
+                        close = getattr(capability, "close", None)
+                        if callable(close):
+                            close()
                     writer_capability = None
+                    query_artifact_capability = None
                     evidence_collector = None
                     report_reviewer = None
-                if writer_capability is None or evidence_collector is None or report_reviewer is None:
+                    analysis_roles = None
+                if writer_capability is None or query_artifact_capability is None or evidence_collector is None or report_reviewer is None or analysis_roles is None:
                     await run_mgr.fail_start_if_pending(
                         record.run_id,
                         error="analysis_mode_unavailable",
@@ -1872,6 +1966,7 @@ async def start_run(
                         analysis_report_writer=writer_capability,
                         analysis_evidence_collector=evidence_collector,
                         analysis_report_reviewer=report_reviewer,
+                        analysis_roles=analysis_roles,
                     )
 
             await run_agent(

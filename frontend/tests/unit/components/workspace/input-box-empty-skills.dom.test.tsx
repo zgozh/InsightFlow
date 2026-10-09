@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, rs } from "@rstest/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import type { ReactNode } from "react";
 
 import { PromptInputProvider } from "@/components/ai-elements/prompt-input";
@@ -9,6 +15,11 @@ import { ThreadContext } from "@/components/workspace/messages/context";
 import { AuthProvider } from "@/core/auth/AuthProvider";
 import { DEFAULT_LOCALE } from "@/core/i18n";
 import { I18nProvider } from "@/core/i18n/context";
+import {
+  buildComposerDraftKey,
+  readComposerDraft,
+  writeComposerDraft,
+} from "@/core/threads/composer-draft";
 
 rs.mock("next/navigation", () => ({
   useRouter: () => ({ push: rs.fn(), replace: rs.fn(), refresh: rs.fn() }),
@@ -42,10 +53,22 @@ rs.mock("@/core/skills/hooks", () => ({
   }),
 }));
 
-function renderComposer() {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
+type ComposerProps = {
+  threadId?: string;
+  draftThreadId?: string;
+  initialValue?: string;
+  onSubmit?: () => void;
+};
+
+function composerTree(
+  {
+    threadId = "thread-1",
+    draftThreadId,
+    initialValue,
+    onSubmit,
+  }: ComposerProps,
+  queryClient: QueryClient,
+) {
   const tree: ReactNode = (
     <I18nProvider initialLocale={DEFAULT_LOCALE}>
       <QueryClientProvider client={queryClient}>
@@ -63,9 +86,12 @@ function renderComposer() {
           >
             <PromptInputProvider>
               <InputBox
-                threadId="thread-1"
+                threadId={threadId}
+                draftThreadId={draftThreadId}
                 status="ready"
                 context={{ mode: "flash" } as never}
+                initialValue={initialValue}
+                onSubmit={onSubmit}
               />
             </PromptInputProvider>
           </ThreadContext.Provider>
@@ -73,7 +99,20 @@ function renderComposer() {
       </QueryClientProvider>
     </I18nProvider>
   );
-  return render(tree);
+  return tree;
+}
+
+function renderComposer(props: ComposerProps = {}) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  const view = render(composerTree(props, queryClient));
+  return {
+    ...view,
+    rerenderComposer(nextProps: ComposerProps) {
+      view.rerender(composerTree(nextProps, queryClient));
+    },
+  };
 }
 
 function getComposerTextarea(container: HTMLElement): HTMLTextAreaElement {
@@ -95,8 +134,9 @@ function typeSlashQuery(
 }
 
 afterEach(() => {
-  rs.restoreAllMocks();
   cleanup();
+  window.sessionStorage.clear();
+  rs.restoreAllMocks();
 });
 
 describe("InputBox skill suggestions with an empty (denied) catalog", () => {
@@ -127,5 +167,103 @@ describe("InputBox skill suggestions with an empty (denied) catalog", () => {
     expect(
       screen.queryByRole("listbox", { name: "Skill suggestions" }),
     ).toBeNull();
+  });
+
+  it("keeps an analysis prefill editable and waits for explicit submission", async () => {
+    window.sessionStorage.clear();
+    const onSubmit = rs.fn();
+    const { container } = renderComposer({
+      initialValue: "Analyze this data source",
+      onSubmit,
+    });
+    const textarea = getComposerTextarea(container);
+
+    await waitFor(() => {
+      expect(textarea.value).toBe("Analyze this data source");
+    });
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    fireEvent.change(textarea, {
+      target: { value: "Edited analysis question" },
+    });
+    expect(textarea.value).toBe("Edited analysis question");
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("isolates successive analysis prefills and preserves the shared new draft", async () => {
+    const existingNewDraft = "Keep my ordinary new-chat draft";
+    const newDraftKey = buildComposerDraftKey({
+      userId: "user-1",
+      threadId: "new",
+    });
+    writeComposerDraft(window.sessionStorage, newDraftKey, {
+      text: existingNewDraft,
+      skillName: null,
+    });
+
+    const sourceThreadId = "analysis-source-thread";
+    const sourceDraftKey = buildComposerDraftKey({
+      userId: "user-1",
+      threadId: sourceThreadId,
+    });
+    const sourcePrompt = "Analyze this data source";
+    const sourceEdited = "Edited source analysis";
+    const onSubmit = rs.fn();
+    const sourceView = renderComposer({
+      threadId: sourceThreadId,
+      draftThreadId: sourceThreadId,
+      initialValue: sourcePrompt,
+      onSubmit,
+    });
+    const sourceTextarea = getComposerTextarea(sourceView.container);
+
+    await waitFor(() => expect(sourceTextarea.value).toBe(sourcePrompt));
+    fireEvent.change(sourceTextarea, { target: { value: sourceEdited } });
+    await waitFor(() => {
+      expect(
+        readComposerDraft(window.sessionStorage, sourceDraftKey)?.text,
+      ).toBe(sourceEdited);
+    });
+
+    const metricThreadId = "analysis-metric-thread";
+    const metricDraftKey = buildComposerDraftKey({
+      userId: "user-1",
+      threadId: metricThreadId,
+    });
+    const metricPrompt = "Analyze this metric";
+    const metricEdited = "Edited metric analysis";
+    const metricProps = {
+      threadId: metricThreadId,
+      draftThreadId: metricThreadId,
+      initialValue: metricPrompt,
+      onSubmit,
+    };
+    sourceView.unmount();
+    const metricView = renderComposer(metricProps);
+    const metricTextarea = getComposerTextarea(metricView.container);
+
+    await waitFor(() => expect(metricTextarea.value).toBe(metricPrompt));
+    fireEvent.change(metricTextarea, { target: { value: metricEdited } });
+    metricView.rerenderComposer(metricProps);
+    await waitFor(() => expect(metricTextarea.value).toBe(metricEdited));
+    await waitFor(() => {
+      expect(
+        readComposerDraft(window.sessionStorage, metricDraftKey)?.text,
+      ).toBe(metricEdited);
+    });
+
+    expect(readComposerDraft(window.sessionStorage, newDraftKey)?.text).toBe(
+      existingNewDraft,
+    );
+    metricView.unmount();
+    const ordinaryNewView = renderComposer({
+      threadId: "ordinary-new-thread",
+      draftThreadId: "new",
+    });
+    const ordinaryNewTextarea = getComposerTextarea(ordinaryNewView.container);
+    await waitFor(() =>
+      expect(ordinaryNewTextarea.value).toBe(existingNewDraft),
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 });

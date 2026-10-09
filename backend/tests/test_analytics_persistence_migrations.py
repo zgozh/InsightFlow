@@ -3,7 +3,7 @@
 这条链必须证明四件事：
 
 1. 空库可以 `upgrade head`，重复执行是幂等的，且 downgrade/upgrade 可往返；
-2. 它只管自己的六张 `analytics_*` 表与 `analytics_alembic_version`，绝不触碰 Harness
+2. 它只管自己的 Analytics `analytics_*` 表与 `analytics_alembic_version`，绝不触碰 Harness
    的表或 `alembic_version`；
 3. 未知 revision、空版本表、多版本行、有表无版本表一律 fail closed，绝不自动重建或重 stamp；
 4. 迁移产出的表结构与 `AnalyticsBase.metadata` 逐列一致。
@@ -31,13 +31,17 @@ _VERSION_TABLE = "analytics_alembic_version"
 _REVISION = "0001_analytics_control_plane"
 # 与 `versions/0002_analytics_analysis_reports.py` 的 revision id 逐字一致。
 _REVISION_0002 = "0002_analytics_analysis_reports"
+_REVISION_0003 = "0003_analytics_query_evidence"
+_REVISION_0004 = "0004_metric_grants"
 _ANALYTICS_TABLES = (
     "analytics_access_policies",
     "analytics_analysis_reports",
     "analytics_datasources",
     "analytics_execution_plans",
     "analytics_metrics",
+    "analytics_metric_grants",
     "analytics_query_audits",
+    "analytics_query_evidence",
     "analytics_schema_snapshots",
 )
 
@@ -106,6 +110,7 @@ async def test_bootstrap_creates_exactly_the_analytics_tables_from_an_empty_data
         names = await _table_names(engine)
         assert set(_ANALYTICS_TABLES) <= names
         assert _VERSION_TABLE in names
+        assert await _scalar(engine, f"SELECT version_num FROM {_VERSION_TABLE}") == _REVISION_0004
         # 这条链绝不创建 Harness 自己的版本表。
         assert "alembic_version" not in names
         # 空库直连 upgrade head，而不是 create_all + stamp 的捷径：结构与版本表都存在。
@@ -126,6 +131,70 @@ async def test_bootstrap_is_idempotent_and_keeps_the_same_revision(tmp_path):
 
         assert first == second
         assert first
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_revision_0003_only_adds_evidence_and_preserves_0002_report_data(tmp_path):
+    engine = _engine(tmp_path / "analytics.db")
+    try:
+        await _run_alembic(engine, direction="upgrade", revision=_REVISION_0002)
+        await _execute(
+            engine,
+            "INSERT INTO analytics_analysis_reports "
+            "(id, principal_id, thread_id, run_id, artifact_path, title, status, evidence_ids_json, created_at) "
+            "VALUES ('old-report', 'user-1', 'thread-1', 'run-1', '/mnt/user-data/outputs/old.md', '旧报告', 'published', '[\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"]', '2026-10-07 12:00:00')",
+        )
+        before = await _table_names(engine)
+
+        await _run_alembic(engine, direction="upgrade", revision=_REVISION_0003)
+
+        assert await _scalar(engine, f"SELECT version_num FROM {_VERSION_TABLE}") == _REVISION_0003
+        assert await _table_names(engine) - before == {"analytics_query_evidence"}
+        assert await _scalar(engine, "SELECT id FROM analytics_analysis_reports") == "old-report"
+
+        await _run_alembic(engine, direction="downgrade", revision=_REVISION_0002)
+        assert "analytics_query_evidence" not in await _table_names(engine)
+        assert await _scalar(engine, "SELECT id FROM analytics_analysis_reports") == "old-report"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_revision_0004_only_adds_grants_and_preserves_metrics_and_evidence(tmp_path):
+    engine = _engine(tmp_path / "analytics.db")
+    try:
+        await _run_alembic(engine, direction="upgrade", revision=_REVISION_0003)
+        await _execute(
+            engine,
+            "INSERT INTO analytics_metrics "
+            "(owner_id, key, name, description, expression, dimensions_json, version, status, created_at, updated_at) "
+            "VALUES ('owner-1', 'revenue', 'Revenue', 'Total revenue', 'sum(amount)', '[]', 1, 'active', '2026-10-08 12:00:00', '2026-10-08 12:00:00')",
+        )
+        await _execute(
+            engine,
+            "INSERT INTO analytics_query_evidence "
+            "(principal_id, thread_id, run_id, evidence_id, payload_version, payload_json, snapshot_bytes, artifact_path, created_at) "
+            "VALUES ('user-1', 'thread-1', 'run-1', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 1, '{}', 2, '/mnt/user-data/outputs/evidence.json', '2026-10-08 12:00:00')",
+        )
+        before = await _table_names(engine)
+
+        await _bootstrap(engine)
+
+        assert await _scalar(engine, f"SELECT version_num FROM {_VERSION_TABLE}") == _REVISION_0004
+        assert await _table_names(engine) - before == {"analytics_metric_grants"}
+        assert await _scalar(engine, "SELECT key FROM analytics_metrics WHERE owner_id = 'owner-1'") == "revenue"
+        assert await _scalar(engine, "SELECT run_id FROM analytics_query_evidence") == "run-1"
+        await _execute(
+            engine,
+            "INSERT INTO analytics_metric_grants (metric_owner_id, metric_key, principal_id, created_at) VALUES ('owner-1', 'revenue', 'user-2', '2026-10-08 12:00:00')",
+        )
+
+        await _run_alembic(engine, direction="downgrade", revision=_REVISION_0003)
+        assert "analytics_metric_grants" not in await _table_names(engine)
+        assert await _scalar(engine, "SELECT key FROM analytics_metrics WHERE owner_id = 'owner-1'") == "revenue"
+        assert await _scalar(engine, "SELECT run_id FROM analytics_query_evidence") == "run-1"
     finally:
         await engine.dispose()
 
@@ -168,7 +237,7 @@ async def test_phase_4_report_table_is_a_pure_forward_addition(tmp_path):
         before = await _table_names(engine)
         assert "analytics_analysis_reports" not in before
 
-        await _bootstrap(engine)
+        await _run_alembic(engine, direction="upgrade", revision=_REVISION_0002)
 
         after = await _table_names(engine)
         assert await _scalar(engine, f"SELECT version_num FROM {_VERSION_TABLE}") == _REVISION_0002
@@ -178,7 +247,7 @@ async def test_phase_4_report_table_is_a_pure_forward_addition(tmp_path):
         await _run_alembic(engine, direction="downgrade", revision=_REVISION)
         reverted = await _table_names(engine)
         assert "analytics_analysis_reports" not in reverted
-        assert set(_ANALYTICS_TABLES) - {"analytics_analysis_reports"} <= reverted
+        assert set(_ANALYTICS_TABLES) - {"analytics_analysis_reports", "analytics_query_evidence", "analytics_metric_grants"} <= reverted
     finally:
         await engine.dispose()
 

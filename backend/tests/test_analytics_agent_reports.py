@@ -23,16 +23,15 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
-from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage
-from langchain_core.outputs import ChatGeneration, ChatResult
-from pydantic import Field, PrivateAttr
+import pytest_asyncio
+from analytics_test_support import AnalysisChatOpenAI, clear_analysis_model_calls, close_analysis_chat_models, create_analysis_chat_model
 
 from app.analytics.agent import reports as agent_reports
 from app.analytics.agent.runtime import bind_analytics_services, clear_analytics_services
 from app.analytics.application.report_ports import ReportPublication
 from app.analytics.application.reports import PublishAnalysisReport
 from app.analytics.domain import AnalysisReport, ReportPublishCode, ReportStatus
+from app.analytics.domain.metric import MetricDefinition, MetricStatus
 
 _NOW = datetime(2026, 9, 22, 12, 0, tzinfo=UTC)
 _HASH_A = "a" * 64
@@ -41,33 +40,14 @@ _PATH = "/mnt/user-data/outputs/business-analysis.md"
 _TITLE = "2026 Q3 经营分析"
 
 
-class _ReviewerModel(BaseChatModel):
-    """通过可检查输入与调用参数的无网络模型替身。"""
+_LEAD_MODELS_BY_REVIEWER: dict[int, AnalysisChatOpenAI] = {}
 
-    max_tokens: int | None = None
-    responses: list[object] = Field(default_factory=list)
-    delay_seconds: float = 0
-    prompts: list[list[object]] = Field(default_factory=list)
-    invocation_kwargs: list[dict] = Field(default_factory=list)
-    _started: asyncio.Event = PrivateAttr(default_factory=asyncio.Event)
 
-    @property
-    def _llm_type(self) -> str:
-        return "synthetic-analysis-reviewer"
-
-    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-        raise AssertionError("Reviewer must use its async model entry point")
-
-    async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
-        self.prompts.append(messages)
-        self.invocation_kwargs.append(kwargs)
-        self._started.set()
-        if self.delay_seconds:
-            await asyncio.sleep(self.delay_seconds)
-        response = self.responses.pop(0) if self.responses else '{"approved":true,"reason_code":"approved"}'
-        if isinstance(response, BaseException):
-            raise response
-        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=str(response)))])
+@pytest_asyncio.fixture(autouse=True)
+async def _close_analysis_models():
+    clear_analysis_model_calls()
+    yield
+    await close_analysis_chat_models()
 
 
 def _runtime(user_id="user-1", *, thread_id="thread-1", run_id="run-1"):
@@ -107,24 +87,58 @@ class _Clock:
 class _Repo:
     """只替换仓储：记录真实用例交给它的不可变报告值。"""
 
-    def __init__(self, *, code=ReportPublishCode.PUBLISHED, stored=None, error=None):
+    def __init__(self, *, code=ReportPublishCode.PUBLISHED, stored=None, error=None, idempotent=False):
         self._code = code
         self._stored = stored
         self._error = error
+        self._idempotent = idempotent
         self.reports: list[AnalysisReport] = []
 
     async def publish(self, report):
-        self.reports.append(report)
         if self._error is not None:
             raise self._error
+        if self._idempotent:
+            existing = next((saved for saved in self.reports if saved.identity == report.identity), None)
+            if existing is not None:
+                code = ReportPublishCode.EXISTING if existing.same_publication(report) else ReportPublishCode.REPORT_CONFLICT
+                return ReportPublication(code=code, report=existing)
+        self.reports.append(report)
         return ReportPublication(code=self._code, report=self._stored if self._stored is not None else report)
 
     async def list_for_principal(self, **_kwargs):  # pragma: no cover - 用例不调用读取侧
         raise AssertionError("publish must not read the index")
 
 
-def _bind(repo) -> None:
-    bind_analytics_services(SimpleNamespace(publish_report=PublishAnalysisReport(repository=repo, clock=_Clock(), id_issuer=lambda: "report-1")))
+def _bind(repo, *, metrics=None) -> None:
+    bind_analytics_services(
+        SimpleNamespace(
+            publish_report=PublishAnalysisReport(repository=repo, clock=_Clock(), id_issuer=lambda: "report-1"),
+            metrics=_MetricCatalog((_metric(),) if metrics is None else metrics),
+        )
+    )
+
+
+class _MetricCatalog:
+    def __init__(self, metrics):
+        self.metrics = tuple(metrics)
+        self.calls: list[str] = []
+
+    async def list_accessible(self, *, principal_id):
+        self.calls.append(principal_id)
+        return self.metrics
+
+
+def _metric() -> MetricDefinition:
+    return MetricDefinition(
+        key="revenue",
+        owner_id="OWNER_SECRET_SENTINEL",
+        name="收入",
+        description="登记收入定义",
+        expression="sum(amount)",
+        dimensions=("region",),
+        version=2,
+        status=MetricStatus.ACTIVE,
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -193,7 +207,7 @@ def test_report_writer_schema_has_only_content_and_evidence_fields():
     assert set(schema.model_json_schema()["properties"]) == {"title", "markdown", "evidence_ids"}
 
 
-def _writer_runtime(capability=None, *, evidence_collector=None, reviewer=None, user_id="user-1", thread_id="thread-1", run_id="run-1"):
+def _writer_runtime(capability=None, *, evidence_collector=None, reviewer=None, roles=None, user_id="user-1", thread_id="thread-1", run_id="run-1"):
     runtime = _runtime(user_id=user_id, thread_id=thread_id, run_id=run_id)
     if evidence_collector is not None:
         from deerflow.constants import ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY
@@ -203,6 +217,17 @@ def _writer_runtime(capability=None, *, evidence_collector=None, reviewer=None, 
         from deerflow.constants import ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY
 
         runtime.context[ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY] = reviewer
+    if user_id is not None:
+        from app.analytics.agent.roles import create_analysis_roles_capability
+        from deerflow.constants import ANALYSIS_ROLES_CONTEXT_KEY
+
+        if roles is None:
+            source_model = _LEAD_MODELS_BY_REVIEWER.get(id(reviewer)) if reviewer is not None else None
+            if source_model is None:
+                source_model = create_analysis_chat_model()
+            roles = create_analysis_roles_capability(principal_id=user_id, thread_id=thread_id, run_id=run_id)
+            assert roles.bind_lead_model(principal_id=user_id, thread_id=thread_id, run_id=run_id, model=source_model)
+        runtime.context[ANALYSIS_ROLES_CONTEXT_KEY] = roles
     if capability is not None:
         from deerflow.constants import ANALYSIS_REPORT_WRITER_CONTEXT_KEY
 
@@ -214,18 +239,23 @@ def _reviewer_capability(*, principal_id="user-1", thread_id="thread-1", run_id=
     from app.analytics.agent.reviewer import create_analysis_report_reviewer_capability
 
     reviewer = create_analysis_report_reviewer_capability(principal_id=principal_id, thread_id=thread_id, run_id=run_id)
-    model = _ReviewerModel(responses=list(responses or []), delay_seconds=delay_seconds)
+    model = create_analysis_chat_model(
+        reviewer_responses=list(responses or []),
+        reviewer_delay_seconds=delay_seconds,
+    )
     assert reviewer.bind_lead_model(principal_id=principal_id, thread_id=thread_id, run_id=run_id, model=model)
+    _LEAD_MODELS_BY_REVIEWER[id(reviewer)] = model
     return reviewer, model
 
 
-def _successful_run_evidence(*, principal_id="user-1", thread_id="thread-1", run_id="run-1"):
+def _successful_run_evidence(*, principal_id="user-1", thread_id="thread-1", run_id="run-1", artifact_verified=True):
     from app.analytics.agent.evidence import (
         AnalyticsQueryEvidence,
         AnalyticsQueryToolResult,
         canonical_json,
-        create_analysis_run_evidence_collector,
     )
+    from app.analytics.agent.evidence_bridge import create_durable_analysis_run_evidence_collector
+    from app.analytics.application.evidence_ports import StoredAnalysisEvidence
     from app.analytics.domain import DatasourceEngine, QueryCostEstimate, QueryExecutionResult, QueryRisk
 
     columns = ("amount",)
@@ -253,12 +283,37 @@ def _successful_run_evidence(*, principal_id="user-1", thread_id="thread-1", run
         truncated=query_result.truncated,
         evidence=evidence,
     )
-    collector = create_analysis_run_evidence_collector(principal_id=principal_id, thread_id=thread_id, run_id=run_id)
-    assert collector.record_success(
+    artifact_path = f"/mnt/user-data/outputs/query-result-{run_id}-{evidence.evidence_id}.json"
+    record = StoredAnalysisEvidence(principal_id, thread_id, run_id, result, artifact_path, _NOW)
+
+    class EvidenceRepository:
+        async def put(self, candidate):
+            self.record = candidate
+
+        async def get_many(self, requested_principal, requested_thread, requested_run, evidence_ids):
+            if (requested_principal, requested_thread, requested_run) != (principal_id, thread_id, run_id):
+                return ()
+            return (record,) if evidence_ids == (evidence.evidence_id,) else ()
+
+    class ArtifactCapability:
+        def matches(self, requested_principal, requested_thread, requested_run):
+            return (requested_principal, requested_thread, requested_run) == (principal_id, thread_id, run_id)
+
+        def virtual_path_for(self, evidence_id):
+            return f"/mnt/user-data/outputs/query-result-{run_id}-{evidence_id}.json"
+
+        async def write(self, candidate):
+            return candidate == record
+
+        async def verify(self, candidate):
+            return artifact_verified and candidate == record
+
+    collector = create_durable_analysis_run_evidence_collector(
         principal_id=principal_id,
         thread_id=thread_id,
         run_id=run_id,
-        result=result,
+        repository=EvidenceRepository(),
+        artifact_capability=ArtifactCapability(),
     )
     return collector, evidence.evidence_id
 
@@ -286,14 +341,14 @@ async def test_report_writer_writes_then_indexes_and_returns_only_a_safe_receipt
 
     capability = _writer_capability(monkeypatch, tmp_path)
     collector, evidence_id = _successful_run_evidence()
-    reviewer, _model = _reviewer_capability()
+    reviewer, reviewer_model = _reviewer_capability()
     runtime = _writer_runtime(capability, evidence_collector=collector, reviewer=reviewer)
-    markdown = "# Synthetic\n\nREPORT_BODY_SENTINEL SELECT SQL_SENTINEL\n"
+    markdown = "# Synthetic\n\nREPORT_BODY_SENTINEL 987654 SELECT SQL_SENTINEL\n"
     repo = _Repo()
     _bind(repo)
 
     command = await agent_reports.write_analysis_report.coroutine(
-        title=_TITLE,
+        title="利润下降 987654%",
         markdown=markdown,
         evidence_ids=[evidence_id],
         runtime=runtime,
@@ -302,10 +357,34 @@ async def test_report_writer_writes_then_indexes_and_returns_only_a_safe_receipt
 
     assert isinstance(command, Command)
     expected_path = "/mnt/user-data/outputs/analysis-report-run-1.md"
-    assert capability.output_path.read_text(encoding="utf-8") == markdown
+    published_markdown = capability.output_path.read_text(encoding="utf-8")
+    assert published_markdown.startswith("# 经营分析报告")
+    assert "42" in published_markdown
+    assert "REPORT_BODY_SENTINEL" not in published_markdown
+    assert "987654" not in published_markdown
+    assert "SQL_SENTINEL" not in published_markdown
+    assert '"expression": "sum(amount)"' in published_markdown
+    assert "OWNER_SECRET_SENTINEL" not in published_markdown
+    reviewer_payload = json.loads(reviewer_model.prompts[0][1].content)
+    assert reviewer_payload["verified_claims"] == [
+        {
+            "id": "cell-claim",
+            "operation": "cell",
+            "calculated_value": "42",
+            "source_references": [{"evidence_id": evidence_id, "row_index": 0, "column_name": "amount"}],
+            "unit": None,
+            "period": None,
+            "unit_reference": None,
+            "period_reference": None,
+            "rounded": False,
+            "references_truncated_snapshot": False,
+        }
+    ]
     assert command.update["artifacts"] == [expected_path]
     assert len(repo.reports) == 1
     assert repo.reports[0].artifact_path == expected_path
+    assert repo.reports[0].title == "经营分析报告"
+    assert [call["role"] for call in AnalysisChatOpenAI.calls] == ["data_analyst", "report_writer", "reviewer"]
     receipt = json.loads(command.update["messages"][0].content)
     assert receipt == {
         "code": "published",
@@ -315,6 +394,73 @@ async def test_report_writer_writes_then_indexes_and_returns_only_a_safe_receipt
     }
     assert "REPORT_BODY_SENTINEL" not in json.dumps([message.model_dump() for message in command.update["messages"]])
     assert "principal_id" not in receipt and "thread_id" not in receipt and "run_id" not in receipt
+
+
+@pytest.mark.asyncio
+async def test_report_writer_rejects_an_unavailable_numeric_reference_before_review_or_write(monkeypatch, tmp_path):
+    capability = _writer_capability(monkeypatch, tmp_path)
+    collector, evidence_id = _successful_run_evidence()
+    reviewer, model = _reviewer_capability()
+    model.data_responses = [
+        json.dumps(
+            {
+                "claims": [
+                    {
+                        "id": "false-claim",
+                        "operation": "cell",
+                        "operands": [{"evidence_id": "f" * 64, "row_index": 0, "column_name": "amount"}],
+                        "decimal_places": 0,
+                        "unit_reference": None,
+                        "period_reference": None,
+                    }
+                ],
+                "labels": [{"claim_id": "false-claim", "label": "Revenue"}],
+            }
+        )
+    ]
+    runtime = _writer_runtime(capability, evidence_collector=collector, reviewer=reviewer)
+    repo = _Repo()
+    _bind(repo)
+
+    result = await agent_reports.write_analysis_report.coroutine(
+        title="request",
+        markdown="request",
+        evidence_ids=[evidence_id],
+        runtime=runtime,
+        tool_call_id="call-false-claim",
+    )
+
+    assert isinstance(result, str)
+    assert _body(result) == {"code": "analysis_role_numeric_validation_failed"}
+    assert [call["role"] for call in AnalysisChatOpenAI.calls] == ["data_analyst"]
+    assert repo.reports == []
+    assert not capability.output_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_report_with_empty_metric_directory_states_the_missing_definition_limit(monkeypatch, tmp_path):
+    capability = _writer_capability(monkeypatch, tmp_path)
+    collector, evidence_id = _successful_run_evidence()
+    reviewer, _model = _reviewer_capability()
+    runtime = _writer_runtime(capability, evidence_collector=collector, reviewer=reviewer)
+    repo = _Repo()
+    _bind(repo, metrics=())
+
+    result = await agent_reports.write_analysis_report.coroutine(
+        title="收入下降 123%",
+        markdown="核对本次结果并说明趋势",
+        evidence_ids=[evidence_id],
+        runtime=runtime,
+        tool_call_id="call-empty-metrics",
+    )
+
+    assert hasattr(result, "update")
+    report = capability.output_path.read_text(encoding="utf-8")
+    assert "未登记可用指标口径，本报告仅核对结果单元格与固定算式" in report
+    assert "未提供" in report
+    assert "123%" not in report
+    assert "经营分析报告" in report
+    assert repo.reports[0].title == "经营分析报告"
 
 
 @pytest.mark.asyncio
@@ -398,7 +544,7 @@ async def test_report_writer_rejects_oversized_review_input_without_model_or_wri
     )
 
     assert isinstance(result, str)
-    assert _body(result) == {"code": "analysis_review_input_too_large"}
+    assert _body(result) == {"code": "analysis_role_input_too_large"}
     assert model.prompts == []
     assert repo.reports == []
     assert not capability.output_path.exists()
@@ -478,13 +624,13 @@ async def test_report_writer_index_failure_leaves_reusable_file_but_no_success_r
     )
     assert isinstance(failed, str)
     assert _body(failed) == {"code": "analytics_unavailable"}
-    assert capability.output_path.read_text(encoding="utf-8") == markdown
+    assert capability.output_path.read_text(encoding="utf-8").startswith("# 经营分析报告")
 
     clear_analytics_services()
     successful_repo = _Repo()
     _bind(successful_repo)
     retried = await agent_reports.write_analysis_report.coroutine(
-        title=_TITLE,
+        title="经营分析报告",
         markdown=markdown,
         evidence_ids=[evidence_id],
         runtime=runtime,
@@ -521,6 +667,7 @@ async def test_report_writer_same_run_same_evidence_and_content_retry_remains_ex
         id="report-original",
         run_id="run-1",
         artifact_path="/mnt/user-data/outputs/analysis-report-run-1.md",
+        title="经营分析报告",
         evidence_ids=(evidence_id,),
     )
     retry_repo = _Repo(code=ReportPublishCode.EXISTING, stored=stored)
@@ -553,7 +700,7 @@ async def test_concurrent_report_variants_share_two_review_slots_and_create_only
         ]
     )
     runtime = _writer_runtime(capability, evidence_collector=collector, reviewer=reviewer)
-    repo = _Repo()
+    repo = _Repo(idempotent=True)
     _bind(repo)
 
     async def publish(markdown: str, call_id: str):
@@ -572,10 +719,10 @@ async def test_concurrent_report_variants_share_two_review_slots_and_create_only
     )
 
     codes = [json.loads(result.update["messages"][0].content)["code"] if isinstance(result, Command) else _body(result)["code"] for result in results]
-    assert sorted(codes) == ["analysis_review_attempt_limit", "published", "report_conflict"]
-    assert capability.output_path.read_text(encoding="utf-8") in {"# Variant A\n", "# Variant B\n"}
+    assert sorted(codes) == ["analysis_role_attempt_limit", "existing", "published"]
+    assert capability.output_path.read_text(encoding="utf-8").startswith("# 经营分析报告")
     assert len(repo.reports) == 1
-    assert len(model.prompts) == 2
+    assert len(model.prompts) == 1
 
 
 @pytest.mark.asyncio
@@ -618,6 +765,30 @@ async def test_report_writer_rejects_unregistered_evidence_before_any_write(monk
 
     assert isinstance(result, str)
     assert _body(result) == {"code": "analysis_evidence_unavailable"}
+    assert repo.reports == []
+    assert not capability.output_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_report_writer_rejects_durable_evidence_when_its_fixed_file_does_not_match(monkeypatch, tmp_path):
+    capability = _writer_capability(monkeypatch, tmp_path)
+    collector, evidence_id = _successful_run_evidence(artifact_verified=False)
+    reviewer, model = _reviewer_capability()
+    runtime = _writer_runtime(capability, evidence_collector=collector, reviewer=reviewer)
+    repo = _Repo()
+    _bind(repo)
+
+    result = await agent_reports.write_analysis_report.coroutine(
+        title=_TITLE,
+        markdown="# Must not be reviewed or written\n",
+        evidence_ids=[evidence_id],
+        runtime=runtime,
+        tool_call_id="call-missing-query-file",
+    )
+
+    assert isinstance(result, str)
+    assert _body(result) == {"code": "analysis_evidence_unavailable"}
+    assert model.prompts == []
     assert repo.reports == []
     assert not capability.output_path.exists()
 

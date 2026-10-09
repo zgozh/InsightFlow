@@ -6,7 +6,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-import { PixelBlackHole } from "./pixel-black-hole";
+import { BlackHole } from "./black-hole";
 
 export type HeroProps = {
   className?: string;
@@ -33,15 +33,20 @@ export function Hero({
     <div
       className={cn("relative w-full overflow-hidden bg-[#0a0a0a]", className)}
     >
-      <div className="container-md mx-auto grid min-h-[92svh] w-full grid-cols-1 items-center gap-3 px-4 pt-20 pb-4 md:grid-cols-2 md:gap-8 md:py-16">
+      <BlackHole />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 bg-[linear-gradient(90deg,rgba(5,6,10,.85)_0%,rgba(5,6,10,.5)_36%,transparent_70%)] max-md:bg-[linear-gradient(180deg,rgba(5,6,10,.4),rgba(5,6,10,.62)_45%,transparent_85%)]"
+      />
+      <div className="container-md relative mx-auto flex min-h-[92svh] w-full items-center px-6 pt-20 pb-12 md:px-10 md:py-16">
         <div
           data-testid="hero-copy"
-          className="relative z-10 flex flex-col items-center text-center md:items-start md:text-left"
+          className="relative z-10 flex max-w-[35rem] flex-col items-start text-left max-md:pb-32"
         >
-          <h1 className="text-5xl leading-tight font-bold break-words md:text-6xl">
+          <h1 className="text-5xl leading-tight font-bold tracking-tight break-words text-[#fff6e7] md:text-6xl">
             {productName}
           </h1>
-          <p className="mt-4 max-w-4xl text-2xl leading-snug font-semibold text-balance md:text-4xl">
+          <p className="mt-5 max-w-4xl text-2xl leading-snug font-semibold text-balance text-[#fff0dc] md:text-4xl">
             {headline}
           </p>
           <p
@@ -51,25 +56,14 @@ export function Hero({
             {description}
           </p>
           <Link href="/workspace">
-            <Button className="mt-5 h-11 px-5" size="lg">
+            <Button
+              className="mt-7 h-12 border border-[#ffd9a0]/30 bg-[#ffc078] px-6 text-[#241207] shadow-[0_0_35px_#e68b3825] hover:bg-[#ffcf98]"
+              size="lg"
+            >
               <span className="text-md">{enterLabel}</span>
               <ChevronRightIcon className="size-4" />
             </Button>
           </Link>
-        </div>
-        <div
-          data-testid="hero-art"
-          className="relative mx-auto h-60 w-full max-w-[32rem] overflow-hidden md:h-[min(64svh,36rem)] md:max-w-none"
-        >
-          <PixelBlackHole />
-          <div
-            className="pointer-events-none absolute inset-0"
-            aria-hidden="true"
-            style={{
-              background:
-                "radial-gradient(ellipse at center, rgba(8, 8, 10, 0.1) 0%, rgba(8, 8, 10, 0.02) 62%, rgba(8, 8, 10, 0.3) 100%)",
-            }}
-          />
         </div>
       </div>
     </div>

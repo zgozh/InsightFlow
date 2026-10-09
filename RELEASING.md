@@ -1,6 +1,6 @@
-# Releasing DeerFlow
+# Releasing InsightFlow
 
-DeerFlow releases are **tag-driven**: pushing a `v*` git tag triggers the
+InsightFlow container releases are **tag-driven**: pushing a `v*` git tag triggers the
 publishing workflows. There is no separate release script that bumps versions —
 the maintainer bumps the version sources, updates the changelog, commits, and
 tags. The helper scripts below keep the version sources in lockstep, and CI
@@ -56,7 +56,7 @@ distinguishes it from a release.
    `## [2.1.0] — YYYY-MM-DD` (note the em dash `—`), and add a link reference
    at the bottom of the file:
    ```
-   [2.1.0]: https://github.com/bytedance/deer-flow/releases/tag/v2.1.0
+   [2.1.0]: https://github.com/zgozh/InsightFlow/releases/tag/v2.1.0
    ```
    Start a fresh `## [Unreleased]` section above it for the next cycle.
 3. **Commit** the version + changelog changes:
@@ -73,8 +73,8 @@ distinguishes it from a release.
 
 ### Release candidates
 
-Release-candidate tags must include the same prerelease suffix in all four
-version fields. For example, before tagging `v2.1.0-rc0`, run
+Release-candidate tags must include the same prerelease suffix in both version
+source files and the tag. For example, before tagging `v2.1.0-rc0`, run
 `bash scripts/bump_version.sh 2.1.0-rc0`, refresh `backend/uv.lock` with
 `cd backend && uv lock`, and run `bash scripts/verify_versions.sh 2.1.0-rc0`
 from the repository root. Commit the version and lockfile changes before
@@ -96,13 +96,15 @@ Phase 5 之后不再发布 Helm chart 与 Provisioner 镜像。
 `.github/workflows/nightly.yaml` runs on a schedule (and `workflow_dispatch`)
 to publish the same two images from unreleased `main`. It is
 **not** gated by the version check (there is no `v*` tag) and it does **not**
-touch the `latest` tag, which stays pinned to the last `v*` release. Every job
-is gated on `github.repository == 'bytedance/deer-flow'`, so it only runs on
-the upstream repo - a scheduled run or manual dispatch on a fork skips all jobs.
+touch the `latest` tag, which stays pinned to the last `v*` release. Nightly jobs
+still require the literal repository condition
+`github.repository == 'bytedance/deer-flow'`; therefore they skip this InsightFlow
+repository. This condition describes current workflow behavior, not a product brand
+or a claim that nightly publishing works here.
 
 Artifacts (under the running repo's owner, where `<date>` is `YYYYMMDD`):
 
-- Images: `ghcr.io/<owner>/deer-flow-{backend,frontend}:nightly`
+- Images follow the workflow pattern `ghcr.io/<owner>/<repo>-{backend,frontend}:nightly`
   (rolling, overwritten each run) and `:nightly-<date>` (pinned to a day, but
   mutable within it - a same-day re-dispatch overwrites it). For a truly
   immutable pin, use `:sha-<short>`.

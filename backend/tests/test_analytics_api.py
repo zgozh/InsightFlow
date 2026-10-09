@@ -329,6 +329,53 @@ def test_admin_metric_owner_comes_from_the_session_not_the_body(services):
     assert response.status_code == 422
 
 
+def test_metric_grants_require_admin_and_are_visible_only_after_explicit_grant(services):
+    path = "/api/analytics/admin/metrics/revenue/grants/user-9"
+    anonymous = _client(services)
+    ordinary = _as(_client(services), f"{_USER}:user")
+    admin = _as(_client(services), f"{_ADMIN}:admin")
+    foreign_admin = _as(_client(services), "admin-2:admin")
+
+    payload = {"key": "revenue", "name": "Revenue", "description": "Total revenue", "expression": "sum(amount)", "version": 1, "status": "active"}
+    assert admin.post("/api/analytics/admin/metrics", json=payload).status_code == 200
+
+    assert anonymous.get("/api/analytics/admin/metrics/revenue/grants").status_code == 401
+    assert ordinary.get("/api/analytics/admin/metrics/revenue/grants").status_code == 403
+    assert ordinary.put(path).status_code == 403
+    assert ordinary.delete(path).status_code == 403
+    assert ordinary.get("/api/analytics/metrics").json() == {"metrics": []}
+    assert admin.get("/api/analytics/metrics").json()["metrics"][0]["key"] == "revenue"
+
+    granted = admin.put(path)
+    assert granted.status_code == 200 and granted.json() == {"principal_id": _USER, "granted": True}
+    assert admin.put(path).json() == {"principal_id": _USER, "granted": True}
+    ordinary_catalog = ordinary.get("/api/analytics/metrics")
+    assert ordinary_catalog.status_code == 200
+    assert ordinary_catalog.json()["metrics"][0]["key"] == "revenue"
+    assert admin.get("/api/analytics/admin/metrics/revenue/grants").json() == {"principal_ids": [_USER]}
+    assert admin.get("/api/analytics/metrics").json()["metrics"][0]["key"] == "revenue"
+
+    assert admin.put(path, json={}).status_code == 422
+    assert foreign_admin.get("/api/analytics/admin/metrics/revenue/grants").status_code == 404
+    assert foreign_admin.put(path).status_code == 404
+    assert foreign_admin.delete(path).status_code == 404
+
+    revoked = admin.delete(path)
+    assert revoked.status_code == 200 and revoked.json() == {"removed": True}
+    assert admin.delete(path).json() == {"removed": True}
+    assert ordinary.get("/api/analytics/metrics").json() == {"metrics": []}
+
+
+def test_metric_grant_routes_reject_invalid_principals_and_only_accept_path_identity(services):
+    admin = _as(_client(services), f"{_ADMIN}:admin")
+    payload = {"key": "revenue", "name": "Revenue", "description": "Total revenue", "expression": "sum(amount)", "version": 1, "status": "draft"}
+    assert admin.post("/api/analytics/admin/metrics", json=payload).status_code == 200
+
+    assert admin.put("/api/analytics/admin/metrics/revenue/grants/bad%0Auser").status_code == 422
+    assert admin.get("/api/analytics/admin/metrics/revenue/grants?principal_id=other").json() == {"principal_ids": []}
+    assert admin.put("/api/analytics/admin/metrics/revenue/grants/user-9", json={"principal_id": "other"}).status_code == 422
+
+
 # --- plan / execute ---------------------------------------------------------
 
 

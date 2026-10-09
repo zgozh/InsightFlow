@@ -107,13 +107,19 @@ AIO sandbox 在独立容器中运行 Agent 命令。设置 `sandbox.use` 为
 | `plan_ttl_seconds` | 60 | 一次性查询计划有效期 |
 | `audit_page_size` | 50 | 审计与报告索引的默认分页大小；服务端上限为 100 |
 
-`max_result_rows` 是传输上限。服务端按授权的 SQL 行数下调每次计划的结果上限，因此
-查询自身的 `LIMIT 10` 不会被默认值拒绝。客户端不能提交或提高这些限制。
+LOW 风险查询沿用启动配置；服务端把 `max_result_rows` 与授权 SQL 行数取较小值，因此查询
+自身的 `LIMIT 10` 不会被默认值拒绝。MEDIUM 风险以语义授权结果为准，将全局
+`statement_timeout_ms`、`max_result_rows` 和 `max_result_bytes` 分别减半（向下取整，并保持
+领域下界），再将行数预算与授权 SQL 行数取较小值。若某项全局预算已到合法下界、无法严格
+收紧，服务端写入 PLAN 阶段拒绝审计并以 `cost_limit_exceeded` 返回，不签发计划；审计不可用时
+返回 `audit_unavailable`。客户端不能提交或提高这些限制。
 
 凭证引用所指向的 JSON 环境变量包含 `engine`、`host`、`port`、`database`、
 `username`、`password)，并可包含 `tls_mode` 或 `ca_pem)。关闭 TLS 仅允许连接
-loopback 主机。Agent 的 `inspect_business_catalog`、`query_business_data` 和
-`publish_analysis_report` 工具调用相同的受控服务，不能绕开授权计划直接连接登记数据源。
+loopback 主机。Agent 的 `inspect_business_catalog` 和 `query_business_data` 使用受控数据源服务，
+查询不能绕开授权计划直接连接登记数据源。Gateway analysis composition 提供的
+`write_analysis_report` 需要本 run 的成功查询证据与 writer capability，才能写入固定报告 artifact
+并登记索引。现有 `publish_analysis_report` 仍只登记已存在 artifact 的索引，不负责写文件或连接数据源。
 
 ## 排查与权威来源
 

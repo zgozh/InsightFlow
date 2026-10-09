@@ -10,6 +10,10 @@ import {
   cursorPairIsConsistent,
   datasourceListSchema,
   datasourceViewSchema,
+  metricGrantListSchema,
+  metricGrantRemovalSchema,
+  metricGrantResponseSchema,
+  metricPrincipalIdSchema,
   metricViewSchema,
   parseExternal,
   queryAuditPageSchema,
@@ -71,6 +75,51 @@ function report(overrides: Record<string, unknown> = {}) {
 }
 
 describe("analytics response schemas", () => {
+  test("accepts strict metric grant responses and rejects malformed acknowledgements", () => {
+    expect(
+      parseExternal(metricGrantListSchema, { principal_ids: ["user-1"] }),
+    ).toEqual({ principal_ids: ["user-1"] });
+    expect(
+      metricGrantResponseSchema.safeParse({
+        principal_id: "user-1",
+        granted: true,
+      }).success,
+    ).toBe(true);
+    expect(
+      metricGrantResponseSchema.safeParse({
+        principal_id: "user-1",
+        granted: false,
+      }).success,
+    ).toBe(false);
+    expect(
+      metricGrantRemovalSchema.safeParse({ removed: true, extra: "ignored?" })
+        .success,
+    ).toBe(false);
+    expect(
+      metricGrantListSchema.safeParse({ principal_ids: [], extra: true })
+        .success,
+    ).toBe(false);
+  });
+
+  test("principal IDs are bounded and exclude edge whitespace and controls", () => {
+    expect(metricPrincipalIdSchema.safeParse("u").success).toBe(true);
+    expect(metricPrincipalIdSchema.safeParse("x".repeat(64)).success).toBe(
+      true,
+    );
+    for (const principalId of [
+      "",
+      " user",
+      "user ",
+      "x".repeat(65),
+      "a\nuser",
+      "a\u0085user",
+    ]) {
+      expect(metricPrincipalIdSchema.safeParse(principalId).success).toBe(
+        false,
+      );
+    }
+  });
+
   test("parses the user datasource catalogue", () => {
     const parsed = parseExternal(datasourceListSchema, {
       datasources: [datasource()],

@@ -1,10 +1,11 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { type PromptInputMessage } from "@/components/ai-elements/prompt-input";
+import { AnalysisStagePanel } from "@/components/analytics/analysis-stage-panel";
 import { AnalyticsTracePanel } from "@/components/analytics/analytics-trace-panel";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { ArtifactTrigger } from "@/components/workspace/artifacts";
@@ -32,6 +33,8 @@ import { TodoList } from "@/components/workspace/todo-list";
 import { TokenUsageIndicator } from "@/components/workspace/token-usage-indicator";
 import { useActiveGoal } from "@/components/workspace/use-active-goal";
 import { Welcome } from "@/components/workspace/welcome";
+import { readAnalysisPrefill } from "@/core/analytics/analysis-prefill";
+import { useAnalysisStages } from "@/core/analytics/use-analysis-stages";
 import { useAuth } from "@/core/auth/AuthProvider";
 import { hasPermission, PERMISSIONS } from "@/core/auth/permissions";
 import { useI18n } from "@/core/i18n/hooks";
@@ -77,6 +80,18 @@ export default function ChatPage({ mode = "chat" }: ChatPageProps) {
   const analyticsTraceEnabled = analysisMode;
   const { threadId, setThreadId, isNewThread, setIsNewThread, isMock } =
     useThreadChat();
+  const searchParams = useSearchParams();
+  const analysisPrefill = readAnalysisPrefill(
+    searchParams,
+    analysisMode && isNewThread,
+  );
+  // 目录预填使用当前新分析的 ID，保留聊天与无预填分析的 `new` 草稿。
+  const draftThreadId =
+    analysisMode && isNewThread && analysisPrefill
+      ? threadId
+      : isNewThread
+        ? "new"
+        : threadId;
   // `isNewThread` tracks whether the backend has the thread yet — gates the
   // SDK's history fetch (see issue #2746).  `isWelcomeMode` is the visual
   // welcome layout (centered input, hero, quick actions); we flip it to false
@@ -88,6 +103,13 @@ export default function ChatPage({ mode = "chat" }: ChatPageProps) {
   >(null);
   const [settings, setSettings] = useThreadSettings(threadId);
   const [localSettings, setLocalSettings] = useLocalSettings();
+  const analysisStageEnabled =
+    analysisMode && !isMock && env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true";
+  const analysisStages = useAnalysisStages({
+    threadId,
+    enabled: analysisStageEnabled,
+    backfillEnabled: analysisStageEnabled && !isNewThread,
+  });
   const { tokenUsageEnabled } = useModels();
   const threadTokenUsage = useThreadTokenUsage(
     isNewThread || isMock ? undefined : threadId,
@@ -131,6 +153,10 @@ export default function ChatPage({ mode = "chat" }: ChatPageProps) {
     threadKind: analysisMode ? "analysis" : undefined,
     context: settings.context,
     isMock,
+    onStreamMetadata: analysisStages.onStreamMetadata,
+    onCustomEvent: analysisStages.onCustomEvent,
+    onRunSettled: analysisStages.onRunSettled,
+    onReplayGap: analysisStages.onRunSettled,
     // onSend only animates the UI; do NOT flip `isNewThread` here — the
     // LangGraph SDK eagerly fetches /history the moment it receives a
     // thread id and assumes the thread exists on the backend (issue #2746).
@@ -367,6 +393,14 @@ export default function ChatPage({ mode = "chat" }: ChatPageProps) {
               </div>
             </header>
             <main className="flex min-h-0 max-w-full grow flex-col">
+              {analysisMode && !isWelcomeMode && (
+                <AnalysisStagePanel
+                  events={analysisStages.events}
+                  runStatus={analysisStages.runStatus}
+                  isLoading={analysisStages.isLoading}
+                  unavailable={analysisStages.unavailable}
+                />
+              )}
               <div className="flex min-h-0 flex-1 overflow-hidden">
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">
                   <div className="flex min-h-0 flex-1 justify-center">
@@ -479,7 +513,8 @@ export default function ChatPage({ mode = "chat" }: ChatPageProps) {
                             )}
                             isWelcomeMode={isWelcomeMode}
                             threadId={threadId}
-                            draftThreadId={isNewThread ? "new" : threadId}
+                            draftThreadId={draftThreadId}
+                            initialValue={analysisPrefill}
                             autoFocus={isWelcomeMode}
                             status={
                               thread.error

@@ -8,16 +8,19 @@ import {
   AuditHistoryList,
   DatasourceCatalogTable,
   isCatalogEmpty,
+  MetricCatalogTable,
   ReportCatalogList,
 } from "@/components/analytics/analytics-catalog-views";
 import { AnalyticsRequestError } from "@/core/analytics/api";
 import type {
   AnalysisReportView,
   DatasourceView,
+  MetricView,
   QueryAuditView,
 } from "@/core/analytics/types";
 import { DEFAULT_LOCALE } from "@/core/i18n";
-import { I18nProvider } from "@/core/i18n/context";
+import { clientTranslations } from "@/core/i18n/client-translations";
+import { I18nContext, I18nProvider } from "@/core/i18n/context";
 
 /**
  * 只替换工作台外壳：真实的 `WorkspaceHeader` 依赖侧边栏 Provider 与路由上下文，
@@ -78,6 +81,19 @@ function datasourceView(
     name: "Orders warehouse",
     engine: "postgresql",
     default_schema: "public",
+    status: "active",
+    ...overrides,
+  };
+}
+
+function metricView(overrides: Partial<MetricView> = {}): MetricView {
+  return {
+    key: "net_revenue",
+    name: "Net revenue",
+    description: "Revenue after refunds",
+    expression: "gross_revenue - refunds",
+    dimensions: ["month"],
+    version: 2,
     status: "active",
     ...overrides,
   };
@@ -299,6 +315,20 @@ describe("DatasourceCatalogTable", () => {
     expect(document.body.textContent).toContain("Not available");
   });
 
+  it("提供指向新建分析的可编辑数据源问题，不自动开始运行", () => {
+    render(wrap(<DatasourceCatalogTable datasources={[datasourceView()]} />));
+
+    const action = screen.getByRole("link", {
+      name: "Analyze data source “Orders warehouse”",
+    });
+    const href = new URL(action.getAttribute("href")!, "https://example.test");
+    expect(href.pathname).toBe("/workspace/analysis/new");
+    expect(href.searchParams.get("prompt")).toContain("Orders warehouse");
+    expect(screen.getByRole("table")).toBeTruthy();
+    // A catalogue action navigates with a draft prompt; it has no submit path.
+    expect(screen.queryByRole("button", { name: /send/i })).toBeNull();
+  });
+
   it("宽表放在可聚焦的内部滚动容器里，横向滚动不撑宽页面", () => {
     render(wrap(<DatasourceCatalogTable datasources={[datasourceView()]} />));
     const region = screen.getByRole("region", { name: "Data sources" });
@@ -312,6 +342,60 @@ describe("DatasourceCatalogTable", () => {
     const table = screen.getByRole("table");
     expect(region.contains(table)).toBe(true);
     expect(table.className).toContain("min-w-");
+  });
+});
+
+describe("MetricCatalogTable", () => {
+  it("offers a localized analysis action to ordinary catalogue viewers", () => {
+    render(wrap(<MetricCatalogTable metrics={[metricView()]} />));
+
+    const action = screen.getByRole("link", {
+      name: "Analyze metric “Net revenue” (net_revenue)",
+    });
+    const href = new URL(action.getAttribute("href")!, "https://example.test");
+    expect(href.pathname).toBe("/workspace/analysis/new");
+    expect(href.searchParams.get("prompt")).toContain("net_revenue");
+    expect(href.searchParams.get("prompt")).toContain("Net revenue");
+    expect(screen.queryByRole("button", { name: /edit/i })).toBeNull();
+  });
+
+  it("localizes the metric action and prompt in Chinese", () => {
+    render(
+      <I18nContext.Provider
+        value={{
+          locale: "zh-CN",
+          setLocale: () => undefined,
+          t: clientTranslations["zh-CN"],
+        }}
+      >
+        <MetricCatalogTable metrics={[metricView()]} />
+      </I18nContext.Provider>,
+    );
+
+    const action = screen.getByRole("link", {
+      name: "分析指标“net_revenue”（Net revenue）",
+    });
+    const href = new URL(action.getAttribute("href")!, "https://example.test");
+    expect(action.textContent).toBe("分析此指标");
+    expect(href.searchParams.get("prompt")).toContain("当前账号授权范围内");
+  });
+
+  it("keeps the analysis action beside administrator row actions", () => {
+    render(
+      wrap(
+        <MetricCatalogTable
+          metrics={[metricView()]}
+          renderActions={() => <button type="button">Edit</button>}
+        />,
+      ),
+    );
+
+    expect(
+      screen.getByRole("link", {
+        name: "Analyze metric “Net revenue” (net_revenue)",
+      }),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Edit" })).toBeTruthy();
   });
 });
 

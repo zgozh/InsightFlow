@@ -1303,7 +1303,7 @@ def test_apply_checkpoint_to_run_config_writes_checkpoint_fields():
     )
     config = {"configurable": {"thread_id": "thread-1"}}
 
-    asyncio.run(apply_checkpoint_to_run_config(config, body=body, thread_id="thread-1", request=request))
+    assert asyncio.run(apply_checkpoint_to_run_config(config, body=body, thread_id="thread-1", request=request)) is None
     assert checkpointer.seen_config == {
         "configurable": {
             "thread_id": "thread-1",
@@ -1315,6 +1315,53 @@ def test_apply_checkpoint_to_run_config_writes_checkpoint_fields():
     assert config["configurable"]["checkpoint_id"] == "ckpt-1"
     assert config["configurable"]["checkpoint_ns"] == ""
     assert config["configurable"]["checkpoint_map"] == {"": "ckpt-1"}
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("producer_status", "producer_thread_id", "producer_user_id", "expected"),
+    [
+        ("interrupted", "thread-1", "user-1", "producer-1"),
+        ("error", "thread-1", "user-1", "producer-1"),
+        ("running", "thread-1", "user-1", None),
+        ("success", "thread-other", "user-1", None),
+        ("error", "thread-1", "user-other", None),
+    ],
+)
+async def test_apply_checkpoint_returns_only_terminal_owner_thread_producer(monkeypatch, producer_status, producer_thread_id, producer_user_id, expected):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from app.gateway import services
+
+    checkpointer = SimpleNamespace(
+        aget_tuple=AsyncMock(
+            return_value=SimpleNamespace(
+                metadata={"deerflow_analysis_run_id": "producer-1"},
+                checkpoint={"channel_values": {}},
+            )
+        )
+    )
+    producer = SimpleNamespace(
+        status=producer_status,
+        thread_id=producer_thread_id,
+        user_id=producer_user_id,
+    )
+    run_manager = SimpleNamespace(get=AsyncMock(return_value=producer))
+    monkeypatch.setattr(services, "get_checkpointer", lambda _request: checkpointer)
+    monkeypatch.setattr(services, "get_run_manager", lambda _request: run_manager)
+    body = SimpleNamespace(checkpoint={"checkpoint_id": "ckpt-1"}, checkpoint_id=None)
+
+    producer_id = await services.apply_checkpoint_to_run_config(
+        {"configurable": {}},
+        body=body,
+        thread_id="thread-1",
+        request=SimpleNamespace(),
+        owner_user_id="user-1",
+    )
+
+    assert producer_id == expected
+    run_manager.get.assert_awaited_once_with("producer-1", user_id="user-1", raise_on_store_error=True)
 
 
 @pytest.mark.anyio
@@ -1694,11 +1741,13 @@ async def test_external_analysis_run_rejects_nonhuman_or_malformed_messages_befo
     owner = SimpleNamespace(id="analysis-spoof-owner", system_role="user")
     request, run_store, thread_store = _make_start_run_persistence_context()
     request.state = SimpleNamespace(user=owner, auth_source="session")
-    services = SimpleNamespace(config=SimpleNamespace(enabled=True))
+    evidence_repository = SimpleNamespace(put=lambda _record: None, get_many=lambda *_args: None)
+    services = SimpleNamespace(config=SimpleNamespace(enabled=True), analysis_evidence_repository=evidence_repository)
     request.app.state.analytics_services = services
     monkeypatch.setattr(services_module, "get_bound_analytics_services", lambda: services)
     monkeypatch.setattr(services_module, "create_analysis_report_writer_capability", lambda **_kwargs: object())
-    monkeypatch.setattr(services_module, "create_analysis_run_evidence_collector", lambda **_kwargs: object())
+    monkeypatch.setattr(services_module, "create_analysis_query_artifact_capability", lambda **_kwargs: object())
+    monkeypatch.setattr(services_module, "create_durable_analysis_run_evidence_collector", lambda **_kwargs: object())
     monkeypatch.setattr(services_module, "create_analysis_report_reviewer_capability", lambda **_kwargs: object())
 
     thread_id = f"analysis-spoof-{message_form}"
@@ -1803,7 +1852,8 @@ async def test_start_run_keeps_analysis_closed_without_bound_services_or_real_pr
     )
     await thread_store.create(thread_id := f"analysis-preflight-{bundle_matches_binding}-{user_id}", user_id=user_id, metadata={"analysis_mode": True})
 
-    bundle = SimpleNamespace(config=SimpleNamespace(enabled=True))
+    evidence_repository = SimpleNamespace(put=lambda _record: None, get_many=lambda *_args: None)
+    bundle = SimpleNamespace(config=SimpleNamespace(enabled=True), analysis_evidence_repository=evidence_repository)
     if bundle_matches_binding == "missing":
         request.app.state.analytics_services = None
         bound = None
@@ -1835,32 +1885,82 @@ async def test_start_run_keeps_analysis_closed_without_bound_services_or_real_pr
 
 
 @pytest.mark.asyncio
+async def test_start_run_fails_closed_before_agent_resolution_when_durable_evidence_repository_is_missing(_stub_app_config, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from fastapi import HTTPException
+
+    import app.gateway.services as services_module
+
+    user = SimpleNamespace(id="analysis-owner", system_role="user")
+    request, run_store, thread_store = _make_start_run_persistence_context()
+    request.state = SimpleNamespace(user=user, auth_source="session")
+    services = SimpleNamespace(config=SimpleNamespace(enabled=True), analysis_evidence_repository=None)
+    request.app.state.analytics_services = services
+    monkeypatch.setattr(services_module, "get_bound_analytics_services", lambda: services)
+    await thread_store.create("analysis-without-evidence-store", user_id=user.id, metadata={"analysis_mode": True})
+
+    with (
+        patch("app.gateway.services.resolve_agent_factory") as resolve_factory,
+        patch("app.gateway.services.run_agent") as run_agent,
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await services_module.start_run(
+            _run_create_request(context={"analysis_mode": False}),
+            "analysis-without-evidence-store",
+            request,
+            require_existing_thread=True,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == {"code": "analysis_mode_unavailable"}
+    resolve_factory.assert_not_called()
+    run_agent.assert_not_called()
+    assert await run_store.list_by_thread("analysis-without-evidence-store", user_id=None) == []
+
+
+@pytest.mark.asyncio
 async def test_start_run_binds_writer_capability_before_analysis_agent_start(_stub_app_config, monkeypatch):
     from types import SimpleNamespace
     from unittest.mock import patch
 
     import app.gateway.services as services_module
-    from deerflow.constants import ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY, ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY
+    from deerflow.constants import ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY, ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY, ANALYSIS_ROLES_CONTEXT_KEY
     from deerflow.runtime.user_context import reset_current_user, set_current_user
 
     user = SimpleNamespace(id="analysis-owner", system_role="user")
     request, _run_store, thread_store = _make_start_run_persistence_context()
     request.state = SimpleNamespace(user=user, auth_source="session")
-    services = SimpleNamespace(config=SimpleNamespace(enabled=True))
+    evidence_repository = SimpleNamespace(put=lambda _record: None, get_many=lambda *_args: None)
+    services = SimpleNamespace(config=SimpleNamespace(enabled=True), analysis_evidence_repository=evidence_repository)
     request.app.state.analytics_services = services
     monkeypatch.setattr(services_module, "get_bound_analytics_services", lambda: services)
     capability = object()
+
+    async def no_op(_record):
+        return True
+
+    artifact_capability = SimpleNamespace(
+        matches=lambda *_args: True,
+        write=no_op,
+        verify=no_op,
+        virtual_path_for=lambda evidence_id: f"/mnt/user-data/outputs/query-result-run-{evidence_id}.json",
+    )
     reviewer_capability = object()
+    roles_capability = object()
     monkeypatch.setattr(
         services_module,
         "create_analysis_report_writer_capability",
         lambda **kwargs: capability,
     )
+    monkeypatch.setattr(services_module, "create_analysis_query_artifact_capability", lambda **kwargs: artifact_capability)
     monkeypatch.setattr(
         services_module,
         "create_analysis_report_reviewer_capability",
         lambda **kwargs: reviewer_capability,
     )
+    monkeypatch.setattr(services_module, "create_analysis_roles_capability", lambda **kwargs: roles_capability)
     await thread_store.create("analysis-capability-bound", user_id=user.id, metadata={"analysis_mode": True})
     captured: dict[str, object] = {}
 
@@ -1879,6 +1979,7 @@ async def test_start_run_binds_writer_capability_before_analysis_agent_start(_st
                         "analysis_mode": False,
                         "__analysis_report_writer": {"forged": True},
                         ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY: {"forged": True},
+                        ANALYSIS_ROLES_CONTEXT_KEY: {"forged": True},
                         ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY: {"forged": True},
                     },
                     config={
@@ -1886,8 +1987,10 @@ async def test_start_run_binds_writer_capability_before_analysis_agent_start(_st
                             "analysis_mode": False,
                             "__analysis_report_writer": {"forged": True},
                             ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY: {"forged": True},
+                            ANALYSIS_ROLES_CONTEXT_KEY: {"forged": True},
                             ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY: {"forged": True},
-                        }
+                        },
+                        "recursion_limit": 100_000_000,
                     },
                 ),
                 "analysis-capability-bound",
@@ -1908,13 +2011,20 @@ async def test_start_run_binds_writer_capability_before_analysis_agent_start(_st
     assert ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY not in config["configurable"]
     assert ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY not in config["context"]
     assert ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY not in config["configurable"]
+    assert ANALYSIS_ROLES_CONTEXT_KEY not in config["context"]
+    assert ANALYSIS_ROLES_CONTEXT_KEY not in config["configurable"]
+    assert config["recursion_limit"] == 16
     assert run_context.analysis_report_writer is capability
+    from app.analytics.agent.evidence_bridge import DurableAnalysisRunEvidenceCollector
+
+    assert isinstance(run_context.analysis_evidence_collector, DurableAnalysisRunEvidenceCollector)
     assert run_context.analysis_evidence_collector.matches(user.id, "analysis-capability-bound", record.run_id)
     assert run_context.analysis_report_reviewer is reviewer_capability
+    assert run_context.analysis_roles is roles_capability
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failed_capability", ["writer", "evidence", "reviewer"])
+@pytest.mark.parametrize("failed_capability", ["writer", "evidence", "reviewer", "roles"])
 async def test_analysis_run_capability_failure_terminalizes_without_starting_graph(_stub_app_config, monkeypatch, failed_capability):
     from types import SimpleNamespace
     from unittest.mock import patch
@@ -1926,7 +2036,8 @@ async def test_analysis_run_capability_failure_terminalizes_without_starting_gra
     user = SimpleNamespace(id="analysis-owner", system_role="user")
     request, run_store, thread_store = _make_start_run_persistence_context()
     request.state = SimpleNamespace(user=user, auth_source="session")
-    services = SimpleNamespace(config=SimpleNamespace(enabled=True))
+    evidence_repository = SimpleNamespace(put=lambda _record: None, get_many=lambda *_args: None)
+    services = SimpleNamespace(config=SimpleNamespace(enabled=True), analysis_evidence_repository=evidence_repository)
     request.app.state.analytics_services = services
     monkeypatch.setattr(services_module, "get_bound_analytics_services", lambda: services)
     if failed_capability == "writer":
@@ -1939,16 +2050,32 @@ async def test_analysis_run_capability_failure_terminalizes_without_starting_gra
         monkeypatch.setattr(services_module, "create_analysis_report_writer_capability", lambda **kwargs: object())
         monkeypatch.setattr(
             services_module,
-            "create_analysis_run_evidence_collector",
+            "create_analysis_query_artifact_capability",
+            lambda **kwargs: object(),
+        )
+        monkeypatch.setattr(
+            services_module,
+            "create_durable_analysis_run_evidence_collector",
             lambda **kwargs: (_ for _ in ()).throw(ValueError("synthetic collector failure")),
         )
-    else:
+    elif failed_capability == "reviewer":
         monkeypatch.setattr(services_module, "create_analysis_report_writer_capability", lambda **kwargs: object())
-        monkeypatch.setattr(services_module, "create_analysis_run_evidence_collector", lambda **kwargs: object())
+        monkeypatch.setattr(services_module, "create_analysis_query_artifact_capability", lambda **kwargs: object())
+        monkeypatch.setattr(services_module, "create_durable_analysis_run_evidence_collector", lambda **kwargs: object())
         monkeypatch.setattr(
             services_module,
             "create_analysis_report_reviewer_capability",
             lambda **kwargs: (_ for _ in ()).throw(ValueError("synthetic reviewer failure")),
+        )
+    else:
+        monkeypatch.setattr(services_module, "create_analysis_report_writer_capability", lambda **kwargs: object())
+        monkeypatch.setattr(services_module, "create_analysis_query_artifact_capability", lambda **kwargs: object())
+        monkeypatch.setattr(services_module, "create_durable_analysis_run_evidence_collector", lambda **kwargs: object())
+        monkeypatch.setattr(services_module, "create_analysis_report_reviewer_capability", lambda **kwargs: object())
+        monkeypatch.setattr(
+            services_module,
+            "create_analysis_roles_capability",
+            lambda **kwargs: (_ for _ in ()).throw(ValueError("synthetic analysis roles failure")),
         )
     await thread_store.create("analysis-capability-failed", user_id=user.id, metadata={"analysis_mode": True})
     graph_factory_calls: list[object] = []

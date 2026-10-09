@@ -1,4 +1,5 @@
 import errno
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -534,25 +535,26 @@ class TestMultipleMounts:
             ],
         )
 
-        # Mock subprocess to capture the resolved command. The POSIX path runs
-        # commands via subprocess.Popen, so wrap that and still execute the real
-        # command.
+        # Capture the resolved command at the selected platform runner. Keep
+        # real POSIX execution, while Windows only needs to verify path mapping.
         captured = {}
-        original_popen = __import__("subprocess").Popen
+        runner = "_run_windows_command" if os.name == "nt" else "_run_posix_command"
+        original_runner = getattr(LocalSandbox, runner)
 
-        def mock_popen(*args, **kwargs):
-            if len(args) > 0:
-                captured["command"] = args[0]
-            return original_popen(*args, **kwargs)
+        def capture_runner(args, timeout, env=None, **kwargs):
+            captured["command"] = args
+            if os.name == "nt":
+                return "", "", 0, False
+            return original_runner(args, timeout, env, **kwargs)
 
-        monkeypatch.setattr("deerflow.sandbox.local.local_sandbox.subprocess.Popen", mock_popen)
+        monkeypatch.setattr(LocalSandbox, runner, staticmethod(capture_runner))
         monkeypatch.setattr("deerflow.sandbox.local.local_sandbox.LocalSandbox._get_shell", lambda self: "/bin/sh")
 
         sandbox.execute_command("cat /mnt/data/test.txt")
         # Verify the command received the resolved local path
         command = captured.get("command", [])
         assert isinstance(command, list) and len(command) >= 3
-        assert str(data_dir) in command[2]
+        assert data_dir.as_posix() in command[2]
 
     def test_reverse_resolve_path_does_not_match_partial_prefix(self, tmp_path):
         foo_dir = tmp_path / "foo"

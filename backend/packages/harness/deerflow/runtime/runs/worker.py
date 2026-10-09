@@ -45,7 +45,9 @@ from deerflow.constants import (
     ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY,
     ANALYSIS_REPORT_STAGING_DIRNAME,
     ANALYSIS_REPORT_WRITER_CONTEXT_KEY,
+    ANALYSIS_ROLES_CONTEXT_KEY,
     CONVERSATION_READER_CONTEXT_KEY,
+    DEERFLOW_ANALYSIS_RUN_ID_METADATA_KEY,
     TOOL_RESULTS_DIRNAME,
 )
 from deerflow.runtime.checkpoint_mode import (
@@ -210,6 +212,7 @@ def _release_run_scoped_references(
         CURRENT_RUN_PRE_EXISTING_MESSAGE_IDS_KEY,
         CONVERSATION_READER_CONTEXT_KEY,
         ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY,
+        ANALYSIS_ROLES_CONTEXT_KEY,
         ANALYSIS_REPORT_WRITER_CONTEXT_KEY,
         ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY,
     }
@@ -227,6 +230,16 @@ def _release_run_scoped_references(
         pass
 
     seen_configs: set[int] = set()
+    closed_capabilities: set[int] = set()
+
+    def close_capability(key: str, value: Any) -> None:
+        if key not in {ANALYSIS_ROLES_CONTEXT_KEY, ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY} or value is None or id(value) in closed_capabilities:
+            return
+        closed_capabilities.add(id(value))
+        close = getattr(value, "close", None)
+        if callable(close):
+            close()
+
     handlers = [journal] if journal is not None else []
     for runnable_config in configs:
         if not isinstance(runnable_config, dict) or id(runnable_config) in seen_configs:
@@ -237,26 +250,21 @@ def _release_run_scoped_references(
             configurable.pop("__pregel_runtime", None)
             configurable.pop(CONVERSATION_READER_CONTEXT_KEY, None)
             configurable.pop(ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY, None)
+            configurable.pop(ANALYSIS_ROLES_CONTEXT_KEY, None)
             configurable.pop(ANALYSIS_REPORT_WRITER_CONTEXT_KEY, None)
             configurable.pop(ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY, None)
         context = runnable_config.get("context")
         if isinstance(context, dict):
             for key in internal_context_keys:
                 value = context.pop(key, None)
-                if key == ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY:
-                    close = getattr(value, "close", None)
-                    if callable(close):
-                        close()
+                close_capability(key, value)
         for handler in handlers:
             _remove_callback(runnable_config, handler)
 
     if isinstance(runtime_context, dict):
         for key in internal_context_keys:
             value = runtime_context.pop(key, None)
-            if key == ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY:
-                close = getattr(value, "close", None)
-                if callable(close):
-                    close()
+            close_capability(key, value)
 
 
 def _checkpoint_thread_lock(thread_id: str) -> AbstractAsyncContextManager[None]:
@@ -554,6 +562,7 @@ _SERVER_OWNED_RUNTIME_CONTEXT_KEYS: Final[frozenset[str]] = (
             DEERFLOW_TRACE_METADATA_KEY,
             CONVERSATION_READER_CONTEXT_KEY,
             ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY,
+            ANALYSIS_ROLES_CONTEXT_KEY,
             ANALYSIS_REPORT_WRITER_CONTEXT_KEY,
             ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY,
             "is_subagent",
@@ -582,6 +591,7 @@ def _build_runtime_context(
     analysis_report_writer: Any | None = None,
     analysis_evidence_collector: Any | None = None,
     analysis_report_reviewer: Any | None = None,
+    analysis_roles: Any | None = None,
 ) -> dict[str, Any]:
     """Build the dict that becomes ``ToolRuntime.context`` for the run.
 
@@ -611,6 +621,8 @@ def _build_runtime_context(
         runtime_ctx[ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY] = analysis_evidence_collector
     if analysis_report_reviewer is not None:
         runtime_ctx[ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY] = analysis_report_reviewer
+    if analysis_roles is not None:
+        runtime_ctx[ANALYSIS_ROLES_CONTEXT_KEY] = analysis_roles
     if task_store is not None:
         from deerflow_extension_api import EXTENSION_TASK_STORE_KEY
 
@@ -676,6 +688,8 @@ class RunContext:
     analysis_evidence_collector: Any | None = field(default=None)
     # Gateway 发行、Lead assembly 绑定所选 base model 的 run-local Reviewer。
     analysis_report_reviewer: Any | None = field(default=None)
+    # Gateway 发行、Lead assembly 绑定所选 base model 的固定分析角色能力。
+    analysis_roles: Any | None = field(default=None)
 
 
 def _install_runtime_context(config: dict, runtime_context: dict[str, Any]) -> None:
@@ -685,6 +699,7 @@ def _install_runtime_context(config: dict, runtime_context: dict[str, Any]) -> N
     if isinstance(configurable, dict):
         configurable.pop(CONVERSATION_READER_CONTEXT_KEY, None)
         configurable.pop(ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY, None)
+        configurable.pop(ANALYSIS_ROLES_CONTEXT_KEY, None)
         configurable.pop(ANALYSIS_REPORT_WRITER_CONTEXT_KEY, None)
         configurable.pop(ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY, None)
     existing_context = config.get("context")
@@ -824,6 +839,15 @@ def _bind_trace_id(config: dict[str, Any], runtime_ctx: dict[str, Any]) -> str:
     merged_metadata[DEERFLOW_TRACE_METADATA_KEY] = trace_id
     config["metadata"] = merged_metadata
     return trace_id
+
+
+def _stamp_checkpoint_producer_metadata(config: dict[str, Any], run_id: str) -> dict[str, Any]:
+    """以当前服务端 run_id 覆盖 checkpoint 来源字段。"""
+    incoming_metadata = config.get("metadata")
+    checkpoint_metadata = dict(incoming_metadata) if isinstance(incoming_metadata, dict) else {}
+    checkpoint_metadata[DEERFLOW_ANALYSIS_RUN_ID_METADATA_KEY] = run_id
+    config["metadata"] = checkpoint_metadata
+    return checkpoint_metadata
 
 
 def _defer_finalization_interrupt(
@@ -1140,6 +1164,7 @@ async def run_agent(
             ctx.analysis_report_writer,
             ctx.analysis_evidence_collector,
             ctx.analysis_report_reviewer,
+            ctx.analysis_roles,
         )
         # Bind every checkpoint produced by this run to the effective agent
         # identity that produced its state. Manual compaction uses only this
@@ -1151,10 +1176,7 @@ async def run_agent(
         else:
             configurable = config.get("configurable")
             checkpoint_agent_name = configurable.get("agent_name") if isinstance(configurable, dict) else None
-        checkpoint_metadata = config.get("metadata")
-        if not isinstance(checkpoint_metadata, dict):
-            checkpoint_metadata = {}
-            config["metadata"] = checkpoint_metadata
+        checkpoint_metadata = _stamp_checkpoint_producer_metadata(config, run_id)
         checkpoint_metadata[CHECKPOINT_AGENT_NAME_METADATA_KEY] = DEFAULT_AGENT_NAME_METADATA_VALUE if checkpoint_agent_name is None else checkpoint_agent_name
         _pin_admission_project_context(config, runtime_ctx)
         deerflow_trace_id = _bind_trace_id(config, runtime_ctx)
@@ -1538,6 +1560,34 @@ async def run_agent(
                     "Skipping durable finalization for run %s because this worker no longer owns its lease",
                     run_id,
                 )
+
+            if not record.ownership_lost and ctx.analysis_roles is not None:
+                finish_analysis = getattr(ctx.analysis_roles, "finish", None)
+                if callable(finish_analysis):
+                    try:
+                        finish_result = finish_analysis(status=record.status.value)
+                        if not inspect.isawaitable(finish_result):
+                            raise TypeError("analysis finish hook must be async")
+                        terminal_payloads = await finish_result
+                        if type(terminal_payloads) is not tuple or any(type(payload) is not dict for payload in terminal_payloads):
+                            raise TypeError("analysis finish hook must return a tuple of payloads")
+                        for payload in terminal_payloads:
+                            await bridge.publish(run_id, "custom", payload)
+                    except Exception:
+                        logger.warning("Failed to finalize analysis stages for run %s", run_id, exc_info=True)
+                        if record.status == RunStatus.success:
+                            try:
+                                await run_manager.set_status(
+                                    run_id,
+                                    RunStatus.error,
+                                    error="analysis_stage_unavailable",
+                                    **terminal_status_kwargs,
+                                )
+                            except Exception:
+                                logger.warning("Failed to mark run %s after analysis stage finalization failed", run_id, exc_info=True)
+                    except BaseException as exc:
+                        deferred_finalization_interrupt = _defer_finalization_interrupt(deferred_finalization_interrupt, exc)
+                        logger.warning("Analysis stage finalization was interrupted for run %s; completing cleanup first", run_id)
 
             if not record.ownership_lost and _is_edit_replay_run(record) and record.status != RunStatus.success:
                 if not record.finalizing:

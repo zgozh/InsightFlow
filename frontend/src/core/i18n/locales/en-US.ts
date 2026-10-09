@@ -241,7 +241,7 @@ export const enUS: Translations = {
     voiceInputStartLabel: "Dictate with voice",
     voiceInputStopLabel: "Stop voice input",
     voiceInputStart:
-      "Dictate with voice. DeerFlow receives only transcribed text; audio is handled by your browser or system speech service.",
+      "Dictate with voice. Your browser or system speech service transcribes it; InsightFlow receives the transcription text.",
     voiceInputStop: "Stop voice input",
     voiceInputListening: "Listening... Click to stop voice input.",
     voiceInputUnsupported:
@@ -561,10 +561,9 @@ export const enUS: Translations = {
 
   // Workspace
   workspace: {
-    officialWebsite: "DeerFlow's official website",
-    githubTooltip: "DeerFlow on GitHub",
+    githubTooltip: "Open the InsightFlow GitHub repository",
     settingsAndMore: "Settings and more",
-    visitGithub: "DeerFlow on GitHub",
+    visitGithub: "View InsightFlow on GitHub",
     reportIssue: "Report an issue",
     contactUs: "Contact us",
     about: "About InsightFlow",

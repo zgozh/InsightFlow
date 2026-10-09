@@ -1,4 +1,4 @@
-"""Analytics bounded context 自己的 ORM metadata 与六张持久化表（Phase 2C1）。
+"""Analytics bounded context 自己的 ORM metadata 与持久化表。
 
 为什么**不**继承 Harness 的 `deerflow.persistence.base.Base`：
 
@@ -25,6 +25,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     PrimaryKeyConstraint,
@@ -119,6 +120,24 @@ class MetricRow(AnalyticsBase):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class MetricGrantRow(AnalyticsBase):
+    __tablename__ = "analytics_metric_grants"
+    __table_args__ = (
+        PrimaryKeyConstraint("metric_owner_id", "metric_key", "principal_id", name="pk_analytics_metric_grants"),
+        ForeignKeyConstraint(
+            ["metric_owner_id", "metric_key"],
+            ["analytics_metrics.owner_id", "analytics_metrics.key"],
+            name="fk_analytics_metric_grants_metric",
+        ),
+        Index("ix_analytics_metric_grants_principal_id", "principal_id"),
+    )
+
+    metric_owner_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    metric_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    principal_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class ExecutionPlanRow(AnalyticsBase):
     __tablename__ = "analytics_execution_plans"
     __table_args__ = (
@@ -203,4 +222,24 @@ class AnalysisReportRow(AnalyticsBase):
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     # evidence 的**顺序**是发布内容的一部分：逐字重试相等，顺序不同即视为不同内容。
     evidence_ids_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AnalysisEvidenceRow(AnalyticsBase):
+    """成功查询的耐久结果载体，不引用 Harness 的 owner/thread/run 表。"""
+
+    __tablename__ = "analytics_query_evidence"
+    __table_args__ = (
+        PrimaryKeyConstraint("principal_id", "thread_id", "run_id", "evidence_id", name="pk_analytics_query_evidence"),
+        CheckConstraint("snapshot_bytes >= 0", name="ck_analytics_query_evidence_snapshot_bytes"),
+    )
+
+    principal_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    thread_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    evidence_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    snapshot_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    artifact_path: Mapped[str] = mapped_column(String(512), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

@@ -228,7 +228,7 @@ export const zhCN: Translations = {
     voiceInputStartLabel: "语音输入",
     voiceInputStopLabel: "停止语音输入",
     voiceInputStart:
-      "语音输入。DeerFlow 只接收转写文本，音频由浏览器或系统语音服务处理。",
+      "语音输入。浏览器或系统语音服务会先转写，InsightFlow 接收转写文本。",
     voiceInputStop: "停止语音输入",
     voiceInputListening: "正在聆听... 点击停止语音输入。",
     voiceInputUnsupported:
@@ -528,10 +528,9 @@ export const zhCN: Translations = {
 
   // Workspace
   workspace: {
-    officialWebsite: "访问 DeerFlow 官方网站",
-    githubTooltip: "访问 DeerFlow 的 GitHub 仓库",
+    githubTooltip: "打开 InsightFlow GitHub 仓库",
     settingsAndMore: "设置和更多",
-    visitGithub: "在 GitHub 上查看 DeerFlow",
+    visitGithub: "在 GitHub 上查看 InsightFlow",
     reportIssue: "报告问题",
     contactUs: "联系我们",
     about: "关于 InsightFlow",

@@ -18,6 +18,8 @@ export const analyticsZhCN: {
     landingDescription:
       "InsightFlow 把自然语言分析落在受控 SQL 与语义授权之上：模型只能提交经过策略校验的查询，每次执行都留下可复核的审计记录，结论必须带上证据编号。分析可信、口径可控、责任可追溯。",
     landingEnter: "进入工作台",
+    blackHolePhotoCredit: "标签页黑洞照片：EHT Collaboration（已裁切、缩放）",
+    blackHolePhotoSource: "原图 / ESO",
     landingSecurityTitle: "治理先于自动化",
     landingSecurityBody:
       "数据源凭据只以密钥引用形式登记，不落到前端；查询在受控 SQL 层被解析、改写并逐条校验，超出授权范围的函数、关联与敏感列直接拒绝。策略版本、Schema 版本与结果摘要一并写入审计记录，任何一次取数都能回溯到当时的授权状态。",
@@ -25,11 +27,11 @@ export const analyticsZhCN: {
     landingWorkflowBody:
       "提出问题后，系统先规划取数路径，再探查数据目录，随后提交受控查询。中间结果可以委派给子任务并行处理，产物与报告在发布时绑定证据编号。全流程以结构化事件记录，不展示也不需要模型的思维过程。",
     aboutTitle: "关于 InsightFlow",
-    aboutSlogan: "源于开源，回馈开源。",
-    aboutDerivation:
-      "InsightFlow 是 DeerFlow v2.1.0-rc0 的深度重构派生版本：保留上游的 MIT 许可与版权归属，在此基础上重建为受治理的企业数据分析产品。上游项目由 ByteDance 及 DeerFlow 社区维护。",
+    aboutSlogan: "受控分析，结论可追溯。",
+    aboutProject:
+      "InsightFlow 由个人开发者持续维护，是围绕数据目录、授权查询、证据复核与报告发布构建的经营分析工作台。",
     aboutLicense:
-      "本项目依据 MIT 许可证分发，原始版权归 DeerFlow 上游作者所有，完整许可证文本见仓库根目录 LICENSE 文件。",
+      "InsightFlow 按 MIT 许可证发布；完整许可条款与版权声明见仓库根目录 LICENSE。",
   },
 
   analytics: {
@@ -87,6 +89,10 @@ export const analyticsZhCN: {
       statusActive: "已启用",
       statusDisabled: "已停用",
       statusUnhealthy: "连接异常",
+      analyzeAction: "使用此数据源分析",
+      analyzeLabel: (name: string) => `使用数据源“${name}”分析`,
+      analysisPrompt: (name: string) =>
+        `请在当前账号可访问的目录和授权范围内，围绕数据源“${name}”分析业务表现，并说明主要发现。`,
     },
     schema: {
       title: "数据模型",
@@ -132,7 +138,7 @@ export const analyticsZhCN: {
       title: "指标",
       description:
         "查看分析使用的指标定义。管理员创建并启用指标，确保报告中的口径一致。",
-      empty: "当前账号还没有可用指标。请联系管理员定义并启用指标。",
+      empty: "当前账号没有可用指标。请联系管理员定义、启用并授予访问权限。",
       adminEmpty: "还没有指标定义。新建并启用指标后，分析才可引用。",
       key: "指标键",
       name: "指标名称",
@@ -151,6 +157,29 @@ export const analyticsZhCN: {
       confirmRetireBody:
         "下线后新的分析无法再引用该指标，历史报告中已固定的口径不受影响。",
       versionMustAdvance: "修改生效中的指标必须提升版本号。",
+      analyzeAction: "分析此指标",
+      analyzeLabel: (key: string, name: string) =>
+        `分析指标“${key}”（${name}）`,
+      analysisPrompt: (key: string, name: string) =>
+        `请在当前账号授权范围内，按照指标“${key}”（${name}）的定义口径分析其变化，并说明主要发现。`,
+      grants: {
+        action: "授权",
+        title: "指标访问授权",
+        description:
+          "可提前为草稿授权；指标启用后，获授权用户才会在指标目录中看到定义。数据源查询仍由独立的数据源访问策略控制。",
+        principalId: "用户 principal ID",
+        principalHint: "输入现有账号的 principal ID；此处不提供账号搜索。",
+        listTitle: "已授权 principal ID",
+        empty: "尚未授权任何用户。",
+        submit: "授予访问权限",
+        submitting: "正在授权…",
+        revoke: "撤销授权",
+        revoking: "撤销中…",
+        invalidPrincipal: "请输入 1–64 个字符，且不得包含首尾空白或控制字符。",
+        operationFailed: "操作失败，请重试。",
+        granted: "已授予访问权限。",
+        revoked: "已撤销访问权限。",
+      },
     },
     history: {
       title: "审计历史",
@@ -221,6 +250,72 @@ export const analyticsZhCN: {
       statusCompleted: "已完成",
       statusFailed: "失败",
       statusRejected: "已拒绝",
+    },
+    analysisStages: {
+      title: "分析阶段",
+      description: "仅显示本次分析已报告的安全阶段与观测值。",
+      empty: "本次运行尚无阶段记录。",
+      loading: "正在读取阶段记录…",
+      unavailable: "阶段记录暂时无法加载。",
+      runStatus: "运行状态",
+      duration: "耗时",
+      rows: "行数",
+      bytes: "字节",
+      inputTokens: "输入令牌",
+      outputTokens: "输出令牌",
+      risk: "风险",
+      code: "阶段说明",
+      reused: "复用",
+      stages: {
+        workflow: "工作流",
+        catalog: "目录",
+        sql: "SQL 执行",
+        authorization: "授权",
+        execution: "执行",
+        data: "数据",
+        writer: "报告撰写",
+        reviewer: "复核",
+        publish: "发布",
+      },
+      statuses: {
+        running: "执行中",
+        succeeded: "成功",
+        failed: "失败",
+        blocked: "受阻",
+        cancelled: "已取消",
+      },
+      risks: {
+        LOW: "低",
+        MEDIUM: "中",
+        HIGH: "高",
+        BLOCKED: "已阻止",
+      },
+      runStatuses: {
+        pending: "等待中",
+        running: "运行中",
+        error: "运行失败",
+        success: "运行完成",
+        timeout: "运行超时",
+        interrupted: "已中断",
+      },
+      codes: {
+        ok: "已完成",
+        unavailable: "能力暂不可用",
+        invalid_request: "请求无效",
+        invalid_response: "响应无效",
+        numeric_validation_failed: "数值校验失败",
+        attempt_limit: "尝试次数已达上限",
+        input_too_large: "输入超出限制",
+        policy_denied: "策略拒绝",
+        cost_limit: "成本超出限制",
+        query_failed: "查询失败",
+        query_timeout: "查询超时",
+        result_limit_reached: "结果达到上限",
+        evidence_unavailable: "证据不可用",
+        review_rejected: "复核未通过",
+        report_conflict: "报告发生冲突",
+        cancelled: "已取消",
+      },
     },
     analysis: {
       newTitle: "新建分析",

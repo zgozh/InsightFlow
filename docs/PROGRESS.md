@@ -1,5 +1,39 @@
 # InsightFlow Progress
 
+## 当前发布验收中断点（2026-10-09，最终收尾）
+
+功能验收已形成组合证据：普通聊天、受控分析、前端目录到分析可编辑预填、报告/下载/审计/阶段、SQL权限与风险预算、HTTP超时审计和连接清理、取消、PostgreSQL历史重启/checkpoint来源证据复用、真实未完成运行恢复均已验证。AS11的唯一服务器计算方案任务成功：model只选择无value运算计划，服务器Decimal计算；Data/Writer/Reviewer/Publish成功，task completed/attempt1/report1/evidence1，三个月及3901.25/两位小数/未知unit/owner scope/下载一致通过。Markdown期间需decode `&#45;` 后精确匹配。旧失败运行与policy/attempt拦截记录保留，不承诺任意输入始终成功。
+
+关键证据：[服务器计算协议](acceptance/2026-10-09-server-calculated-data-claims.md)、[最终场景矩阵](acceptance/2026-10-09-final-release-matrix.md)、[最终交付状态](acceptance/2026-10-09-final-delivery.md)、[真实PG复用及取消](acceptance/2026-10-09-live-checkpoint-and-cancel.md)、[未完成恢复](acceptance/2026-10-09-unfinished-run-recovery.md)、[HTTP超时](acceptance/2026-10-09-http-timeout-cancel-gates.md)。原始安全摘要和private IDs仅在被忽略的`.reviews/final-postgres-runtime-20261008/`，所有model claim保留，不得删除重发。
+
+Windows历史门禁定点修正通过；主会话补验共享proxy True参数1 passed，178项数字/角色/报告/Reviewer测试通过证据有效，不再重跑整套。Linux远程CI尚未执行，不能称CI全绿。双语README默认中文、Install中文、过时语言和重复架构说明已整理，法律来源与稳定包/机器字段保留。
+
+**最终源码与暂存审查已通过；本记录截于发布提交前。** 原29384入口已一次受控升级并完成独立post-check：首页/health/health-ready均200，匿名auth/me401；原PG/Redis/Nginx IDs与卷保留，新Gateway/Frontend目标镜像运行。完整apphome备份52文件、DB/WAL/SHM齐全，见[原入口最终部署](acceptance/2026-10-09-original-entry-final-rollout.md)。原Apply的执行器退出码未取回，不宣称该脚本exit0；真实部署状态由独立检查证明，禁止重放Apply。最新29388仍保留。Root已接受最终源码与306文件暂存审查；commit/push状态以Git记录为准，远程CI结果以Actions为准（本记录形成时尚未运行）。部署helper和备份均`.reviews/.../original-entry-rollout/`，禁止reset/clean/prune。
+
+下面为本日早期历史记录，不覆盖上述最新事实。
+
+## 2026-10-09 早期验收记录（历史）
+
+任务继续执行，最终边界仍为 AS-01～AS-15；PostgreSQL 必验、MySQL 可选。前端与角色链、确定性数值报告、阶段事件、显式 checkpoint 来源证据修补已实现并通过定点检查。不能宣称完整发布验收完成。
+
+最新切片：Gateway 曾最小更新为 c5a7；真实重测明确捕获 `label_domain` 两次，定位到展示标签校验阻断报告。已在既有解析器修复不合规标签的固定名称替代，数值/引用/ID校验不放宽，35项角色测试通过且主会话已独立审查。当前按 `docs/prompts/2026-10-09-label-repair-api-acceptance.md` 仅更新Gateway并用独立claim重测一次，原两个claim与失败证据保留，尚无成功报告结论。前端已有新建分析入口但没有资源picker/目录到分析衔接；用户要求真实页面闭环，不能以API-only代替。中文默认README与英文版已编写，多余语言版本已删，文档仍需最终状态更新与其余过时文档清理。用户强调保留成熟上游底座、冻结架构扩张；后续只做必要最小修复与现有机制复用。全部验收后commit/push，当前未提交。
+
+新独立验收入口 `http://127.0.0.1:29388` 已启动，项目 `iflow-final-pg-20261008`；Gateway/Redis healthy，Frontend/Nginx running。最终 Gateway 为 `sha256:c7fe6b3b50e02b99c427ac0240687c48db82475e698c0617e36c2c964ad39e63`，Frontend 为 `sha256:fae029bdcec4b8a82fc11d864e6ae9fc4c99892c2a62bac334583ddd61fd759c`。HTTP、应用 PostgreSQL 迁移/checkpointer 表、Gateway 内业务 PG verify_full 连接门禁通过，见[启动证据](acceptance/2026-10-09-gateway-context-repair-startup.md)。不重复初次 Apply；已存在的新项目只有受控 ResumePartial 路径可修复，健康状态无需重建。
+
+用户授权的旧29385/MySQL测试及2027旧演示共10个容器已删；4卷/2网保留。29384原演示5容器仍保留，但本轮检查均已停止，不当作在线入口；其他项目保留。PG fixture 29386 已恢复。正式 Dockerfile、锁、生产源码不因构建上下文遗漏被改写。
+
+最新真实正例已执行一次，**未通过**，见[验收记录](acceptance/2026-10-09-postgres-positive-analysis-live.md)。用户再次授权启动后，29388四服务及PG fixture已按原容器恢复，镜像身份guard通过。A/B与治理夹具已配置，管理员指标授权200、普通用户目录可见、管理403/匿名401；旧422未复现，不编造根因。首次受控查询成功返回3行并产生1份证据，但后续出现 policy_denied、SQL attempt_limit 与两次 numeric_validation_failed，最终 run error / workflow failed unavailable。34条耐久阶段事件已保存；报告与下载未验收通过。
+
+`.reviews/final-postgres-runtime-20261008/runtime-probes/positive-model-run.claim` **已存在，不得删除重发**。私有 `positive-analysis-private-context.json` 已通过哈希精确匹配保存原 thread/run IDs；安全终态摘要为 `runtime-probe-terminal-summary.json`。下一步只读诊断已有运行，按 `docs/prompts/2026-10-09-analysis-positive-failure-diagnosis.md` 定位 Data 数值校验及实际策略拒绝分支，再定点修复。不要再次处理已解决的身份汇总/PS编码/邮箱夹具问题，也不重复构建或初次Apply。
+
+剩余交付包括正例报告闭环、安全与失败/取消场景、调度、PostgreSQL重启/checkpoint续跑、原入口发布及能力文档。用户新增明确要求：默认 README.md 中文，仅保留中英文README；清理多余翻译与过时无用文档，按当前真实能力详细编写个人企业级项目说明，保留必要许可证/版权声明。**全部验收完成后 commit 并 push**，当前尚未提交或推送。保持 Luna/max 实施、主会话独立审查，复用有效证据。
+
+2026-10-08 恢复进展：用户已撤销暂停，AS-01～AS-15完整发布目标继续执行。指标授权后端与前端已闭合、独立审查并部署；用户手动恢复原 Nginx 后29384首页/health均200、五服务运行。隔离29385真实管理员UI授予/撤销与普通账号API/页面可见性通过，403/401权限边界符合预期，未修改真实账号权限，见[指标授权真实验收](acceptance/2026-10-08-metric-grants-live.md)。耐久证据Gateway bridge已完成；数字引用/固定算式基础33项定点检查、确定性报告基础12项检查通过并审查。固定内部角色能力及服务端接线现已冻结，待主会话审查；这些领域基础尚不代表AS07/08/10或完整发布已完成。暂停时历史事实保留在[中断点](INTERRUPTION.md)。
+
+2026-10-08 当前验收范围：PostgreSQL（AS-03）必验；MySQL（AS-02）保留为可选适配，既有 adapter/usecase 通过证据及[双库真实记录](acceptance/2026-10-08-controlled-query-live.md)继续有效，不要求追加 MySQL 自然语言模型、HTTP 或事件验收。专用 MySQL 容器已安全停止，卷、网络、DPAPI 凭据与历史记录保留；准确目标和可选恢复命令见[PostgreSQL 必验范围调整](acceptance/2026-10-08-postgres-only-acceptance.md)。角色接线待主会话审查，阶段事件与其余完整发布门禁仍未完成；Phase 6/发布保持 In progress。
+
+2026-10-07 6F3F21：全屏原创暖金细颗粒吸积盘、透镜弧与星场、动效暂停/静态退化、真实EHT照片favicon与CC BY4.0署名已交付。定点前端checks、主会话独立代码/双尺寸目视接受，生成脚本Ruff通过且资产SHA256不变。一次启动Docker Desktop后PG/Redis原ID恢复；Gateway/Frontend/Nginx启动命令遭自动审批拒绝，用户随后手动恢复，五服务健康核对通过。只更新固定栈Frontend，保留旧image回滚tag，其他四ID/三卷/29384入口不变；部署首页/health/favicon200、favicon32×32解码、双尺寸无溢出与完整截图完成，见[6F3F21](acceptance/phase-06f3f21-immersive-black-hole-landing.md)。[6F3F20](acceptance/phase-06f3f20-surprise-user-flow-and-release-triage.md)执行唯一欢迎卡片真实提交：预填不自动发送、精确deepseek-flash、1stream200、run success，同run write_file/present_files调用和结果各1，HTML持久产物及真实sandbox预览成功；按钮点击未观测交互变化，仍有残差，不重发模型。[当前能力证据](current-capabilities.md)已区分上游/二开、Lead/task/有限Reviewer与五角色目标，提供最多五项风险排序及简历措辞；两份README同步AS-14批准边界。主会话已独立目视接受本地与部署首页，并只读确认五容器running、三项health healthy、health/favicon200；用户已明确最终边界为AS-01～AS-15全部验收，Phase6/发布保持In progress；未提交、未push，没有第二个真实run。
+
 Baseline: DeerFlow `v2.1.0-rc0` (`769589e8daee14c2587a634b6b43bd96471a41a1`), immutable local tag `upstream-v2.1.0-rc0`. See [UPSTREAM.md](../UPSTREAM.md).
 
 ## Phase ledger
@@ -73,3 +107,9 @@ Size is governed by budget, not by a single file-count target. The upstream base
 - Phase 5B uses one independent commit per approved batch (B1–B5), with B5 depending on the retained state from earlier batches.
 - Phase 5B rollback follows reverse dependency order B5→B1; do not assume each deletion batch can be reverted independently.
 - Acceptance is release-level: see [docs/acceptance/acceptance-scenarios.md](acceptance/acceptance-scenarios.md).
+
+2026-10-07 AS-01/AS-15 里程碑 1：AS-01 认证门禁与 AS-15 默认四服务启动/readiness 均验收通过。隔离 Compose base+允许的资源 overlay 栈四服务 healthy，SQLite/loopback边界成立；readiness 正式 success/failure 三用例 3 passed。A/B self 资源为 200；匿名 thread/artifact/datasource routes 为 401 且不含现存 6 个合成 fixture 标记；B cross-owner thread/artifact 为 404、admin datasource 为 403。404 中仅反射请求方已提交的 thread UUID，随机不存在 thread/artifact 对照无存在性 oracle。A thread 无可提取 title、admin datasource list 0 条，未声称有不存在的对象值。分析工作台登录入口实际可用；SSE 已完成 run 的内容 replay 属 AS-09，不阻塞 AS-01。没有产品代码或模型调用；AS-01～AS-15/Phase 6/发布整体仍为 In progress。详见 [AS-01/AS-15 默认栈验证](acceptance/2026-10-07-as01-as15-default-stack.md) 与 [工作区/认证补证](acceptance/2026-10-07-as15-workspace-diagnosis.md)。
+
+2026-10-07 InsightFlow 产品文档与品牌收口：五语言 README、安装/贡献指南、当前功能/架构文档及前端用户文案已更新；保留 LICENSE 法律文本、机器配置/包标识及本机试用历史证据。固定 29384 验收栈已退出，本轮未重启或部署；AS-01～AS-15 整体仍为 In progress，详见[产品文档与品牌收口报告](acceptance/2026-10-07-insightflow-product-documentation.md)。
+
+2026-10-07 产品品牌复核修正：localhost 分享、记忆导出文件名、sidecar prompt、缺失静态 demo artifact 登记和指标目录能力描述已修正；受影响 typecheck/ESLint/Prettier、定点 12/12 Rstest 及 29384 landing 两项 Playwright 通过。只更新固定验收栈 Frontend，保留旧 image rollback tag、其余四容器和三卷；桌面/手机截图见[品牌复核报告](acceptance/2026-10-07-insightflow-product-documentation.md)。AS-01～AS-15 整体仍为 In progress。

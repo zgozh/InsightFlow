@@ -26,6 +26,7 @@ from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
+from app.analytics.agent.stages import ANALYSIS_STAGE_STORE_EVENT_TYPE, validate_analysis_stage_payload
 from app.gateway.artifact_archive import ArtifactArchiveError, ArtifactArchiveResult, build_artifact_archive
 from app.gateway.authz import require_cancel_permission_if, require_permission
 from app.gateway.checkpoint_lineage import (
@@ -1086,7 +1087,7 @@ async def _run_scope_user_id(request: Request) -> str | None:
     / ``list_by_run_ids`` order deterministically (latest wins, ``feedback_id``
     breaks ties) to keep that well-defined.
     """
-    user = getattr(request.state, "user", None)
+    user = getattr(getattr(request, "state", None), "user", None)
     if getattr(user, "system_role", None) == INTERNAL_SYSTEM_ROLE:
         return None
     return await get_current_user(request)
@@ -1730,6 +1731,10 @@ async def list_run_events(
     """
     event_store = get_run_event_store(request)
     types = event_types.split(",") if event_types else None
+    user_id = await _run_scope_user_id(request)
+    request_user = getattr(getattr(request, "state", None), "user", None)
+    if getattr(request_user, "system_role", None) == INTERNAL_SYSTEM_ROLE:
+        user_id = get_trusted_internal_owner_user_id(request) or str(request_user.id)
     events = await event_store.list_events(
         thread_id,
         run_id,
@@ -1737,8 +1742,18 @@ async def list_run_events(
         task_id=task_id,
         limit=limit,
         after_seq=after_seq,
+        user_id=user_id,
     )
     events = project_analytics_event_rows(events)
+    projected_events = []
+    for event in events:
+        if isinstance(event, dict) and event.get("event_type") == ANALYSIS_STAGE_STORE_EVENT_TYPE:
+            try:
+                event = {**event, "metadata": validate_analysis_stage_payload(event.get("metadata"), expected_run_id=run_id)}
+            except ValueError:
+                continue
+        projected_events.append(event)
+    events = projected_events
     return [
         {
             **event,

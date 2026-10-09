@@ -78,6 +78,8 @@ Analytics 拥有**自己的** SQLAlchemy `MetaData`（`AnalyticsBase`）与**自
 
 权限仍然默认拒绝：owner 只决定管理归属，**owner 本身不获得查询权限**；`get_accessible()` 要求存在与 principal 精确匹配的 policy 行且数据源为 `active`，`None` 从不表示跨用户查询。schema/policy 的 `replace` 必须携带 `expected_version`：完全相等幂等、内容不同但版本相同拒绝、当前版本不等于 expected 拒绝；metric 是 exact-owner scope 且版本只能前进。
 
+指标管理按 exact owner 查询和写入；普通 `MetricCatalog` 只返回 `active` 且由当前 principal 拥有或被精确授权的指标。grant 仅记录 `principal_id`，不查询账号资料；管理端每次先 exact-owner 校验指标，跨 owner 与不存在统一 404。没有 grant 默认不可读，`draft` 可预授权但始终不可读；`retired` 也不进入普通目录。跨 owner 同 key 若让一个 principal 同时匹配多个 active 指标，普通 list 隐去该 key，get 返回空值，管理员需撤销重复授权或为指标换 key。grant 只开放指标目录可见性，不替代 datasource policy。
+
 plan 的持久化是**明确的短期执行状态例外**：`analytics_execution_plans` 保存 Phase 2A 重新序列化后的 canonical SQL 与 opaque `secret_ref`，payload 上限 1 MiB、TTL 上限 300 秒，`claim()` 时立即删除。原始 token 永不落库（只存 SHA-256），摘要也永不写日志；不得把这段 SQL 复制进日志、异常、receipt 或审计。
 
 `SqlExecutionPlanStore.claim()` 只用**一条** `DELETE ... RETURNING`：先删除，再在 adapter 内校验 principal、过期与 payload。错 principal、过期、已领取、损坏与未知 payload 版本都已经被消费并统一返回 `PLAN_UNAVAILABLE`，失败后绝不恢复 token。禁止 SELECT-then-DELETE、dict 替代与 `asyncio.Lock`。
@@ -132,11 +134,15 @@ HTTP 契约（`/api/analytics`）的安全约束：
 - owner 不匹配与不存在统一 404（不泄露"存在但不是你的"），版本冲突 409，存储/驱动失败 503 且不带文本；
 - 审计读取只有 exact-principal：管理员也必须给出精确 `principal_id`，`*` 不是通配符。
 
-行数上限：`max_result_rows` 是**全局服务器上限，不是每条查询必须达到的下限**。`PlanAnalyticsQuery`
-在拿到服务端生成的 `AuthorizedQuerySpec` 后派生本次计划的 `ExecutionLimits`，只把该字段向下收紧到
-`min(配置上限, authorized.prepared.row_limit)`，其余字段固定来自启动配置。这是服务端派生而不是客户端
-override：上限只可能变小，`CreateQueryExecutionPlan` 里 `limits.max_result_rows <= prepared.row_limit`
-的校验继续作为纵深防御，plan payload 保存收紧后的 limits，execute 不会重新放宽。
+风险预算：`PlanAnalyticsQuery` 必须使用语义授权返回的 `AuthorizedQuerySpec.risk` 派生计划限额，不能
+使用更早的 syntax-policy 风险或客户端值。LOW 沿用服务器配置，并将全局 `max_result_rows` 与
+`authorized.prepared.row_limit` 取较小值；它不是每条查询必须达到的下限，因此小 `LIMIT` 不会被拒绝。
+MEDIUM 将全局 `statement_timeout_ms`、`max_result_rows` 和 `max_result_bytes` 分别减半（向下取整，且
+不低于领域合法下界 100ms/1/1），再将行数预算与授权 SQL 行数取较小值。若任一全局预算已在下界，无法
+严格收紧，则在 plan 创建前以 `cost_limit_exceeded` 拒绝并写 PLAN 阶段审计；审计失败返回
+`audit_unavailable`，且绝不调用 `CreateQueryExecutionPlan`。其他限额仍来自启动配置。以上都是服务端派生，
+不是客户端 override；plan payload 保存收紧后的 limits，execute 不会重新放宽，`CreateQueryExecutionPlan`
+里的 `limits.max_result_rows <= prepared.row_limit` 校验继续作为纵深防御。
 
 ## 安全数据分析 Agent 工作流（Phase 3）
 
@@ -150,21 +156,24 @@ Harness 自身不 import App，也没有 Analytics 专用开关。
   刻意**不**回退到 ambient ContextVar 或 `DEFAULT_USER_ID`：后者是未认证桶，把它当 principal 会让
   未认证路径落到一个字面量为 `default` 的账号上。取不到就是稳定的 `analytics_unavailable`。
 - `inspect_business_catalog` 无身份参数，只返回 datasource 的 `id/name/engine/default_schema/status`
-  与 metric 的 `key/name/description/dimensions/version/status`；不含 owner、`secret_ref`、policy 或内部版本。
+  与 metric 的 `key/name/description/expression/dimensions/version/status`；不含 owner、`secret_ref`、policy 或内部版本。
 - `query_business_data` 的参数**只有** `datasource_id` 与 `sql`，并在一次调用内完成 plan → execute：
   plan token 只活在函数局部变量里，绝不进入 ToolMessage、checkpoint、run event、日志、异常或 evidence。
   execute 失败不重新 plan、不自动重试；取消照常传播。
 - 成功执行返回确定性 evidence：`evidence_id` 是安全元数据 canonical JSON 的 SHA-256，`result_digest`
   是 canonical columns+rows 的 SHA-256。字段白名单固定，不含 SQL、token/digest、secret、DSN、异常文本或 PII。
   结果仍受 Phase 2 的列/行/字节上限约束。
-- Gateway 只在认证 analysis run 准入后发行绑定 principal/thread/run 的短生命周期 collector，并只通过
-  worker 的 `ToolRuntime.context` 传给固定查询与报告工具。`query_business_data` 只有在 plan→execute 得到
-  成功决定、构造规范 evidence 与有界结果后才登记快照；拒绝、异常、取消不登记。每 run 最多保存 20 项、
-  合计 16 MiB；快照仅含规范 evidence、列与有界 JSON 行，不含 raw SQL、plan token 或凭证。
-- `write_analysis_report` 在文件与索引写入前要求 evidence ID 非空、无重复并全部命中同一 collector 的成功
-  记录；未知、伪造、跨 owner/thread/run 或缺少 collector 均稳定拒绝。collector 是 run-local 内存对象，不是
-  进程级索引、checkpoint state、run event、对外回执或持久化 evidence 库。普通聊天不获此 collector，原有
-  受控查询返回行为保持不变，但不能据此获得受控报告资格。
+- Gateway 只在认证 analysis run 准入后发行绑定 principal/thread/run 的 `DurableAnalysisRunEvidenceCollector`
+  与固定查询结果文件能力，并只通过 worker 的 `ToolRuntime.context` 传给固定工具。持久化线程的清洗后
+  `analysis_mode` runtime marker 为真时，`query_business_data` 必须在数据库调用前确认耐久 collector、精确
+  scope 与当前 tool-call ID；普通聊天没有该 marker 与 collector，继续返回原有字符串结果。
+- 成功 analysis query 的顺序固定为：校验完整结果、`AnalysisEvidenceRepository.put`、写入固定 JSON artifact、
+  登记 run-local cache。每 run 最多 20 项、快照合计 16 MiB；artifact 只含 `canonical_json(result.to_payload())`，
+  不含 raw SQL、plan token 或凭证。repo 成功而文件失败可能留下孤立记录；报告解析必须重新读取 exact-scope
+  repository 并逐字节核验固定文件，不能从内存缓存、模型消息或 checkpoint 补回缺失文件。
+- `write_analysis_report` 在文件与索引写入前要求 evidence ID 非空、无重复并全部由当前 scope 的耐久记录与
+  固定 artifact 核验；未知、伪造、跨 owner/thread/run 或文件缺失/异文均整体拒绝，Reviewer 与发布都不会继续。
+  原 `AnalysisRunEvidenceCollector` 同步 API 保留供旧单元契约使用，但不再满足真实 analysis 发布门禁。
 
 Lead-only 与 subagent 隔离：DeerFlow 会把父级 tool group 原样继承给 subagent，因此
 `config.example.yaml` 用 operator-owned、**加法式**的 `subagents.agents.general-purpose.disallowed_tools`
@@ -224,6 +233,26 @@ LLM pass 只是流程门，不是数学证明；本语义不替代 AS-07/08/09/1
 不会导出内容。Reviewer 的 LangChain invocation 明确清空继承回调/标签/metadata，避免普通 RunJournal
 接收其原始输入与输出；不要改成 `RunnableBinding` 包装模型调用，因为 LangChain 会重新合并 ambient callbacks。
 
+**内部角色与可验证报告重建（Phase 6F3C）**：Gateway 仅为已认证 analysis run 签发同 principal/thread/run
+的 `AnalysisRolesCapability`，worker 只将其放入 `ToolRuntime.context`，并在所有正常、异常与取消结束路径
+关闭能力、清除 runtime/config 引用。Lead 首次组装时把最终选定的模型分别绑定给 roles 与 Reviewer；roles
+依赖 SDK 可安全克隆零重试客户端与传输，因此只接受 `ChatOpenAI` 及兼容子类。其他模型、缺少受限 token
+参数的 SDK 形态或客户端克隆失败均导致 analysis startup 以 `analysis_mode_unavailable` 失败，不降级为普通图。
+`inspect_business_catalog`、`query_business_data(datasource_id, sql)` 与
+`write_analysis_report(title, markdown, evidence_ids)` 的模型可见 schema 保持固定。
+
+analysis query 在 SQL 角色、授权 plan/execute、固定 evidence artifact 写入的整个链路持有 run-local 串行锁，
+每 run 最多开始 4 次（失败与取消也消耗预算），第 5 次在模型或 plan/DB 前稳定拒绝；普通聊天仍走原查询
+分支。Gateway 将 analysis run 的 LangGraph `recursion_limit` 固定为 16，覆盖客户端配置，普通聊天沿用现有
+服务端 clamp 与配置。此步骤上限补充角色与 query 预算，阻止 Lead 无限循环重调目录或工具。
+
+报告工具中的 `title` 与 `markdown` 仅是最多 200/8,192 字符的非可信请求描述；服务端读取 exact-scope
+durable evidence 与一次 `MetricService` 授权目录快照，再依次运行 Data Analyst 数字声明、服务器数值验证、
+Report Writer 布局和独立 Reviewer。发布正文由固定 renderer 生成，模型草稿、标题和未验证数字不会写入文件或
+索引。正文另附本次可见指标目录的公开字段快照；空目录明确说明没有登记口径，不能据此声称 SQL 业务语义
+或整体完整性。UTF-8 正文上限为 32 KiB；角色/目录/布局/Reviewer 任一步失败都不产生成功发布。
+Data Analyst 只返回无值的 `NumericClaimPlan`；服务器以 `calculate_numeric_claim_plans()` 从 exact evidence 执行 Decimal 算式，公开 `verify_numeric_claims()` 仍严格校验调用者断言值。
+
 ## 语言规范
 
 本模块新增或修改的注释、docstring、架构说明与复杂测试场景说明使用中文（见仓库级 `AGENTS.md`）。
@@ -238,3 +267,26 @@ Every `uv` command uses `--locked` so a user-level mirror index cannot rewrite `
 PYTHONPATH=. uv run --locked pytest tests/test_semantic_authorizer.py tests/test_authorize_prepared_query.py tests/test_query_authorization_domain.py tests/test_query_policy_domain.py tests/test_sql_policy.py tests/test_analytics_domain.py tests/test_analytics_boundaries.py tests/test_harness_boundary.py tests/test_agent_guidance_check.py -q
 uv run --locked ruff check app/analytics tests/test_semantic_authorizer.py tests/test_authorize_prepared_query.py tests/test_query_authorization_domain.py tests/test_query_policy_domain.py tests/test_sql_policy.py tests/test_analytics_boundaries.py
 ```
+
+### 耐久查询证据
+
+成功的 `AnalyticsQueryToolResult` 属于 domain evidence 契约；run-local `AnalysisRunEvidenceCollector`
+继续只服务当前 Gateway run。恢复需要跨 worker/重启的结果时，使用 Analytics 自己的
+`analytics_query_evidence` 表和 `AnalysisEvidenceRepository`，并始终精确绑定 principal、thread、run。
+表不引用 Harness 身份或 run 表；结果 artifact path 由服务端根据 run/evidence ID 固定派生。每 run
+最多 20 条、快照合计最多 16 MiB；SQLite 写入使用 `BEGIN IMMEDIATE`，PostgreSQL 使用独立的
+transaction advisory lock。读取必须对缺失、损坏或未知 payload 版本整体失败。Gateway bridge 已将 query tool
+接到该 repository 与固定 JSON artifact；repository 和文件系统之间不声称分布式原子事务，报告解析会再次核验
+固定文件，因此数据库有行本身不能证明 evidence 可用。
+
+### 显式 checkpoint 续跑来源
+
+LangGraph checkpoint metadata 只保存 Harness worker 无条件覆盖的 `deerflow_analysis_run_id`，它只证明该 checkpoint 的写入 run。Gateway 仅在请求显式选中 checkpoint 时，按当前 owner 查找 producer，并再次核对 owner、thread 和终结状态（`success`、`error`、`timeout`、`interrupted`）；没有该字段的旧 checkpoint 仍可续跑，但引用旧 evidence 时失败关闭。中断或失败 run 中已成功的 query 仍可恢复。
+
+每次报告解析最多检查当前 run 和一个已验证 producer 的 exact-scope evidence。每条结果都按其 run 派生的固定 artifact path 重读并逐字节核验；同一 evidence ID 在两个来源都出现、缺失、损坏或来源身份不符时整批拒绝。保留最多 20 条和 16 MiB 总快照预算；不扫描更早历史，也不把旧 evidence 复制成当前 run 的新查询。
+
+### 分析阶段事件
+
+Gateway 只为已认证 analysis run 签发绑定 principal/thread/run 与 `run_event_store` 的 `AnalysisRolesCapability`。阶段事件保持 `event: custom`，payload 完全遵循 `contracts/analysis-stage.v1.json`；`run_events` 使用 `event_type=analysis.stage`、`category=analysis`、空 content，并把相同 payload 保存为 metadata。metadata 中的 `seq` 是 run 内序号，不能替换存储记录的 thread 全局 seq。
+
+所有阶段先持久化再 live emit；阶段失败不能回传 SQL、结果行、provider 文本或存储异常。Harness worker 只通过服务端能力的异步 `finish(status=...)` 收束未完成阶段，不导入 `app.analytics`。GET `/threads/{thread_id}/runs/{run_id}/events` 只为 `analysis.stage` 严格投影合同 metadata，并沿用认证 owner 过滤。

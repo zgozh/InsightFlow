@@ -21,6 +21,8 @@ hot-reloaded top-level `recursion_limit` setting. A valid request-level value
 takes precedence; invalid values fall back to that default, and
 `max_recursion_limit` caps both sources.
 
+显式 checkpoint selector 通过目标 thread 的 checkpointer tuple 读取来源 metadata；唯一受信来源字段由 Harness worker 在每次 checkpoint 写入时覆盖为当前 server run ID。Gateway 仅对 analysis run 按 owner 查询该 run，并复核 owner、thread 与 terminal status 后，才签发本次 admission 局部的 producer artifact capability。普通输入、隐式 resume、旧 checkpoint 缺字段、跨 owner/thread 或仍运行的来源都不恢复历史 evidence。
+
 Durable MCP notifications use internal Agent runs. Keep their trusted delivery instruction outside the user-input boundary, and frame serialized remote events as untrusted before model invocation. Strict thread existence/ownership admission dead-letters events whose task outlives its deleted chat instead of recreating the thread.
 
 CORS is same-origin by default when requests enter through nginx on port 2026. Split-origin or port-forwarded browser clients must opt in with `GATEWAY_CORS_ORIGINS` (exact origins); Gateway `CORSMiddleware` and `CSRFMiddleware` both read that variable so browser CORS and auth-origin checks stay aligned. Those clients also need `CORS_EXPOSED_HEADERS` (`csrf_middleware.py`): run-creating routes return the run's id in `Content-Location`, which is not CORS-safelisted, so JS cannot read it unless it is exposed — and the LangGraph SDK resolves run metadata from that header alone, so withholding it breaks `useStream`'s `onCreated` and thread-gated actions.
@@ -185,4 +187,11 @@ PATCH、分支请求和 run 的 `context` / `configurable` 均不能设置或清
 认证 principal 与 run owner 一致且线程元数据检查成功后，Gateway 才能为当前 run 创建能力；能力
 固定 owner/thread/run、outputs 根目录和唯一 `.md` 路径。`__analysis_report_writer` 必须与其他
 服务端键一样从客户端 `context`/`configurable` 清除，并由 worker 再次拒绝 caller forged 值、在 run
-终结清理。此切片保留上述 `analysis_mode_unavailable` admission 门禁，当前 analysis 运行仍不可用。
+终结清理。耐久 evidence bridge 采用同一准入与身份边界：analysis run 必须具有真实的
+`analysis_evidence_repository.put/get_many` application port；Gateway 为其另行签发固定
+`query-result-{run_id}-{evidence_id}.json` 文件能力和耐久 collector。查询文件只接受仓储中的成功结果，
+create-only 写入 `/mnt/user-data/outputs/`，同字节重试幂等，异文冲突不覆盖。collector 缺失或任一能力无法
+签发时，以 `analysis_mode_unavailable` 终止 run，不能降级进入普通图。查询成功回执仍是规范结果 JSON，
+当前 `tool_call_id` 绑定 ToolMessage，固定 artifact path 只进入 `artifacts` state。报告解析必须从 exact
+principal/thread/run repository 重新读取并逐字节验证固定查询文件，再调用 Reviewer；SQL repo 与文件系统
+不做分布式事务，数据库孤立行不能单独作为可用 evidence。

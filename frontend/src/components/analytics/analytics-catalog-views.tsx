@@ -37,6 +37,7 @@ import {
   WorkspaceContainer,
   WorkspaceHeader,
 } from "@/components/workspace/workspace-container";
+import { newAnalysisPrefillHref } from "@/core/analytics/analysis-prefill";
 import { AnalyticsRequestError } from "@/core/analytics/api";
 import { abbreviateDigest, formatEngineCost } from "@/core/analytics/trace";
 import type {
@@ -458,7 +459,7 @@ export function DatasourceCatalogTable({
   const d = t.analytics.datasource;
   return (
     <AnalyticsTableScroll label={d.title}>
-      <table className="w-full min-w-[36rem] border-collapse text-sm">
+      <table className="w-full min-w-[44rem] border-collapse text-sm">
         <caption className="sr-only">{d.title}</caption>
         <thead>
           <tr className="border-border border-b text-left">
@@ -473,6 +474,9 @@ export function DatasourceCatalogTable({
             </th>
             <th scope="col" className="p-2 font-medium">
               {d.status}
+            </th>
+            <th scope="col" className="p-2 font-medium">
+              {d.analyzeAction}
             </th>
           </tr>
         </thead>
@@ -492,6 +496,18 @@ export function DatasourceCatalogTable({
               </td>
               <td className="p-2">
                 <AnalyticsDatasourceStatusPill status={datasource.status} />
+              </td>
+              <td className="p-2">
+                <Button asChild variant="outline" className="min-h-11 min-w-11">
+                  <Link
+                    href={newAnalysisPrefillHref(
+                      d.analysisPrompt(datasource.name),
+                    )}
+                    aria-label={d.analyzeLabel(datasource.name)}
+                  >
+                    {d.analyzeAction}
+                  </Link>
+                </Button>
               </td>
             </tr>
           ))}
@@ -550,7 +566,7 @@ export function MetricCatalogTable({
   const m = t.analytics.metric;
   return (
     <AnalyticsTableScroll label={m.title}>
-      <table className="w-full min-w-[52rem] border-collapse text-sm">
+      <table className="w-full min-w-[60rem] border-collapse text-sm">
         <caption className="sr-only">{m.title}</caption>
         <thead>
           <tr className="border-border border-b text-left">
@@ -574,6 +590,9 @@ export function MetricCatalogTable({
             </th>
             <th scope="col" className="p-2 font-medium">
               {m.status}
+            </th>
+            <th scope="col" className="p-2 font-medium">
+              {m.analyzeAction}
             </th>
             {renderActions && (
               <th scope="col" className="p-2 font-medium">
@@ -620,6 +639,18 @@ export function MetricCatalogTable({
               <td className="p-2 font-mono text-xs">{metric.version}</td>
               <td className="p-2">
                 <AnalyticsMetricStatusPill status={metric.status} />
+              </td>
+              <td className="p-2">
+                <Button asChild variant="outline" className="min-h-11 min-w-11">
+                  <Link
+                    href={newAnalysisPrefillHref(
+                      m.analysisPrompt(metric.key, metric.name),
+                    )}
+                    aria-label={m.analyzeLabel(metric.key, metric.name)}
+                  >
+                    {m.analyzeAction}
+                  </Link>
+                </Button>
               </td>
               {renderActions && (
                 <td className="p-2">{renderActions(metric)}</td>

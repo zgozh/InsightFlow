@@ -1,7 +1,18 @@
 from app.analytics.domain.access_policy import ColumnAccess, ColumnAccessRule, PrincipalAccessPolicy, RelationAccessRule
 from app.analytics.domain.audit import QueryAuditCompletion, QueryAuditPhase, QueryAuditRecord, QueryAuditStart, QueryAuditStatus
 from app.analytics.domain.authorization import AuthorizationDecisionCode, AuthorizedQuerySpec, QueryAuthorizationDecision
+from app.analytics.domain.claims import (
+    EvidenceCellReference,
+    NumericClaim,
+    NumericClaimError,
+    NumericClaimOperation,
+    NumericClaimPlan,
+    VerifiedNumericClaim,
+    calculate_numeric_claim_plans,
+    verify_numeric_claims,
+)
 from app.analytics.domain.datasource import DatasourceDefinition, DatasourceEngine, DatasourceStatus
+from app.analytics.domain.evidence import AnalyticsQueryEvidence, AnalyticsQueryToolResult, EvidenceError, validate_successful_query_result
 from app.analytics.domain.execution import (
     ExecutionDecisionCode,
     ExecutionLimits,
@@ -33,6 +44,17 @@ from app.analytics.domain.report import (
     normalize_report_artifact_path,
 )
 from app.analytics.domain.schema import ColumnSchema, ColumnSensitivity, RelationSchema, SchemaSnapshot
+from app.analytics.domain.verified_report import (
+    MAX_REPORT_CLAIM_LABEL_CHARACTERS,
+    MAX_REPORT_SECTION_CLAIMS,
+    MAX_VERIFIED_REPORT_BYTES,
+    ReportClaimLabel,
+    ReportSectionKind,
+    VerifiedReportError,
+    VerifiedReportLayout,
+    VerifiedReportSection,
+    render_verified_report,
+)
 
 __all__ = [
     "ANALYSIS_REPORT_ARTIFACT_ROOT",
@@ -42,6 +64,8 @@ __all__ = [
     "MAX_REPORT_ID_CHARACTERS",
     "MAX_REPORT_TITLE_CHARACTERS",
     "AnalysisReport",
+    "AnalyticsQueryEvidence",
+    "AnalyticsQueryToolResult",
     "AuthorizationDecisionCode",
     "AuthorizedQuerySpec",
     "ColumnAccess",
@@ -52,10 +76,19 @@ __all__ = [
     "DatasourceEngine",
     "DatasourceStatus",
     "ExecutionDecisionCode",
+    "EvidenceError",
+    "EvidenceCellReference",
     "ExecutionLimits",
     "JsonScalar",
     "MetricDefinition",
     "MetricStatus",
+    "MAX_REPORT_CLAIM_LABEL_CHARACTERS",
+    "MAX_REPORT_SECTION_CLAIMS",
+    "MAX_VERIFIED_REPORT_BYTES",
+    "NumericClaim",
+    "NumericClaimError",
+    "NumericClaimOperation",
+    "NumericClaimPlan",
     "PreparedQuery",
     "PrincipalAccessPolicy",
     "QueryAuthorizationDecision",
@@ -76,7 +109,17 @@ __all__ = [
     "RelationAccessRule",
     "RelationSchema",
     "ReportPublishCode",
+    "ReportClaimLabel",
+    "ReportSectionKind",
     "ReportStatus",
     "SchemaSnapshot",
+    "VerifiedNumericClaim",
+    "VerifiedReportError",
+    "VerifiedReportLayout",
+    "VerifiedReportSection",
+    "validate_successful_query_result",
     "normalize_report_artifact_path",
+    "render_verified_report",
+    "calculate_numeric_claim_plans",
+    "verify_numeric_claims",
 ]

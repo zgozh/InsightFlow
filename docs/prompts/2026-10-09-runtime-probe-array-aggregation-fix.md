@@ -1,0 +1,7 @@
+# 身份 guard 汇总集合的定点修复
+
+gpt-6-luna/max。只改runtime-probes/run_analysis_runtime_probe.ps1及准备验收记录；CJS/其他目录/启动器/源码不动。主会话独立复验：不带ExecuteOnce，固定已通过启动的c7fe6b3b50e02b99c427ac0240687c48db82475e698c0617e36c2c964ad39e63与fae029bdcec4b8a82fc11d864e6ae9fc4c99892c2a62bac334583ddd61fd759c，明确复现PSObject.op_Addition，ScriptStackTrace定位runner第116行（records累加附近）。无API/凭据访问。
+
+当前元数据inspect无内部引号、逐ID调用已能进汇总。最小修复records与publishedPorts聚合：使用固定 List[object] 与 Add（抑制Add返回值），或显式数组包装再追加，避免任何一步标量PSObject加法。保留所有既有身份/服务/状态/镜像/loopback/其他published port拒绝边界，保持No ExecuteOnce只验证然后explicit_execute_once_required结束。不要再修改native transport，不增新抽象/CLI模式/大型诊断。
+
+一轮正式无ExecuteOnce预检，应得到accepted=true的safe身份摘要后明确explicit_execute_once_required，绝不进入凭据/CJS/API/model。如果失败，把准确ScriptStackTrace行号与stable code交回，不能自报pass。PowerShell AST和直接diff检查即可，冻结actual diff与检查结果。

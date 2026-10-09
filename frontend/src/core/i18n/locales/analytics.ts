@@ -1,3 +1,11 @@
+import type {
+  AnalysisObservedRunStatus,
+  AnalysisStage,
+  AnalysisStageCode,
+  AnalysisStageRisk,
+  AnalysisStageStatus,
+} from "@/core/analytics/types";
+
 /**
  * InsightFlow 产品工作台的 i18n 契约（Phase 4）。
  *
@@ -24,9 +32,11 @@ export interface BrandingTranslations {
   landingWorkflowBody: string;
   aboutTitle: string;
   aboutSlogan: string;
-  /** 上游派生说明。必须保留，不得删除。 */
-  aboutDerivation: string;
+  /** 个人维护说明。 */
+  aboutProject: string;
   aboutLicense: string;
+  blackHolePhotoCredit: string;
+  blackHolePhotoSource: string;
 }
 
 export interface AnalyticsTranslations {
@@ -81,6 +91,9 @@ export interface AnalyticsTranslations {
     statusActive: string;
     statusDisabled: string;
     statusUnhealthy: string;
+    analyzeAction: string;
+    analyzeLabel: (name: string) => string;
+    analysisPrompt: (name: string) => string;
   };
   schema: {
     title: string;
@@ -141,6 +154,26 @@ export interface AnalyticsTranslations {
     confirmRetireTitle: string;
     confirmRetireBody: string;
     versionMustAdvance: string;
+    analyzeAction: string;
+    analyzeLabel: (key: string, name: string) => string;
+    analysisPrompt: (key: string, name: string) => string;
+    grants: {
+      action: string;
+      title: string;
+      description: string;
+      principalId: string;
+      principalHint: string;
+      listTitle: string;
+      empty: string;
+      submit: string;
+      submitting: string;
+      revoke: string;
+      revoking: string;
+      invalidPrincipal: string;
+      operationFailed: string;
+      granted: string;
+      revoked: string;
+    };
   };
   history: {
     title: string;
@@ -210,6 +243,27 @@ export interface AnalyticsTranslations {
     statusCompleted: string;
     statusFailed: string;
     statusRejected: string;
+  };
+  analysisStages: {
+    title: string;
+    description: string;
+    empty: string;
+    loading: string;
+    unavailable: string;
+    runStatus: string;
+    duration: string;
+    rows: string;
+    bytes: string;
+    inputTokens: string;
+    outputTokens: string;
+    risk: string;
+    code: string;
+    reused: string;
+    stages: Record<AnalysisStage, string>;
+    statuses: Record<AnalysisStageStatus, string>;
+    risks: Record<AnalysisStageRisk, string>;
+    runStatuses: Record<AnalysisObservedRunStatus, string>;
+    codes: Record<AnalysisStageCode, string>;
   };
   analysis: {
     newTitle: string;

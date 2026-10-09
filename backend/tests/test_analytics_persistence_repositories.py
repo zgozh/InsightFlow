@@ -346,19 +346,92 @@ async def test_metric_save_round_trips_for_the_exact_owner(fixture):
     metrics = fixture.metrics()
     await metrics.save(_metric())
 
-    assert await metrics.get_accessible(principal_id="user-1", metric_key="revenue") == _metric()
+    assert await metrics.get_owned(owner_id="user-1", metric_key="revenue") == _metric()
+    assert await metrics.list_owned(owner_id="user-1") == (_metric(),)
+    assert await metrics.get_accessible(principal_id="user-1", metric_key="revenue") is None
     assert await metrics.get_accessible(principal_id="user-2", metric_key="revenue") is None
     assert await metrics.list_accessible(principal_id="user-2") == ()
 
 
 @pytest.mark.asyncio
+async def test_metric_catalog_requires_active_owner_or_explicit_grant(fixture):
+    metrics = fixture.metrics()
+    datasources = fixture.datasources()
+    await datasources.save(_datasource())
+    await metrics.save(_metric())
+    await metrics.grant(owner_id="user-1", metric_key="revenue", principal_id="user-2")
+
+    assert await metrics.get_accessible(principal_id="user-2", metric_key="revenue") is None
+    assert await metrics.list_accessible(principal_id="user-2") == ()
+    assert await datasources.get_accessible(principal_id="user-2", datasource_id="ds-1") is None
+
+    active = _metric(version=2, status=MetricStatus.ACTIVE)
+    await metrics.save(active)
+    rebuilt_repository = SqlMetricRepository(fixture.sessions)
+    assert await rebuilt_repository.get_accessible(principal_id="user-1", metric_key="revenue") == active
+    assert await rebuilt_repository.get_accessible(principal_id="user-2", metric_key="revenue") == active
+
+    await metrics.revoke_grant(owner_id="user-1", metric_key="revenue", principal_id="user-2")
+    await metrics.revoke_grant(owner_id="user-1", metric_key="revenue", principal_id="user-2")
+    assert await metrics.get_accessible(principal_id="user-2", metric_key="revenue") is None
+    assert await metrics.get_owned(owner_id="user-1", metric_key="revenue") == active
+
+
+@pytest.mark.asyncio
+async def test_metric_grants_are_ordered_and_repeated_grant_preserves_created_at(fixture):
+    metrics = fixture.metrics()
+    await metrics.save(_metric(status=MetricStatus.ACTIVE))
+    await metrics.grant(owner_id="user-1", metric_key="revenue", principal_id="user-3")
+    await metrics.grant(owner_id="user-1", metric_key="revenue", principal_id="user-2")
+    assert await metrics.list_grants(owner_id="user-1", metric_key="revenue") == ("user-2", "user-3")
+
+    async with fixture.sessions() as session:
+        before = await session.execute(sa_text("SELECT created_at FROM analytics_metric_grants WHERE metric_owner_id = 'user-1' AND metric_key = 'revenue' AND principal_id = 'user-2'"))
+        created_at = before.scalar_one()
+
+    await metrics.grant(owner_id="user-1", metric_key="revenue", principal_id="user-2")
+
+    async with fixture.sessions() as session:
+        after = await session.execute(sa_text("SELECT created_at FROM analytics_metric_grants WHERE metric_owner_id = 'user-1' AND metric_key = 'revenue' AND principal_id = 'user-2'"))
+        assert after.scalar_one() == created_at
+
+
+@pytest.mark.asyncio
+async def test_concurrent_metric_grants_are_idempotent(fixture):
+    import asyncio
+
+    metrics = fixture.metrics()
+    await metrics.save(_metric(status=MetricStatus.ACTIVE))
+
+    await asyncio.gather(*(metrics.grant(owner_id="user-1", metric_key="revenue", principal_id="user-2") for _ in range(4)))
+
+    assert await metrics.list_grants(owner_id="user-1", metric_key="revenue") == ("user-2",)
+
+
+@pytest.mark.asyncio
+async def test_metric_catalog_hides_same_key_when_principal_can_access_multiple_active_metrics(fixture):
+    metrics = fixture.metrics()
+    owned = _metric(owner_id="user-2", status=MetricStatus.ACTIVE)
+    granted = _metric(owner_id="user-1", status=MetricStatus.ACTIVE)
+    await metrics.save(owned)
+    await metrics.save(granted)
+    await metrics.grant(owner_id="user-1", metric_key="revenue", principal_id="user-2")
+    await metrics.grant(owner_id="user-1", metric_key="revenue", principal_id="user-3")
+
+    assert await metrics.get_accessible(principal_id="user-2", metric_key="revenue") is None
+    assert await metrics.list_accessible(principal_id="user-2") == ()
+    assert await metrics.get_accessible(principal_id="user-3", metric_key="revenue") == granted
+    assert await metrics.list_accessible(principal_id="user-3") == (granted,)
+
+
+@pytest.mark.asyncio
 async def test_metric_listing_is_ordered_by_key_then_version(fixture):
     metrics = fixture.metrics()
-    await metrics.save(_metric(key="zeta", version=1))
-    await metrics.save(_metric(key="alpha", version=1))
-    await metrics.save(_metric(key="alpha", version=2, dimensions=("day",)))
+    await metrics.save(_metric(key="zeta", version=1, status=MetricStatus.ACTIVE))
+    await metrics.save(_metric(key="alpha", version=1, status=MetricStatus.ACTIVE))
+    await metrics.save(_metric(key="alpha", version=2, dimensions=("day",), status=MetricStatus.ACTIVE))
     # 另一个 owner 的同名 metric 绝不出现。
-    await metrics.save(_metric(key="alpha", owner_id="user-2"))
+    await metrics.save(_metric(key="alpha", owner_id="user-2", status=MetricStatus.ACTIVE))
 
     listed = await metrics.list_accessible(principal_id="user-1")
 
@@ -377,7 +450,7 @@ async def test_metric_save_is_idempotent_and_rejects_a_non_increasing_version(fi
 
     with pytest.raises(PersistenceConflictError):
         await metrics.save(_metric(version=1))
-    assert await metrics.get_accessible(principal_id="user-1", metric_key="revenue") == _metric(version=2)
+    assert await metrics.get_owned(owner_id="user-1", metric_key="revenue") == _metric(version=2)
 
 
 @pytest.mark.asyncio
@@ -401,8 +474,8 @@ async def test_metric_retire_is_exact_and_idempotent(fixture):
     await metrics.retire(owner_id="user-1", metric_key="revenue")
     await metrics.retire(owner_id="user-1", metric_key="missing")
 
-    assert (await metrics.get_accessible(principal_id="user-1", metric_key="revenue")).status is MetricStatus.RETIRED
-    assert (await metrics.get_accessible(principal_id="user-1", metric_key="margin")).status is MetricStatus.DRAFT
+    assert (await metrics.get_owned(owner_id="user-1", metric_key="revenue")).status is MetricStatus.RETIRED
+    assert (await metrics.get_owned(owner_id="user-1", metric_key="margin")).status is MetricStatus.DRAFT
 
 
 # --- 损坏行与异常文本 -------------------------------------------------------

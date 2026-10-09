@@ -42,6 +42,7 @@ import {
   isAnalyticsForbidden,
   MetricCatalogTable,
 } from "@/components/analytics/analytics-catalog-views";
+import { MetricGrantPanel } from "@/components/analytics/metric-grant-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1738,6 +1739,7 @@ export function MetricAdminSection({
   const errorText = useMutationErrorText();
 
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [grantMetric, setGrantMetric] = useState<MetricView | null>(null);
   const [retireKey, setRetireKey] = useState<string | null>(null);
   const [createKey, setCreateKey] = useState("");
   const [createName, setCreateName] = useState("");
@@ -1881,6 +1883,15 @@ export function MetricAdminSection({
               type="button"
               variant="outline"
               className="min-h-11 min-w-11"
+              aria-label={`${m.grants.action} ${metric.name}`}
+              onClick={() => setGrantMetric(metric)}
+            >
+              {m.grants.action}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11 min-w-11"
               aria-label={`${t.analytics.common.edit} ${metric.name}`}
               onClick={() => setSelectedKey(metric.key)}
             >
@@ -1900,6 +1911,15 @@ export function MetricAdminSection({
           </div>
         )}
       />
+
+      {grantMetric !== null && (
+        <MetricGrantPanel
+          key={grantMetric.key}
+          metricKey={grantMetric.key}
+          metricName={grantMetric.name}
+          onClose={() => setGrantMetric(null)}
+        />
+      )}
 
       <FormPanel>
         <h3 className="text-base font-semibold">{m.createTitle}</h3>

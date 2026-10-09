@@ -30,6 +30,8 @@ rs.mock("@/components/workspace/workspace-container", () => ({
 
 const mocks = rs.hoisted(() => ({
   isAdmin: false,
+  adminMetricsEnabled: [] as boolean[],
+  metricGrantCalls: [] as unknown[][],
   catalogueDatasources: {
     datasources: [] as unknown[],
     isLoading: false,
@@ -88,7 +90,10 @@ rs.mock("@/core/analytics/hooks", () => ({
   useAnalyticsDatasources: () => mocks.catalogueDatasources,
   useAdminDatasources: () => mocks.adminDatasources,
   useAnalyticsMetrics: () => mocks.catalogueMetrics,
-  useAdminMetrics: () => mocks.adminMetrics,
+  useAdminMetrics: (enabled: boolean) => {
+    mocks.adminMetricsEnabled.push(enabled);
+    return mocks.adminMetrics;
+  },
   useAuditHistory: () => mocks.auditHistory,
   useAnalysisReports: () => mocks.reports,
   useAdminAuditLookup: () => mocks.adminAuditLookup,
@@ -121,6 +126,23 @@ rs.mock("@/core/analytics/hooks", () => ({
   useCreateMetric: () => ({ mutate: rs.fn(), isPending: false, error: null }),
   useUpdateMetric: () => ({ mutate: rs.fn(), isPending: false, error: null }),
   useRetireMetric: () => ({ mutate: rs.fn(), isPending: false, error: null }),
+  useAdminMetricGrants: (metricKey: string, enabled: boolean) => {
+    mocks.metricGrantCalls.push([metricKey, enabled]);
+    return {
+      principalIds: [],
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+      error: null,
+      refetch: rs.fn(),
+    };
+  },
+  useGrantMetric: () => ({ mutate: rs.fn(), isPending: false, reset: rs.fn() }),
+  useRevokeMetric: () => ({
+    mutate: rs.fn(),
+    isPending: false,
+    reset: rs.fn(),
+  }),
 }));
 
 function wrap(node: ReactNode, locale: Locale = DEFAULT_LOCALE) {
@@ -199,6 +221,8 @@ function reportView(): AnalysisReportView {
 
 beforeEach(() => {
   mocks.isAdmin = false;
+  mocks.adminMetricsEnabled = [];
+  mocks.metricGrantCalls = [];
   Object.assign(mocks.catalogueDatasources, {
     datasources: [],
     isLoading: false,
@@ -352,7 +376,7 @@ describe("/workspace/metrics", () => {
   it("普通用户的空指标目录说明管理员配置前提", () => {
     render(wrap(<MetricsPage />));
     expect(screen.getByRole("status").textContent).toBe(
-      "No active metrics are available to your account. Ask an administrator to define and activate one.",
+      "No active metrics are available to your account. Ask an administrator to define one, activate it, and grant you access.",
     );
   });
 
@@ -382,6 +406,8 @@ describe("/workspace/metrics", () => {
     render(wrap(<MetricsPage />));
     expect(screen.queryByTestId("metric-create-form")).toBeNull();
     expect(screen.queryByRole("button", { name: /^Retire metric/ })).toBeNull();
+    expect(mocks.adminMetricsEnabled).toEqual([false]);
+    expect(mocks.metricGrantCalls).toEqual([]);
   });
 
   it("管理员看到指标管理面板", () => {

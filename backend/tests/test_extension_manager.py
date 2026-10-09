@@ -1521,7 +1521,7 @@ def test_failed_entry_point_discovery_rolls_back_dependency_and_lock(tmp_path: P
     assert not (root / "backend" / "uv.lock").exists()
     absent = subprocess.run(
         [
-            str(root / "backend" / ".venv" / "bin" / "python"),
+            str(root / "backend" / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")),
             "-c",
             "from importlib.metadata import PackageNotFoundError, version; \ntry: version('deerflow-extension-demo')\nexcept PackageNotFoundError: raise SystemExit(0)\nraise SystemExit(1)",
         ],
@@ -2032,7 +2032,7 @@ def test_remove_rolls_back_package_lock_config_source_and_environment_when_confi
     assert managed_source.is_dir()
     present = subprocess.run(
         [
-            str(root / "backend" / ".venv" / "bin" / "python"),
+            str(root / "backend" / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")),
             "-c",
             "from importlib.metadata import version; assert version('deerflow-extension-demo') == '1.0.0'",
         ],

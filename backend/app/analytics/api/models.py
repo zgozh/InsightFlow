@@ -199,6 +199,19 @@ class MetricListResponse(BaseModel):
     metrics: tuple[MetricView, ...]
 
 
+class MetricGrantListResponse(BaseModel):
+    principal_ids: tuple[str, ...]
+
+
+class MetricGrantResponse(BaseModel):
+    principal_id: str
+    granted: bool
+
+
+class MetricGrantRemovalResponse(BaseModel):
+    removed: bool
+
+
 class ColumnSchemaView(BaseModel):
     name: str
     data_type: str

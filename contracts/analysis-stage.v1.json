@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:insightflow:contracts:analysis-stage:v1",
+  "title": "InsightFlow analysis_stage event payload v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type",
+    "version",
+    "run_id",
+    "seq",
+    "stage",
+    "status"
+  ],
+  "properties": {
+    "type": {
+      "const": "analysis_stage"
+    },
+    "version": {
+      "const": 1
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,64}$"
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "workflow",
+        "catalog",
+        "sql",
+        "authorization",
+        "execution",
+        "data",
+        "writer",
+        "reviewer",
+        "publish"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "running",
+        "succeeded",
+        "failed",
+        "blocked",
+        "cancelled"
+      ]
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 86400000
+    },
+    "row_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "byte_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 16777216
+    },
+    "input_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10000000
+    },
+    "output_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10000000
+    },
+    "risk": {
+      "type": "string",
+      "enum": [
+        "LOW",
+        "MEDIUM",
+        "HIGH",
+        "BLOCKED"
+      ]
+    },
+    "cached": {
+      "type": "boolean"
+    },
+    "code": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "unavailable",
+        "invalid_request",
+        "invalid_response",
+        "numeric_validation_failed",
+        "attempt_limit",
+        "input_too_large",
+        "policy_denied",
+        "cost_limit",
+        "query_failed",
+        "query_timeout",
+        "result_limit_reached",
+        "evidence_unavailable",
+        "review_rejected",
+        "report_conflict",
+        "cancelled"
+      ]
+    },
+    "evidence_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 20,
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    }
+  }
+}

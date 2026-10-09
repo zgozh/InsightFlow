@@ -25,6 +25,20 @@ def _make_bridge():
     return SimpleNamespace(publish=AsyncMock(), publish_end=AsyncMock(), cleanup=AsyncMock())
 
 
+def test_checkpoint_producer_metadata_overwrites_client_value():
+    from deerflow.constants import DEERFLOW_ANALYSIS_RUN_ID_METADATA_KEY
+    from deerflow.runtime.runs.worker import _stamp_checkpoint_producer_metadata
+
+    original_metadata = {DEERFLOW_ANALYSIS_RUN_ID_METADATA_KEY: "client-forged", "retained": "value"}
+    config = {"metadata": original_metadata}
+
+    stamped = _stamp_checkpoint_producer_metadata(config, "server-run")
+
+    assert stamped[DEERFLOW_ANALYSIS_RUN_ID_METADATA_KEY] == "server-run"
+    assert stamped["retained"] == "value"
+    assert original_metadata[DEERFLOW_ANALYSIS_RUN_ID_METADATA_KEY] == "client-forged"
+
+
 async def _delivery_events(store: MemoryRunEventStore, thread_id: str, run_id: str) -> list[dict]:
     events = await store.list_events(thread_id, run_id)
     return [e for e in events if e["event_type"] == "run.delivery"]
@@ -92,29 +106,35 @@ def test_runtime_context_rejects_a_caller_forged_report_writer_capability():
 
 
 def test_runtime_context_carries_the_gateway_collector_by_identity_without_checkpoint_config_or_cleanup_leak():
-    from deerflow.constants import ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY, ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY
+    from deerflow.constants import ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY, ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY, ANALYSIS_ROLES_CONTEXT_KEY
 
     forged = object()
     collector = object()
     reviewer = SimpleNamespace(closed=False)
     reviewer.close = lambda: setattr(reviewer, "closed", True)
+    roles = SimpleNamespace(closed=False)
+    roles.close = lambda: setattr(roles, "closed", True)
     runtime_context = _build_runtime_context(
         "thread_1",
         "run_1",
         {
             ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY: forged,
+            ANALYSIS_ROLES_CONTEXT_KEY: forged,
             ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY: forged,
         },
         analysis_evidence_collector=collector,
         analysis_report_reviewer=reviewer,
+        analysis_roles=roles,
     )
     config = {
         "context": {
             ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY: forged,
+            ANALYSIS_ROLES_CONTEXT_KEY: forged,
             ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY: forged,
         },
         "configurable": {
             ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY: forged,
+            ANALYSIS_ROLES_CONTEXT_KEY: forged,
             ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY: forged,
         },
     }
@@ -125,8 +145,11 @@ def test_runtime_context_carries_the_gateway_collector_by_identity_without_check
     assert config["context"][ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY] is collector
     assert runtime_context[ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY] is reviewer
     assert config["context"][ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY] is reviewer
+    assert runtime_context[ANALYSIS_ROLES_CONTEXT_KEY] is roles
+    assert config["context"][ANALYSIS_ROLES_CONTEXT_KEY] is roles
     assert ANALYSIS_EVIDENCE_COLLECTOR_CONTEXT_KEY not in config["configurable"]
     assert ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY not in config["configurable"]
+    assert ANALYSIS_ROLES_CONTEXT_KEY not in config["configurable"]
     assert forged not in runtime_context.values()
 
     _release_run_scoped_references([config], runtime_context, None)
@@ -136,6 +159,9 @@ def test_runtime_context_carries_the_gateway_collector_by_identity_without_check
     assert ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY not in runtime_context
     assert ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY not in config["context"]
     assert reviewer.closed is True
+    assert ANALYSIS_ROLES_CONTEXT_KEY not in runtime_context
+    assert ANALYSIS_ROLES_CONTEXT_KEY not in config["context"]
+    assert roles.closed is True
 
 
 @pytest.mark.anyio
@@ -822,6 +848,12 @@ async def test_delivery_event_emitted_when_cancelled_waiting_for_prior_finalizat
     run_manager.update_run_completion = AsyncMock(wraps=run_manager.update_run_completion)
     record = await run_manager.create("thread-1")
     store = MemoryRunEventStore()
+    finalized_statuses = []
+
+    async def finish_analysis(*, status):
+        finalized_statuses.append(status)
+        return ()
+
     monkeypatch.setattr(
         run_manager,
         "wait_for_prior_finalizing",
@@ -835,7 +867,7 @@ async def test_delivery_event_emitted_when_cancelled_waiting_for_prior_finalizat
         _make_bridge(),
         run_manager,
         record,
-        ctx=RunContext(checkpointer=None, event_store=store),
+        ctx=RunContext(checkpointer=None, event_store=store, analysis_roles=SimpleNamespace(finish=finish_analysis)),
         agent_factory=unexpected_agent_factory,
         graph_input={},
         config={},
@@ -846,4 +878,161 @@ async def test_delivery_event_emitted_when_cancelled_waiting_for_prior_finalizat
     assert delivery[0]["content"] == {"presented": 0, "paths": [], "by_tool": {}}
     fetched = await run_manager.get(record.run_id)
     assert fetched.status == RunStatus.interrupted
+    assert finalized_statuses == ["interrupted"]
     run_manager.update_run_completion.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_analysis_stage_finalization_failure_cannot_leave_run_successful():
+    run_manager = RunManager()
+    record = await run_manager.create("thread-1")
+    store = MemoryRunEventStore()
+    finish = AsyncMock(side_effect=RuntimeError("private persistence detail"))
+
+    class DummyAgent:
+        async def astream(self, graph_input, config=None, stream_mode=None, subgraphs=False):
+            yield {"messages": []}
+
+    await run_agent(
+        _make_bridge(),
+        run_manager,
+        record,
+        ctx=RunContext(checkpointer=None, event_store=store, analysis_roles=SimpleNamespace(finish=finish)),
+        agent_factory=lambda *, config: DummyAgent(),
+        graph_input={},
+        config={},
+    )
+
+    current = await run_manager.get(record.run_id)
+    assert finish.await_args.kwargs == {"status": "success"}
+    assert current.status == RunStatus.error
+    assert current.error == "analysis_stage_unavailable"
+
+
+@pytest.mark.anyio
+async def test_analysis_stage_terminal_payloads_publish_on_bridge_after_graph_stream_closes():
+    from app.analytics.agent.roles import create_analysis_roles_capability
+
+    run_manager = RunManager()
+    record = await run_manager.create("thread-1")
+    store = MemoryRunEventStore()
+    roles = create_analysis_roles_capability(principal_id="owner-a", thread_id="thread-1", run_id=record.run_id, event_store=store)
+    writer_open = True
+    old_writer_payloads = []
+    bridge_events = []
+
+    def old_stream_writer(payload):
+        if not writer_open:
+            raise AssertionError("closed graph writer was reused after stream completion")
+        old_writer_payloads.append(payload)
+
+    class DummyAgent:
+        async def astream(self, graph_input, config=None, stream_mode=None, subgraphs=False):
+            nonlocal writer_open
+            try:
+                await roles.emit_stage(
+                    principal_id="owner-a",
+                    thread_id="thread-1",
+                    run_id=record.run_id,
+                    writer=old_stream_writer,
+                    stage="execution",
+                    status="running",
+                )
+                yield {"messages": []}
+            finally:
+                writer_open = False
+
+    bridge = _make_bridge()
+    bridge.publish.side_effect = lambda run_id, event_type, payload: bridge_events.append((run_id, event_type, payload))
+    bridge.publish_end.side_effect = lambda run_id: bridge_events.append((run_id, "end", None))
+
+    await run_agent(
+        bridge,
+        run_manager,
+        record,
+        ctx=RunContext(checkpointer=None, event_store=store, analysis_roles=roles),
+        agent_factory=lambda *, config: DummyAgent(),
+        graph_input={},
+        config={},
+    )
+
+    persisted = await store.list_events("thread-1", record.run_id, event_types=["analysis.stage"])
+    terminal_payloads = [payload for _run_id, event_type, payload in bridge_events if event_type == "custom" and payload["status"] != "running"]
+    terminal_custom_indexes = [index for index, (_run_id, event_type, payload) in enumerate(bridge_events) if event_type == "custom" and payload["status"] != "running"]
+    end_index = next(index for index, (_run_id, event_type, _payload) in enumerate(bridge_events) if event_type == "end")
+
+    assert writer_open is False
+    assert all(payload["status"] == "running" for payload in old_writer_payloads)
+    assert record.status == RunStatus.success
+    assert [payload for payload in terminal_payloads] == [event["metadata"] for event in persisted if event["metadata"]["status"] != "running"]
+    assert terminal_payloads
+    assert all(run_id == record.run_id for run_id, event_type, payload in bridge_events if event_type == "custom")
+    assert all(index < end_index for index in terminal_custom_indexes)
+
+
+@pytest.mark.anyio
+async def test_analysis_stage_terminal_put_failure_does_not_publish_terminal_custom_event():
+    from app.analytics.agent.roles import create_analysis_roles_capability
+
+    class FailTerminalStore:
+        def __init__(self):
+            self.memory = MemoryRunEventStore()
+
+        async def put(self, **event):
+            if event["metadata"]["status"] != "running":
+                raise OSError("private database detail")
+            return await self.memory.put(**event)
+
+        async def list_events(self, *args, **kwargs):
+            return await self.memory.list_events(*args, **kwargs)
+
+    run_manager = RunManager()
+    record = await run_manager.create("thread-1")
+    store = FailTerminalStore()
+    roles = create_analysis_roles_capability(principal_id="owner-a", thread_id="thread-1", run_id=record.run_id, event_store=store)
+    writer_open = True
+    bridge_events = []
+
+    def old_stream_writer(_payload):
+        if not writer_open:
+            raise AssertionError("closed graph writer was reused after stream completion")
+
+    class DummyAgent:
+        async def astream(self, graph_input, config=None, stream_mode=None, subgraphs=False):
+            nonlocal writer_open
+            try:
+                await roles.emit_stage(
+                    principal_id="owner-a",
+                    thread_id="thread-1",
+                    run_id=record.run_id,
+                    writer=old_stream_writer,
+                    stage="execution",
+                    status="running",
+                )
+                yield {"messages": []}
+            finally:
+                writer_open = False
+
+    bridge = _make_bridge()
+    bridge.publish.side_effect = lambda run_id, event_type, payload: bridge_events.append((run_id, event_type, payload))
+    bridge.publish_end.side_effect = lambda run_id: bridge_events.append((run_id, "end", None))
+
+    await run_agent(
+        bridge,
+        run_manager,
+        record,
+        ctx=RunContext(checkpointer=None, event_store=store, analysis_roles=roles),
+        agent_factory=lambda *, config: DummyAgent(),
+        graph_input={},
+        config={},
+    )
+
+    terminal_customs = [payload for _run_id, event_type, payload in bridge_events if event_type == "custom" and payload["status"] != "running"]
+    persisted = await store.list_events("thread-1", record.run_id, event_types=["analysis.stage"])
+    current = await run_manager.get(record.run_id)
+
+    assert writer_open is False
+    assert terminal_customs == []
+    assert all(event["metadata"]["status"] == "running" for event in persisted)
+    assert current.status == RunStatus.error
+    assert current.error == "analysis_stage_unavailable"

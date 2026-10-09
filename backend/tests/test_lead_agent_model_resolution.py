@@ -213,11 +213,11 @@ def test_make_lead_agent_uses_server_auth_identity_for_all_user_scoped_inputs(mo
     }
 
 
-def test_analysis_lead_logs_reviewer_binding_failure_with_only_safe_run_identity(monkeypatch, caplog):
+def test_analysis_lead_binding_failure_stops_graph_assembly_with_only_safe_run_identity(monkeypatch, caplog):
     import logging
     from types import SimpleNamespace
 
-    from deerflow.constants import ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY
+    from deerflow.constants import ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY, ANALYSIS_ROLES_CONTEXT_KEY
     from deerflow.persistence.thread_meta import THREAD_ANALYSIS_MODE_METADATA_KEY
 
     app_config = _make_app_config([_make_model("safe-model", supports_thinking=True)])
@@ -231,6 +231,9 @@ def test_analysis_lead_logs_reviewer_binding_failure_with_only_safe_run_identity
     reviewer = MagicMock()
     reviewer.bind_lead_model.return_value = False
     run_context[ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY] = reviewer
+    roles = MagicMock()
+    roles.bind_lead_model.return_value = False
+    run_context[ANALYSIS_ROLES_CONTEXT_KEY] = roles
     runtime = SimpleNamespace(context=run_context)
     lead_model = _PolicyBypassModel()
 
@@ -245,13 +248,14 @@ def test_analysis_lead_logs_reviewer_binding_failure_with_only_safe_run_identity
     monkeypatch.setattr(lead_agent_module, "build_tracing_callbacks", lambda: [])
     caplog.set_level(logging.WARNING, logger=lead_agent_module.__name__)
 
-    lead_agent_module._make_lead_agent(
-        {
-            "context": run_context,
-            "configurable": {"__pregel_runtime": runtime},
-        },
-        app_config=app_config,
-    )
+    with pytest.raises(RuntimeError, match="^analysis_mode_unavailable$"):
+        lead_agent_module._make_lead_agent(
+            {
+                "context": run_context,
+                "configurable": {"__pregel_runtime": runtime},
+            },
+            app_config=app_config,
+        )
 
     assert reviewer.bind_lead_model.call_args.kwargs == {
         "principal_id": "owner-safe-id",
@@ -259,6 +263,7 @@ def test_analysis_lead_logs_reviewer_binding_failure_with_only_safe_run_identity
         "run_id": "run-safe-id",
         "model": lead_model,
     }
+    assert roles.bind_lead_model.call_args.kwargs == reviewer.bind_lead_model.call_args.kwargs
     assert "stage=binding_failed" in caplog.text
     assert "run_id=run-safe-id" in caplog.text
     assert "owner-safe-id" not in caplog.text

@@ -5,13 +5,18 @@ export type FooterProps = {
   className?: string;
   branding: Pick<
     BrandingTranslations,
-    "productName" | "aboutSlogan" | "aboutDerivation" | "aboutLicense"
+    | "productName"
+    | "aboutSlogan"
+    | "aboutProject"
+    | "aboutLicense"
+    | "blackHolePhotoCredit"
+    | "blackHolePhotoSource"
   >;
 };
 
 export function Footer({ branding, className }: FooterProps) {
   const year = new Date().getFullYear();
-  const { productName, aboutSlogan, aboutDerivation, aboutLicense } = branding;
+  const { productName, aboutSlogan, aboutProject, aboutLicense } = branding;
   return (
     <footer
       className={cn(
@@ -24,8 +29,29 @@ export function Footer({ branding, className }: FooterProps) {
         <p className="text-center font-serif text-lg md:text-xl">
           {aboutSlogan}
         </p>
-        <p>{aboutDerivation}</p>
+        <p>{aboutProject}</p>
         <p>{aboutLicense}</p>
+        <p>
+          {branding.blackHolePhotoCredit}
+          {" · "}
+          <a
+            className="underline underline-offset-4 hover:text-white"
+            href="https://www.eso.org/public/images/eso1907a/"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {branding.blackHolePhotoSource}
+          </a>
+          {" · "}
+          <a
+            className="underline underline-offset-4 hover:text-white"
+            href="https://creativecommons.org/licenses/by/4.0/"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            CC BY 4.0
+          </a>
+        </p>
         <p>
           &copy; {year} {productName}
         </p>

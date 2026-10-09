@@ -102,8 +102,7 @@ export function WorkspaceHeader({
       </div>
       <div className="pr-4">
         {/*
-          Phase 4 移除了产品 UI 里的上游 GitHub CTA（ByteDance/deer-flow）。上游归属仍然保留在
-          MIT LICENSE、README 与设置里的「关于」段落，不通过页头按钮做产品导流。
+          工作台页头不展示外部导流入口；项目说明和许可证信息放在「关于」页与仓库文档中。
         */}
       </div>
     </header>

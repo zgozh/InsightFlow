@@ -20,7 +20,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -42,7 +44,7 @@ from app.analytics.infrastructure.persistence.codec import (
     encode_dimensions,
     encode_schema_snapshot,
 )
-from app.analytics.infrastructure.persistence.models import AccessPolicyRow, DatasourceRow, MetricRow, SchemaSnapshotRow
+from app.analytics.infrastructure.persistence.models import AccessPolicyRow, DatasourceRow, MetricGrantRow, MetricRow, SchemaSnapshotRow
 
 
 def _now() -> datetime:
@@ -301,20 +303,88 @@ class SqlAccessPolicyRepository:
 
 
 class SqlMetricRepository:
-    """V1 的 metric 是 exact-owner scoped，不引入组织、租户或共享目录。"""
+    """管理读写按创建者隔离；普通目录仅返回已启用且当前 principal 为创建者或获明确授权的指标。"""
 
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._session_factory = session_factory
 
+    async def get_owned(self, *, owner_id: str, metric_key: str) -> MetricDefinition | None:
+        async with self._session_factory() as session:
+            row = await session.get(MetricRow, (owner_id, metric_key))
+        return None if row is None else _row_to_metric(row)
+
+    async def list_owned(self, *, owner_id: str) -> tuple[MetricDefinition, ...]:
+        async with self._session_factory() as session:
+            rows = (await session.execute(select(MetricRow).where(MetricRow.owner_id == owner_id).order_by(MetricRow.key, MetricRow.version))).scalars().all()
+        return tuple(_row_to_metric(row) for row in rows)
+
     async def get_accessible(self, *, principal_id: str, metric_key: str) -> MetricDefinition | None:
         async with self._session_factory() as session:
-            row = await session.get(MetricRow, (principal_id, metric_key))
-        return None if row is None else _row_to_metric(row)
+            rows = (await session.execute(self._accessible_metrics(principal_id=principal_id).where(MetricRow.key == metric_key).limit(2))).scalars().all()
+        # metric_key 在跨 owner 管理库中不一定唯一。普通目录不能任选一条，否则同一 key
+        # 会因查询顺序而指向不同定义。
+        return _row_to_metric(rows[0]) if len(rows) == 1 else None
 
     async def list_accessible(self, *, principal_id: str) -> tuple[MetricDefinition, ...]:
         async with self._session_factory() as session:
-            rows = (await session.execute(select(MetricRow).where(MetricRow.owner_id == principal_id).order_by(MetricRow.key, MetricRow.version))).scalars().all()
-        return tuple(_row_to_metric(row) for row in rows)
+            rows = (await session.execute(self._accessible_metrics(principal_id=principal_id))).scalars().all()
+        by_key: dict[str, MetricRow] = {}
+        ambiguous: set[str] = set()
+        for row in rows:
+            if row.key in by_key:
+                ambiguous.add(row.key)
+            else:
+                by_key[row.key] = row
+        return tuple(_row_to_metric(row) for key, row in by_key.items() if key not in ambiguous)
+
+    @staticmethod
+    def _accessible_metrics(*, principal_id: str):
+        return (
+            select(MetricRow)
+            .outerjoin(
+                MetricGrantRow,
+                (MetricGrantRow.metric_owner_id == MetricRow.owner_id) & (MetricGrantRow.metric_key == MetricRow.key) & (MetricGrantRow.principal_id == principal_id),
+            )
+            .where(
+                MetricRow.status == MetricStatus.ACTIVE.value,
+                or_(MetricRow.owner_id == principal_id, MetricGrantRow.principal_id == principal_id),
+            )
+            .order_by(MetricRow.key, MetricRow.owner_id, MetricRow.version)
+        )
+
+    async def list_grants(self, *, owner_id: str, metric_key: str) -> tuple[str, ...]:
+        async with self._session_factory() as session:
+            principal_ids = (await session.execute(select(MetricGrantRow.principal_id).where(MetricGrantRow.metric_owner_id == owner_id, MetricGrantRow.metric_key == metric_key).order_by(MetricGrantRow.principal_id))).scalars().all()
+        return tuple(principal_ids)
+
+    async def grant(self, *, owner_id: str, metric_key: str, principal_id: str) -> None:
+        async with self._session_factory() as session:
+            async with session.begin():
+                values = {
+                    "metric_owner_id": owner_id,
+                    "metric_key": metric_key,
+                    "principal_id": principal_id,
+                    "created_at": _now(),
+                }
+                dialect = session.get_bind().dialect.name
+                if dialect == "sqlite":
+                    statement = sqlite_insert(MetricGrantRow).values(**values)
+                elif dialect == "postgresql":
+                    statement = postgresql_insert(MetricGrantRow).values(**values)
+                else:
+                    raise PersistenceDataError("metric_grant_unsupported_dialect")
+                await session.execute(statement.on_conflict_do_nothing(index_elements=[MetricGrantRow.metric_owner_id, MetricGrantRow.metric_key, MetricGrantRow.principal_id]))
+
+    async def revoke_grant(self, *, owner_id: str, metric_key: str, principal_id: str) -> None:
+        async with self._session_factory() as session:
+            async with session.begin():
+                await session.execute(
+                    delete(MetricGrantRow).where(
+                        MetricGrantRow.metric_owner_id == owner_id,
+                        MetricGrantRow.metric_key == metric_key,
+                        MetricGrantRow.principal_id == principal_id,
+                    )
+                )
 
     async def save(self, metric: MetricDefinition) -> None:
         async with self._session_factory() as session:

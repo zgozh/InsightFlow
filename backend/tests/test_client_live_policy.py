@@ -50,6 +50,10 @@ def _collect_live_tests(
         ),
         "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
     }
+    if os.name == "nt":
+        for name in ("SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP"):
+            if name in os.environ:
+                env[name] = os.environ[name]
     if opt_in:
         env[LIVE_OPT_IN] = "1"
     if ci:
@@ -73,6 +77,7 @@ def _collect_live_tests(
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
     )
 
@@ -91,6 +96,7 @@ def _dry_run_make_target(target: str, *extra: str) -> str:
         cwd=BACKEND_ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
     )
     output = result.stdout + result.stderr

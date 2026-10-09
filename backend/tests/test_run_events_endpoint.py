@@ -35,8 +35,8 @@ async def test_list_run_events_forwards_task_id_and_after_seq():
     calls: dict = {}
 
     class FakeStore:
-        async def list_events(self, thread_id, run_id, *, event_types=None, task_id=None, limit=500, after_seq=None):
-            calls.update(thread_id=thread_id, run_id=run_id, event_types=event_types, task_id=task_id, limit=limit, after_seq=after_seq)
+        async def list_events(self, thread_id, run_id, *, event_types=None, task_id=None, limit=500, after_seq=None, user_id=None):
+            calls.update(thread_id=thread_id, run_id=run_id, event_types=event_types, task_id=task_id, limit=limit, after_seq=after_seq, user_id=user_id)
             return [{"seq": 1, "event_type": "subagent.step"}]
 
     class FakeState:
@@ -48,6 +48,7 @@ async def test_list_run_events_forwards_task_id_and_after_seq():
     class FakeRequest:
         app = FakeApp()
         _deerflow_test_bypass_auth = True
+        cookies = {}
 
     result = await list_run_events(
         thread_id="t1",
@@ -66,6 +67,163 @@ async def test_list_run_events_forwards_task_id_and_after_seq():
 
 
 @pytest.mark.anyio
+async def test_list_run_events_projects_only_contract_stage_metadata_with_owner_scope():
+    from app.gateway.auth_disabled import AUTH_SOURCE_SESSION
+    from app.gateway.routers.thread_runs import list_run_events
+
+    stage_payload = {
+        "type": "analysis_stage",
+        "version": 1,
+        "run_id": "run-1",
+        "seq": 1,
+        "stage": "workflow",
+        "status": "running",
+    }
+    stored_rows = [
+        {
+            "seq": 41,
+            "run_id": "run-1",
+            "event_type": "analysis.stage",
+            "category": "analysis",
+            "content": "",
+            "metadata": stage_payload,
+            "user_id": "owner-a",
+        },
+        {
+            "seq": 42,
+            "run_id": "run-1",
+            "event_type": "analysis.stage",
+            "category": "analysis",
+            "content": "",
+            "metadata": {**stage_payload, "sql": "must-not-escape"},
+            "user_id": "owner-a",
+        },
+    ]
+    seen_user_ids = []
+
+    class FakeStore:
+        async def list_events(self, thread_id, run_id, *, event_types=None, task_id=None, limit=500, after_seq=None, user_id=None):
+            seen_user_ids.append(user_id)
+            return [row for row in stored_rows if row["user_id"] == user_id]
+
+    class FakeState:
+        run_event_store = FakeStore()
+
+    class FakeApp:
+        state = FakeState()
+
+    class FakeRequest:
+        app = FakeApp()
+        _deerflow_test_bypass_auth = True
+        cookies = {}
+
+        def __init__(self, owner_id):
+            self.state = SimpleNamespace(user=SimpleNamespace(id=owner_id, system_role=None), auth_source=AUTH_SOURCE_SESSION)
+            self.headers = {}
+
+    owner_events = await list_run_events(
+        thread_id="thread-1",
+        run_id="run-1",
+        request=FakeRequest("owner-a"),
+        event_types=None,
+        task_id=None,
+        limit=500,
+        after_seq=None,
+    )
+    other_owner_events = await list_run_events(
+        thread_id="thread-1",
+        run_id="run-1",
+        request=FakeRequest("owner-b"),
+        event_types=None,
+        task_id=None,
+        limit=500,
+        after_seq=None,
+    )
+
+    assert seen_user_ids == ["owner-a", "owner-b"]
+    assert len(owner_events) == 1
+    assert owner_events[0]["seq"] == 41
+    assert owner_events[0]["event_type"] == "analysis.stage"
+    assert owner_events[0]["content"] == ""
+    assert owner_events[0]["metadata"] == stage_payload
+    assert other_owner_events == []
+
+
+@pytest.mark.anyio
+async def test_list_run_events_reads_analysis_stages_from_sqlite_only_for_the_authenticated_owner(tmp_path):
+    from app.analytics.agent.stages import AnalysisStageEmitter
+    from app.gateway.auth_disabled import AUTH_SOURCE_SESSION
+    from app.gateway.routers.thread_runs import list_run_events
+    from deerflow.persistence.engine import close_engine, get_session_factory, init_engine
+    from deerflow.runtime.events.store.db import DbRunEventStore
+    from deerflow.runtime.user_context import reset_current_user, set_current_user
+
+    await init_engine("sqlite", url=f"sqlite+aiosqlite:///{tmp_path / 'run-events.db'}", sqlite_dir=str(tmp_path))
+    try:
+        store = DbRunEventStore(get_session_factory())
+        emitter = AnalysisStageEmitter(principal_id="owner-a", thread_id="thread-1", run_id="run-1", event_store=store)
+        live_events = []
+        owner_context = set_current_user(SimpleNamespace(id="owner-a"))
+        try:
+            await emitter.emit(
+                principal_id="owner-a",
+                thread_id="thread-1",
+                run_id="run-1",
+                writer=live_events.append,
+                stage="catalog",
+                status="running",
+            )
+            await emitter.emit(
+                principal_id="owner-a",
+                thread_id="thread-1",
+                run_id="run-1",
+                writer=live_events.append,
+                stage="catalog",
+                status="succeeded",
+                code="ok",
+            )
+            await emitter.finish(status="success")
+        finally:
+            emitter.close()
+            reset_current_user(owner_context)
+
+        class FakeState:
+            run_event_store = store
+
+        class FakeApp:
+            state = FakeState()
+
+        class FakeRequest:
+            app = FakeApp()
+            _deerflow_test_bypass_auth = True
+
+            def __init__(self, owner_id):
+                self.state = SimpleNamespace(user=SimpleNamespace(id=owner_id, system_role=None), auth_source=AUTH_SOURCE_SESSION)
+
+        async def events_for(owner_id):
+            return await list_run_events(
+                thread_id="thread-1",
+                run_id="run-1",
+                request=FakeRequest(owner_id),
+                event_types=None,
+                task_id=None,
+                limit=500,
+                after_seq=None,
+            )
+
+        owner_events = await events_for("owner-a")
+        cross_owner_events = await events_for("owner-b")
+        assert len(owner_events) == 4
+        assert [event["metadata"]["stage"] for event in owner_events] == ["workflow", "catalog", "catalog", "workflow"]
+        assert [event["metadata"]["status"] for event in owner_events] == ["running", "running", "succeeded", "succeeded"]
+        assert all(event["event_type"] == "analysis.stage" and event["category"] == "analysis" and event["content"] == "" for event in owner_events)
+        assert [event["metadata"] for event in owner_events] == live_events
+        assert cross_owner_events == []
+    finally:
+        await close_engine()
+
+
+@pytest.mark.anyio
 async def test_list_run_events_redacts_historical_run_start_metadata():
     from app.gateway.routers.thread_runs import list_run_events
 
@@ -80,7 +238,7 @@ async def test_list_run_events_redacts_historical_run_start_metadata():
     }
 
     class FakeStore:
-        async def list_events(self, thread_id, run_id, *, event_types=None, task_id=None, limit=500, after_seq=None):
+        async def list_events(self, thread_id, run_id, *, event_types=None, task_id=None, limit=500, after_seq=None, user_id=None):
             return [stored_row]
 
     class FakeState:
@@ -92,6 +250,7 @@ async def test_list_run_events_redacts_historical_run_start_metadata():
     class FakeRequest:
         app = FakeApp()
         _deerflow_test_bypass_auth = True
+        cookies = {}
 
     events = await list_run_events(
         thread_id="legacy-thread",
@@ -215,7 +374,7 @@ async def test_list_run_events_projects_legacy_analytics_structures_without_muta
     ]
 
     class FakeStore:
-        async def list_events(self, thread_id, run_id, *, event_types=None, task_id=None, limit=500, after_seq=None):
+        async def list_events(self, thread_id, run_id, *, event_types=None, task_id=None, limit=500, after_seq=None, user_id=None):
             return stored_rows
 
     class FakeState:
@@ -227,6 +386,7 @@ async def test_list_run_events_projects_legacy_analytics_structures_without_muta
     class FakeRequest:
         app = FakeApp()
         _deerflow_test_bypass_auth = True
+        cookies = {}
 
     events = await list_run_events(
         thread_id="legacy-thread",
@@ -311,6 +471,7 @@ async def test_effective_memory_flows_from_injection_to_the_existing_debug_api()
     class FakeRequest_:
         app = FakeApp()
         _deerflow_test_bypass_auth = True
+        cookies = {}
 
     events = await list_run_events(
         thread_id="t1",

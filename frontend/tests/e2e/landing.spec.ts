@@ -48,15 +48,15 @@ test.describe("Landing page", () => {
       page.getByText("提出问题后，系统先规划取数路径", { exact: false }),
     ).toBeVisible();
     await expect(
-      page.getByText("源于开源，回馈开源。", { exact: true }),
+      page.getByText("受控分析，结论可追溯。", { exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByText("InsightFlow 是 DeerFlow v2.1.0-rc0 的深度重构派生版本", {
+      page.getByText("InsightFlow 由个人开发者持续维护", {
         exact: false,
       }),
     ).toBeVisible();
     await expect(
-      page.getByText("本项目依据 MIT 许可证分发", { exact: false }),
+      page.getByText("InsightFlow 按 MIT 许可证发布", { exact: false }),
     ).toBeVisible();
     await expect(page.locator('meta[name="description"]')).toHaveAttribute(
       "content",
@@ -119,14 +119,14 @@ test.describe("Landing page", () => {
     );
   });
 
-  test("keeps hero copy clear of the black hole at desktop and mobile sizes", async ({
+  test("fills the hero with an immersive background at desktop and mobile sizes", async ({
     page,
   }) => {
     await page.setViewportSize({ width: 1280, height: 720 });
     await page.goto("/");
 
     const copy = page.getByTestId("hero-copy");
-    const art = page.getByTestId("hero-art");
+    const art = page.getByTestId("hero-background");
     await expect(copy).toBeVisible();
     await expect(art).toBeVisible();
 
@@ -135,11 +135,15 @@ test.describe("Landing page", () => {
     if (!desktopCopy || !desktopArt) {
       throw new Error("Desktop hero regions must have visible bounds");
     }
-    expect(desktopCopy.x + desktopCopy.width + 16).toBeLessThanOrEqual(
-      desktopArt.x,
+    expect(desktopArt.width).toBe(1280);
+    expect(desktopArt.height).toBeGreaterThan(600);
+    expect(desktopCopy.x).toBeGreaterThanOrEqual(desktopArt.x);
+    await expect(page.getByTestId("black-hole-motion")).toHaveAttribute(
+      "data-motion-active",
+      "true",
     );
     await page.screenshot({
-      path: "test-results/phase-06f3f15-desktop-1280x720.png",
+      path: "test-results/phase-06f3f21-desktop-1280x720.png",
       fullPage: true,
     });
 
@@ -149,12 +153,12 @@ test.describe("Landing page", () => {
     if (!mobileCopy || !mobileArt) {
       throw new Error("Mobile hero regions must have visible bounds");
     }
-    expect(mobileCopy.y + mobileCopy.height + 8).toBeLessThanOrEqual(
-      mobileArt.y,
-    );
+    expect(mobileArt.width).toBe(375);
+    expect(mobileArt.height).toBeGreaterThan(700);
+    expect(mobileCopy.y).toBeGreaterThanOrEqual(mobileArt.y);
     await expect(page.getByTestId("black-hole-static")).toBeVisible();
     await page.screenshot({
-      path: "test-results/phase-06f3f15-mobile-375x812.png",
+      path: "test-results/phase-06f3f21-mobile-375x812.png",
       fullPage: true,
     });
   });
@@ -171,16 +175,16 @@ test.describe("Landing page", () => {
     await page.goto("/");
 
     await expect(
-      page.locator('head link[rel~="icon"][href="/favicon.svg"]'),
+      page.locator('head link[rel~="icon"][href="/favicon.png"]'),
     ).toHaveCount(1);
     await expect(
       page.locator('head link[rel~="icon"][href*="favicon.ico"]'),
     ).toHaveCount(0);
     const icon = await page.evaluate(async () => {
       const link = document.querySelector<HTMLLinkElement>(
-        'head link[rel~="icon"][href="/favicon.svg"]',
+        'head link[rel~="icon"][href="/favicon.png"]',
       );
-      if (!link) throw new Error("SVG favicon link is missing");
+      if (!link) throw new Error("EHT favicon link is missing");
       const response = await fetch(link.href, { cache: "no-store" });
       const image = new Image();
       image.src = link.href;
@@ -193,9 +197,14 @@ test.describe("Landing page", () => {
       };
     });
     expect(icon.status).toBe(200);
-    expect(icon.contentType).toContain("image/svg+xml");
+    expect(icon.contentType).toContain("image/png");
     expect(icon.width).toBe(32);
     expect(icon.height).toBe(32);
+    const legacyIcon = await page.request.get("/favicon.ico");
+    expect(legacyIcon.status()).toBe(200);
+    await expect(
+      page.getByRole("link", { name: "原图 / ESO" }),
+    ).toHaveAttribute("href", "https://www.eso.org/public/images/eso1907a/");
     await expect(page.getByTestId("black-hole-static")).toBeVisible();
     await expect(page.getByTestId("black-hole-motion")).toHaveAttribute(
       "data-motion-active",
@@ -227,10 +236,10 @@ test.describe("Landing page", () => {
     );
   });
 
-  test("keeps upstream CTAs out of the product UI", async ({ page }) => {
+  test("keeps legacy project links out of the product UI", async ({ page }) => {
     await page.goto("/");
 
-    // 产品仓库入口是上方明确配置的 GitHub 链接；此处只禁止上游官网、上游仓库等旧导流。
+    // 产品外链指向当前仓库；旧站点和旧仓库不属于用户入口。
     for (const banned of [
       "deerflow.tech",
       "support@deerflow.tech",

@@ -1,12 +1,9 @@
 # Security Policy
 
-## Supported Versions
+InsightFlow is maintained as an individual project. Security fixes are made against the current repository state; there is no promise of backports to older releases.
 
-As deer-flow doesn't provide an official release yet, please use the latest version to receive security updates.
-Currently, we have two branches to maintain:
-* main branch for deer-flow 2.x
-* main-1.x branch for deer-flow 1.x
+## Reporting a vulnerability
 
-## Reporting a Vulnerability
+For a non-sensitive bug, open an issue in the [InsightFlow repository](https://github.com/zgozh/InsightFlow). For a vulnerability, use the repository's private vulnerability reporting option if it is enabled. If it is unavailable, contact the maintainer through the repository profile before sharing technical details.
 
-Please go to https://github.com/bytedance/deer-flow/security to report the vulnerability you find.
+Do not post credentials, customer data, or an exploitable reproduction in a public issue. Include the affected version or commit, impact, and a minimal reproduction that contains no private data.

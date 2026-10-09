@@ -69,8 +69,18 @@ gap 后应重新载入持久状态并继续订阅；gap 不是运行结束，也
 异常原文不能进入 query key、trace 或面向用户的错误消息。前端管理员判断只控制界面，
 Gateway 授权仍是最终边界。
 
+普通指标目录只显示当前账号拥有或已获明确授权的 active 指标。管理员可以提前给草稿指标授权；
+草稿启用后才会出现在受权用户的目录中，下线后从普通目录消失。指标授权只开放指标定义，
+数据源查询仍由独立的数据源访问策略控制；管理接口返回 403 时必须显示服务端拒绝状态。
+
 分析页复用常规聊天 providers 和线程 stream。Analytics trace 只安全投影审核通过的工具名
 与字段，不创建第二份运行状态，也不渲染原始工具 payload。
+
+分析阶段面板仅在分析模式启用，live custom SSE 与持久 run events 的 metadata 共用
+analysis-stage v1 strict schema。持久事件按 record.seq 继续 after_seq 分页，阶段顺序只读
+metadata.seq；每个 run 最多保留 128 条，并按 run_id 隔离。回填从现有 runs API 选最近 run，
+最多读取 20 页或 2000 条原始事件。只有验证后的阶段名、状态和有限观测值可进入面板；
+不渲染 SQL、结果行、自由错误或 CoT，也不把未知 token usage 显示成零。
 
 报告 Reviewer 轨迹只从当前 `write_analysis_report` 的后端安全 ToolMessage 回执派生：只有完整的
 `published` / `existing` 回执能显示复核通过和固定报告产物；拒绝只显示有限 reason code 的本地化文案，

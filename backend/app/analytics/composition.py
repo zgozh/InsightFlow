@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.analytics.application import (
+    AnalysisEvidenceRepository,
     AnalyticsAdministration,
     AuthorizePreparedQuery,
     DatasourceCatalog,
@@ -45,6 +46,7 @@ from app.analytics.infrastructure.datasource_secrets import EnvironmentDatasourc
 from app.analytics.infrastructure.mysql_runtime import MySQLRuntime
 from app.analytics.infrastructure.persistence import (
     SqlAccessPolicyRepository,
+    SqlAnalysisEvidenceRepository,
     SqlAnalysisReportRepository,
     SqlDatasourceRepository,
     SqlExecutionPlanStore,
@@ -85,6 +87,8 @@ class AnalyticsServices:
     audit_reader: QueryAuditReader
     publish_report: PublishAnalysisReport
     list_reports: ListAnalysisReports
+    # 过渡期保持默认 None，兼容尚未绑定耐久 evidence bridge 的测试/普通 API 构造。
+    analysis_evidence_repository: AnalysisEvidenceRepository | None = None
 
 
 async def build_analytics_services(
@@ -121,6 +125,7 @@ async def build_analytics_services(
     metrics = SqlMetricRepository(session_factory)
     audit_log = SqlQueryAuditLog(session_factory)
     reports = SqlAnalysisReportRepository(session_factory)
+    evidence_repository = SqlAnalysisEvidenceRepository(session_factory)
 
     query_policy = SqlglotQueryPolicy()
     authorizer = SqlglotSemanticAuthorizer(query_policy=query_policy)
@@ -188,6 +193,7 @@ async def build_analytics_services(
         # 报告索引与查询执行共用同一批应用入口；id/created_at 一律由服务端派生。
         publish_report=PublishAnalysisReport(repository=reports, clock=clock, id_issuer=lambda: str(uuid.uuid4())),
         list_reports=ListAnalysisReports(repository=reports),
+        analysis_evidence_repository=evidence_repository,
     )
 
 

@@ -9,10 +9,13 @@ import {
   adminRemovePolicy,
   adminReplaceSchema,
   AnalyticsRequestError,
+  adminGrantMetric,
   listAudits,
   listDatasources,
   listMetrics,
   listReports,
+  adminListMetricGrants,
+  adminRevokeMetric,
 } from "@/core/analytics/api";
 import { fetch as fetcher } from "@/core/api/fetcher";
 
@@ -214,6 +217,58 @@ describe("analytics api client", () => {
     expect(lastCall()[0]).toBe(
       "/api/analytics/admin/datasources/ds%201/schema",
     );
+  });
+
+  test("reads metric grants without putting principal data in the query", async () => {
+    mockedFetch.mockResolvedValueOnce(
+      jsonResponse(200, { principal_ids: ["user/ 1"] }),
+    );
+
+    await adminListMetricGrants("revenue / net");
+
+    expect(lastCall()[0]).toBe(
+      "/api/analytics/admin/metrics/revenue%20%2F%20net/grants",
+    );
+    expect(lastCall()[1]?.method ?? "GET").toBe("GET");
+    expect(lastCall()[0]).not.toContain("?");
+  });
+
+  test("grant and revoke use encoded paths and send no body", async () => {
+    mockedFetch.mockResolvedValueOnce(
+      jsonResponse(200, { principal_id: "user/ 1", granted: true }),
+    );
+
+    await adminGrantMetric("revenue / net", "user/ 1");
+
+    expect(lastCall()[0]).toBe(
+      "/api/analytics/admin/metrics/revenue%20%2F%20net/grants/user%2F%201",
+    );
+    expect(lastCall()[1]?.method).toBe("PUT");
+    expect(lastCall()[1]?.body).toBeUndefined();
+
+    mockedFetch.mockResolvedValueOnce(jsonResponse(200, { removed: true }));
+    await adminRevokeMetric("revenue / net", "user/ 1");
+    expect(lastCall()[0]).toBe(
+      "/api/analytics/admin/metrics/revenue%20%2F%20net/grants/user%2F%201",
+    );
+    expect(lastCall()[1]?.method).toBe("DELETE");
+    expect(lastCall()[1]?.body).toBeUndefined();
+  });
+
+  test("a grant acknowledgement must match the submitted principal and be strict", async () => {
+    mockedFetch.mockResolvedValueOnce(
+      jsonResponse(200, { principal_id: "another-user", granted: true }),
+    );
+    await expect(adminGrantMetric("revenue", "user-1")).rejects.toMatchObject({
+      reason: "invalid_analytics_response",
+    });
+
+    mockedFetch.mockResolvedValueOnce(
+      jsonResponse(200, { principal_id: "user-1", granted: true, extra: 1 }),
+    );
+    await expect(adminGrantMetric("revenue", "user-1")).rejects.toMatchObject({
+      reason: "invalid_analytics_response",
+    });
   });
 
   test("a bodyless delete never invents a JSON payload", async () => {

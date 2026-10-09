@@ -1,6 +1,8 @@
 import { afterEach, expect, test, rs } from "@rstest/core";
 
-async function captureThreadStreamOptions() {
+async function captureThreadStreamOptions(
+  streamCallbacks: Record<string, unknown> = {},
+) {
   let capturedOptions: Record<string, unknown> | undefined;
 
   rs.resetModules();
@@ -71,6 +73,7 @@ async function captureThreadStreamOptions() {
         mode: "flash",
       },
       isMock: true,
+      ...streamCallbacks,
     } as never);
     return null;
   }
@@ -96,4 +99,31 @@ test("does not subscribe to unsupported LangGraph events mode", async () => {
   expect(options).not.toHaveProperty("onLangChainEvent");
   expect(options).toHaveProperty("onUpdateEvent");
   expect(options).toHaveProperty("onCustomEvent");
+});
+
+test("binds custom events to the stream metadata callback", async () => {
+  const metadataEvents: unknown[] = [];
+  const customEvents: Array<{ event: unknown; metadata: unknown }> = [];
+  const options = await captureThreadStreamOptions({
+    onStreamMetadata: (metadata: unknown) => metadataEvents.push(metadata),
+    onCustomEvent: (event: unknown, metadata: unknown) =>
+      customEvents.push({ event, metadata }),
+  });
+  const metadata = { thread_id: "thread-1", run_id: "run-1" };
+  const event = { type: "analysis_stage", run_id: "run-1", seq: 1 };
+
+  (
+    options?.onMetadataEvent as ((value: typeof metadata) => void) | undefined
+  )?.(metadata);
+  (
+    options?.onCustomEvent as
+      | ((
+          value: typeof event,
+          options: { namespace: undefined; mutate: () => void },
+        ) => void)
+      | undefined
+  )?.(event, { namespace: undefined, mutate: () => undefined });
+
+  expect(metadataEvents).toEqual([metadata]);
+  expect(customEvents).toEqual([{ event, metadata }]);
 });

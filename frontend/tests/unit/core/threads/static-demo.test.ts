@@ -29,6 +29,17 @@ describe("resolveStaticDemoArtifact", () => {
   ])("rejects an unknown or unsafe path", (candidateThreadId, segments) => {
     expect(resolveStaticDemoArtifact(candidateThreadId, segments)).toBeNull();
   });
+
+  it("does not expose the unbundled legacy research artifact", () => {
+    expect(
+      resolveStaticDemoArtifact("fe3f7974-1bcb-4a01-a950-79673baafefd", [
+        "mnt",
+        "user-data",
+        "outputs",
+        "research_deerflow_20260201.md",
+      ]),
+    ).toBeNull();
+  });
 });
 
 describe("public demo threads", () => {

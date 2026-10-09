@@ -9,6 +9,9 @@ rs.mock("@/core/analytics/api", () => ({
   listAudits: rs.fn(),
   listReports: rs.fn(),
   adminCreateMetric: rs.fn(),
+  adminListMetricGrants: rs.fn(),
+  adminGrantMetric: rs.fn(),
+  adminRevokeMetric: rs.fn(),
   adminListDatasources: rs.fn(),
 }));
 
@@ -18,6 +21,9 @@ rs.mock("@/core/auth/AuthProvider", () => ({
 
 import {
   adminCreateMetric,
+  adminGrantMetric,
+  adminListMetricGrants,
+  adminRevokeMetric,
   listAudits,
   listDatasources,
   listReports,
@@ -25,11 +31,14 @@ import {
 import {
   ANALYTICS_QUERY_ROOT,
   analyticsKeys,
+  useAdminMetricGrants,
   useAnalysisReports,
   useAnalyticsDatasources,
   useAnalyticsIsAdmin,
   useAuditHistory,
   useCreateMetric,
+  useGrantMetric,
+  useRevokeMetric,
 } from "@/core/analytics/hooks";
 import { useAuth } from "@/core/auth/AuthProvider";
 
@@ -37,6 +46,9 @@ const mockedListDatasources = rs.mocked(listDatasources);
 const mockedListAudits = rs.mocked(listAudits);
 const mockedListReports = rs.mocked(listReports);
 const mockedCreateMetric = rs.mocked(adminCreateMetric);
+const mockedListMetricGrants = rs.mocked(adminListMetricGrants);
+const mockedGrantMetric = rs.mocked(adminGrantMetric);
+const mockedRevokeMetric = rs.mocked(adminRevokeMetric);
 const mockedUseAuth = rs.mocked(useAuth);
 
 function createWrapper() {
@@ -108,6 +120,7 @@ describe("analytics hooks", () => {
       analyticsKeys.reportPages(20),
       analyticsKeys.adminDatasources(),
       analyticsKeys.adminMetrics(),
+      analyticsKeys.adminMetricGrants("revenue"),
       analyticsKeys.adminSchema("ds-1"),
       analyticsKeys.adminPolicy("ds-1", "user-1"),
     ]) {
@@ -220,6 +233,46 @@ describe("analytics hooks", () => {
     ]);
     // 绝不整树失效：那会让无关的目录与历史读取一起重放。
     expect(invalidated).not.toContainEqual(analyticsKeys.root);
+  });
+
+  it("does not request metric grants while the panel is closed", () => {
+    const { result } = renderHook(
+      () => useAdminMetricGrants("revenue", false),
+      { wrapper: createWrapper().wrapper },
+    );
+
+    expect(result.current.principalIds).toEqual([]);
+    expect(mockedListMetricGrants).not.toHaveBeenCalled();
+  });
+
+  it("invalidates only the submitted metric grants and public metric directory", async () => {
+    mockedGrantMetric.mockResolvedValue({
+      principal_id: "user-1",
+      granted: true,
+    });
+    mockedRevokeMetric.mockResolvedValue({ removed: true });
+    const { queryClient, wrapper } = createWrapper();
+    const invalidate = rs.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(
+      () => ({ grant: useGrantMetric(), revoke: useRevokeMetric() }),
+      { wrapper },
+    );
+
+    await result.current.grant.mutateAsync({
+      metricKey: "revenue",
+      principalId: "user-1",
+    });
+    await result.current.revoke.mutateAsync({
+      metricKey: "margin",
+      principalId: "user-2",
+    });
+
+    expect(invalidate.mock.calls.map((call) => call[0])).toEqual([
+      { queryKey: analyticsKeys.adminMetricGrants("revenue"), exact: true },
+      { queryKey: analyticsKeys.metrics(), exact: true },
+      { queryKey: analyticsKeys.adminMetricGrants("margin"), exact: true },
+      { queryKey: analyticsKeys.metrics(), exact: true },
+    ]);
   });
 
   it("exposes the server error on admin reads so a 403 is distinguishable from a 500", async () => {

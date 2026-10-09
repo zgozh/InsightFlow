@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import unicodedata
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
@@ -211,10 +212,35 @@ class AnalyticsAdministration:
     # --- metric -------------------------------------------------------------
 
     async def list_metrics(self, *, owner_id: str) -> tuple[MetricDefinition, ...]:
-        return await self._guard(self._metrics.list_accessible(principal_id=owner_id))
+        return await self._guard(self._metrics.list_owned(owner_id=owner_id))
 
     async def get_metric(self, *, owner_id: str, metric_key: str) -> MetricDefinition | None:
-        return await self._guard(self._metrics.get_accessible(principal_id=owner_id, metric_key=metric_key))
+        return await self._guard(self._metrics.get_owned(owner_id=owner_id, metric_key=metric_key))
+
+    async def _require_owned_metric(self, *, owner_id: str, metric_key: str) -> MetricDefinition:
+        metric = await self._guard(self._metrics.get_owned(owner_id=owner_id, metric_key=metric_key))
+        if metric is None:
+            raise AnalyticsNotFoundError()
+        return metric
+
+    @staticmethod
+    def _validate_grant_principal(principal_id: str) -> None:
+        if not isinstance(principal_id, str) or not principal_id or len(principal_id) > 64 or principal_id != principal_id.strip() or any(unicodedata.category(character) == "Cc" for character in principal_id):
+            raise ValueError("principal_id is invalid")
+
+    async def list_metric_grants(self, *, owner_id: str, metric_key: str) -> tuple[str, ...]:
+        await self._require_owned_metric(owner_id=owner_id, metric_key=metric_key)
+        return await self._guard(self._metrics.list_grants(owner_id=owner_id, metric_key=metric_key))
+
+    async def grant_metric(self, *, owner_id: str, metric_key: str, principal_id: str) -> None:
+        await self._require_owned_metric(owner_id=owner_id, metric_key=metric_key)
+        self._validate_grant_principal(principal_id)
+        await self._guard(self._metrics.grant(owner_id=owner_id, metric_key=metric_key, principal_id=principal_id))
+
+    async def revoke_metric_grant(self, *, owner_id: str, metric_key: str, principal_id: str) -> None:
+        await self._require_owned_metric(owner_id=owner_id, metric_key=metric_key)
+        self._validate_grant_principal(principal_id)
+        await self._guard(self._metrics.revoke_grant(owner_id=owner_id, metric_key=metric_key, principal_id=principal_id))
 
     async def save_metric(self, *, owner_id: str, metric: MetricDefinition) -> MetricDefinition:
         if metric.owner_id != owner_id:

@@ -11,7 +11,7 @@ from app.analytics.application.execution_ports import (
 from app.analytics.application.ports import DatasourceCatalog, MetricCatalog
 
 ANALYTICS_ROOT = Path(__file__).parent.parent / "app" / "analytics"
-DOMAIN_ALLOWED_ROOTS = {"__future__", "dataclasses", "datetime", "decimal", "enum", "math", "re"}
+DOMAIN_ALLOWED_ROOTS = {"__future__", "dataclasses", "datetime", "decimal", "enum", "hashlib", "json", "math", "re"}
 APPLICATION_BANNED_PREFIXES = (
     "app.gateway",
     "deerflow",

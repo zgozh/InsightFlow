@@ -2118,7 +2118,6 @@ export function InputBox({
               disabled={composerLocked}
               placeholder={t.inputBox.placeholder}
               autoFocus={autoFocus}
-              defaultValue={initialValue}
               onBlur={() => setTextareaFocused(false)}
               onChange={handlePromptTextareaChange}
               onFocus={() => setTextareaFocused(true)}

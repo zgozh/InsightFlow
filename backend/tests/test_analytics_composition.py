@@ -157,7 +157,8 @@ async def test_the_bundle_is_frozen_and_exposes_only_service_entry_points(tmp_pa
         await engine.dispose()
 
     assert services is not None
-    assert set(AnalyticsServices.__dataclass_fields__) == {"config", "datasources", "metrics", "administration", "plan_query", "execute_query", "audit_reader", "publish_report", "list_reports"}
+    assert set(AnalyticsServices.__dataclass_fields__) == {"config", "datasources", "metrics", "administration", "plan_query", "execute_query", "audit_reader", "publish_report", "list_reports", "analysis_evidence_repository"}
+    assert services.analysis_evidence_repository is not None
     with pytest.raises(FrozenInstanceError):
         services.config = None  # type: ignore[misc]
     assert isinstance(services.config, composition.AnalyticsConfig)

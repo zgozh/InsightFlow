@@ -75,14 +75,13 @@ describe("visible InsightFlow branding", () => {
       expect(disclaimer).toContain(PRODUCT);
       expect(disclaimer).not.toContain(UPSTREAM);
     });
-
   }
 
-  test("the About page keeps the upstream attribution", () => {
-    // 品牌扫描绝不能以删除开源来源为代价。
-    expect(aboutMarkdown).toContain("DeerFlow v2.1.0-rc0");
+  test("the About page shows InsightFlow and the license", () => {
     expect(aboutMarkdown).toContain("MIT License");
     expect(aboutMarkdown).toContain("InsightFlow");
+    expect(aboutMarkdown).toContain("LICENSE");
+    expect(aboutMarkdown).not.toContain(UPSTREAM);
   });
 
   test("both locales expose the same retained keys", () => {

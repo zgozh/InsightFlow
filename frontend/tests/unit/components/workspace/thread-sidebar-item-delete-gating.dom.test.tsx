@@ -14,8 +14,13 @@ import { ThreadSidebarItem } from "@/components/workspace/recent-chat-list";
 import { ThreadDeleteDialogProvider } from "@/components/workspace/thread-delete-dialog";
 import { AuthProvider } from "@/core/auth/AuthProvider";
 import type { User } from "@/core/auth/types";
+import { writeTextToClipboard } from "@/core/clipboard";
 import { DEFAULT_LOCALE } from "@/core/i18n";
 import { I18nProvider } from "@/core/i18n/context";
+
+rs.mock("@/core/clipboard", () => ({
+  writeTextToClipboard: rs.fn(async () => true),
+}));
 
 rs.mock("next/navigation", () => ({
   useRouter: () => ({ push: rs.fn(), replace: rs.fn(), refresh: rs.fn() }),
@@ -75,6 +80,18 @@ afterEach(() => {
 });
 
 describe("ThreadSidebarItem delete-menu gating (threads:delete)", () => {
+  it("copies a same-origin share URL from localhost", async () => {
+    renderItem(makeUser(["threads:read"]));
+    await openRowMenu();
+    fireEvent.click(await screen.findByText("Share"));
+
+    await waitFor(() => {
+      expect(writeTextToClipboard).toHaveBeenCalledWith(
+        "http://localhost:3000/workspace/chats/thread-1",
+      );
+    });
+  });
+
   it("offers Delete for a role holding threads:delete", async () => {
     renderItem(makeUser(["threads:read", "threads:delete"]));
     await openRowMenu();

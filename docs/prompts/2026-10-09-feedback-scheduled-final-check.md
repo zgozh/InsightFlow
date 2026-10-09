@@ -1,0 +1,15 @@
+# 反馈改动最终调度复验与未完恢复检查
+
+gpt-6-luna/max。主会话已独立读取反馈实现：闭合原因/同fingerprint/第二次/原attempt2与verifier不变，39testspassed，接受该patch。
+
+先修正你写的data-validation-feedback/final-scheduler-recovery记录：旧31e部署日志只证明numeric_verification与Data失败，**不证明具体 numeric_claim_value_mismatch**。不能把mock失败原因当live根因；若有独立真实原因证据须指出，否则明确具体子分支未知。候选没持久化，禁止杜撰。
+
+所有权roles的记录仅措辞修正，以及final-integration-current自己的最小镜像/部署/复验脚本与2026-10-09-final-scheduler-recovery.md。生产roles冻结不再修改、frontend/docworker文件不动。
+
+复用之前已经成功的Gateway仅COPY roles.py流程：当前31e镜像基底加本地tag、COPY单文件、locked依赖不安装，保持认证secret/mounts/scheduler enabled；仅Gateway更新不其它容器，EAPContinue即时exit保存，旧image保留rollback。当前旧failedtask不会重复触发，不复用/删除其claim。
+
+先完成缺证据的cancel和checkpoint：优先运行现有实际worker取消/恢复测试中直接对应一两项（已有有效证据引用），并用现有PGcheckpointer+collector在成功producer scope证明显式checkpoint旧证据/原artifact可复用，错误owner/run拒绝；不得仅hashreadback就说checkpoint续跑passed。若必须live续跑另模型次数，先列精确缺口不盲发。
+
+新镜像healthy后只允许一次新的自动once/reuse_thread scheduled analysis，用独立新claim；创建就保存task/thread/occurrence/run private IDs，终态/各阶段立即保存safeevidence。任务设到期15~30秒即可，不再180s等待，scope/prompt照成功正例要求逐月与总计保留2小数未知unit，使用新query evidence而非旧report复用。失败无再发；只提取closed numeric_claim_reason枚举和最后stage，成功验证publishedreport+正确数值/newrun证据+noninteractive toolset，终态确保停用。
+
+不得无理由重复正例/security/PGrestart/前端浏览器；AS12hashpersist已经passed复用。快速短记录exact checks/实际pending，然后冻结，Principal最终审查与发布。

@@ -243,6 +243,38 @@ async def test_metric_version_can_only_advance_and_retire_is_idempotent(admin):
     assert stored.status is MetricStatus.RETIRED
 
 
+@pytest.mark.asyncio
+async def test_metric_grant_management_is_owner_scoped_and_allows_pregrant(admin):
+    await admin.save_metric(owner_id="user-1", metric=_metric())
+
+    await admin.grant_metric(owner_id="user-1", metric_key="revenue", principal_id="user-2")
+    await admin.grant_metric(owner_id="user-1", metric_key="revenue", principal_id="user-2")
+    assert await admin.list_metric_grants(owner_id="user-1", metric_key="revenue") == ("user-2",)
+
+    with pytest.raises(AnalyticsNotFoundError):
+        await admin.list_metric_grants(owner_id="user-2", metric_key="revenue")
+    with pytest.raises(AnalyticsNotFoundError):
+        await admin.grant_metric(owner_id="user-2", metric_key="revenue", principal_id="user-3")
+    with pytest.raises(AnalyticsNotFoundError):
+        await admin.revoke_metric_grant(owner_id="user-2", metric_key="revenue", principal_id="user-2")
+
+    await admin.revoke_metric_grant(owner_id="user-1", metric_key="revenue", principal_id="user-2")
+    await admin.revoke_metric_grant(owner_id="user-1", metric_key="revenue", principal_id="user-2")
+    assert await admin.list_metric_grants(owner_id="user-1", metric_key="revenue") == ()
+    assert await admin.get_metric(owner_id="user-1", metric_key="revenue") == _metric()
+
+
+@pytest.mark.parametrize("principal_id", ["", " ", " user-2", "user-2 ", "user\n2", "x" * 65])
+@pytest.mark.asyncio
+async def test_metric_grant_rejects_invalid_principal_ids(admin, principal_id):
+    await admin.save_metric(owner_id="user-1", metric=_metric())
+
+    with pytest.raises(ValueError):
+        await admin.grant_metric(owner_id="user-1", metric_key="revenue", principal_id=principal_id)
+
+    assert await admin.list_metric_grants(owner_id="user-1", metric_key="revenue") == ()
+
+
 # --- 存储失败翻译 -----------------------------------------------------------
 
 

@@ -38,6 +38,9 @@ from app.analytics.api.models import (
     DatasourceUpdateRequest,
     DatasourceView,
     MetricCreateRequest,
+    MetricGrantListResponse,
+    MetricGrantRemovalResponse,
+    MetricGrantResponse,
     MetricListResponse,
     MetricUpdateRequest,
     MetricView,
@@ -107,6 +110,11 @@ async def _principal(request: Request) -> str:
     if user_id is None:
         raise HTTPException(status_code=401, detail="Authentication required")
     return user_id
+
+
+async def _require_empty_body(request: Request) -> None:
+    if await request.body():
+        raise HTTPException(status_code=422, detail=_INVALID_REQUEST)
 
 
 async def _require_admin(request: Request) -> None:
@@ -561,6 +569,29 @@ async def admin_retire_metric(metric_key: str, request: Request, principal: str 
     if metric is None:
         raise HTTPException(status_code=404, detail=_NOT_FOUND)
     return _metric_view(metric)
+
+
+@admin_router.get("/metrics/{metric_key}/grants", response_model=MetricGrantListResponse)
+async def admin_list_metric_grants(metric_key: str, request: Request, principal: str = Depends(_principal)) -> MetricGrantListResponse:
+    services = _services(request)
+    principal_ids = await _guarded(services.administration.list_metric_grants(owner_id=principal, metric_key=metric_key))
+    return MetricGrantListResponse(principal_ids=principal_ids)
+
+
+@admin_router.put("/metrics/{metric_key}/grants/{principal_id}", response_model=MetricGrantResponse)
+async def admin_grant_metric(metric_key: str, principal_id: str, request: Request, principal: str = Depends(_principal)) -> MetricGrantResponse:
+    await _require_empty_body(request)
+    services = _services(request)
+    await _guarded(services.administration.grant_metric(owner_id=principal, metric_key=metric_key, principal_id=principal_id))
+    return MetricGrantResponse(principal_id=principal_id, granted=True)
+
+
+@admin_router.delete("/metrics/{metric_key}/grants/{principal_id}", response_model=MetricGrantRemovalResponse)
+async def admin_revoke_metric_grant(metric_key: str, principal_id: str, request: Request, principal: str = Depends(_principal)) -> MetricGrantRemovalResponse:
+    await _require_empty_body(request)
+    services = _services(request)
+    await _guarded(services.administration.revoke_metric_grant(owner_id=principal, metric_key=metric_key, principal_id=principal_id))
+    return MetricGrantRemovalResponse(removed=True)
 
 
 @admin_router.get("/audits", response_model=QueryAuditPageResponse)

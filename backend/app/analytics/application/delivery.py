@@ -173,16 +173,28 @@ class PlanAnalyticsQuery:
         return True
 
     def _plan_limits(self, authorized: AuthorizedQuerySpec) -> ExecutionLimits:
-        """为本次计划派生执行限额：只把传输行上限向下收紧到授权查询的 row_limit。
+        """按最终语义授权风险派生本次计划的执行限额。
 
-        `max_result_rows` 是**全局服务器上限**，不是每条查询必须达到的下限——否则
-        `SELECT ... LIMIT 10` 会因为 1000 > 10 被判 `authorization_stale`。这里取
-        `min(配置上限, prepared.row_limit)`：客户端仍然无法提交或覆盖任何限额，结果上限只可能
-        变小而不可能变大，其余字段继续固定来自启动配置。`CreateQueryExecutionPlan` 里
-        `limits.max_result_rows <= prepared.row_limit` 的校验保留为纵深防御。
+        LOW 沿用服务器配置，并把全局行上限与授权 SQL 的 row_limit 取较小值。MEDIUM
+        将全局 statement timeout、结果行数和结果字节数减半；SQL row_limit 只在全局行预算
+        收紧后参与取小值，因此小 LIMIT 不会被误拒绝。若任一全局预算已在合法下界，无法
+        严格收紧时拒绝签发计划。客户端始终不能提交或覆盖限额。
         """
 
         configured = self._config.execution_limits()
+        if authorized.risk is QueryRisk.MEDIUM:
+            statement_timeout_ms = max(100, configured.statement_timeout_ms // 2)
+            max_result_rows = max(1, configured.max_result_rows // 2)
+            max_result_bytes = max(1, configured.max_result_bytes // 2)
+            if statement_timeout_ms >= configured.statement_timeout_ms or max_result_rows >= configured.max_result_rows or max_result_bytes >= configured.max_result_bytes:
+                raise ValueError("medium risk execution budget cannot be tightened")
+            configured = replace(
+                configured,
+                statement_timeout_ms=statement_timeout_ms,
+                max_result_rows=max_result_rows,
+                max_result_bytes=max_result_bytes,
+            )
+
         effective = min(configured.max_result_rows, authorized.prepared.row_limit)
         if effective == configured.max_result_rows:
             return configured
@@ -247,11 +259,31 @@ class PlanAnalyticsQuery:
             return QueryPlanDelivery(code=AuthorizationDecisionCode.ANALYSIS_ERROR.value)
 
         try:
+            limits = self._plan_limits(authorized)
+        except ValueError:
+            # MEDIUM 的服务器全局预算已无法在领域下界内严格收紧：记录 PLAN 拒绝，绝不
+            # 让 plan use case 以较宽预算运行。审计失败仍按门禁返回 AUDIT_UNAVAILABLE。
+            code = ExecutionDecisionCode.COST_LIMIT_EXCEEDED.value
+            written = await self._record_denial(
+                phase=QueryAuditPhase.PLAN,
+                code=code,
+                principal_id=principal_id,
+                datasource_id=datasource_id,
+                query_hash=authorized.prepared.query_hash,
+                risk=authorized.risk,
+            )
+            if not written:
+                return QueryPlanDelivery(code=ExecutionDecisionCode.AUDIT_UNAVAILABLE.value)
+            return QueryPlanDelivery(code=code)
+        except Exception:  # noqa: BLE001 - 限额派生失败不得绕过默认拒绝
+            return QueryPlanDelivery(code=ExecutionDecisionCode.DATABASE_UNAVAILABLE.value)
+
+        try:
             plan_decision = await self._create_plan.execute(
                 principal_id=principal_id,
                 datasource_id=datasource_id,
                 authorized=authorized,
-                limits=self._plan_limits(authorized),
+                limits=limits,
             )
         except Exception:  # noqa: BLE001 - 未知失败默认拒绝且不泄漏文本
             return QueryPlanDelivery(code=ExecutionDecisionCode.DATABASE_UNAVAILABLE.value)

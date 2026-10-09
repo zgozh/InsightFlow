@@ -24,6 +24,7 @@ from app.analytics.agent.evidence import (
 )
 from app.analytics.application.delivery import QueryPlanDelivery, QueryPlanDeliveryMetadata
 from app.analytics.domain import ExecutionDecisionCode, QueryCostEstimate, QueryExecutionResult, QueryPlanReceipt, QueryRisk
+from app.analytics.domain.evidence import validate_successful_query_result
 
 _NOW = datetime(2026, 9, 22, 12, 0, tzinfo=UTC)
 _HASH = "a" * 64
@@ -255,11 +256,27 @@ def test_a_denied_tool_result_carries_only_a_stable_code():
     assert result.evidence is None
 
 
-def test_tool_result_requires_evidence_only_when_it_carries_rows():
+def test_tool_result_requires_evidence_for_successes_and_rejects_evidence_on_failures():
     with pytest.raises(ValueError):
         AnalyticsQueryToolResult(code=ExecutionDecisionCode.EXECUTED.value, columns=("id",), rows=((1,),), truncated=False)
+
+    empty_evidence = _evidence(result=_result(rows=(), row_count=0))
+    empty_success = AnalyticsQueryToolResult(code=ExecutionDecisionCode.EXECUTED.value, columns=("id",), rows=(), truncated=False, evidence=empty_evidence)
+    assert validate_successful_query_result(empty_success) == empty_evidence.byte_count
+
+    with pytest.raises(ValueError):
+        AnalyticsQueryToolResult(code=ExecutionDecisionCode.EXECUTED.value, columns=("id",), rows=(), truncated=False)
+    with pytest.raises(ValueError):
+        AnalyticsQueryToolResult(code=ExecutionDecisionCode.EXECUTED.value, columns=("id",), rows=(), truncated=False, evidence=_evidence())
+
+    ordinary_failure = AnalyticsQueryToolResult(code=ExecutionDecisionCode.PLAN_UNAVAILABLE.value)
+    assert ordinary_failure.evidence is None
     with pytest.raises(ValueError):
         AnalyticsQueryToolResult(code=ExecutionDecisionCode.PLAN_UNAVAILABLE.value, evidence=_evidence())
+
+    truncation_mismatch = AnalyticsQueryToolResult(code=ExecutionDecisionCode.EXECUTED.value, columns=("id",), rows=((1,),), truncated=True, evidence=_evidence())
+    with pytest.raises(ValueError):
+        validate_successful_query_result(truncation_mismatch)
 
 
 def test_run_evidence_collector_stores_only_successful_snapshot_under_its_exact_identity():
@@ -304,13 +321,14 @@ def test_run_evidence_collector_stores_only_successful_snapshot_under_its_exact_
 
 def test_run_evidence_collector_rejects_failed_or_mismatched_results():
     collector = create_analysis_run_evidence_collector(principal_id="user-1", thread_id="thread-1", run_id="run-1")
-    failed = AnalyticsQueryToolResult(
-        code=ExecutionDecisionCode.DATABASE_UNAVAILABLE.value,
-        columns=("id",),
-        rows=((1,),),
-        truncated=False,
-        evidence=_evidence(),
-    )
+    with pytest.raises(ValueError):
+        AnalyticsQueryToolResult(
+            code=ExecutionDecisionCode.DATABASE_UNAVAILABLE.value,
+            columns=("id",),
+            rows=((1,),),
+            truncated=False,
+            evidence=_evidence(),
+        )
     mismatched = AnalyticsQueryToolResult(
         code=ExecutionDecisionCode.EXECUTED.value,
         columns=("id",),
@@ -327,7 +345,7 @@ def test_run_evidence_collector_rejects_failed_or_mismatched_results():
         evidence=forged_evidence,
     )
 
-    for result in (failed, mismatched, forged_id):
+    for result in (mismatched, forged_id):
         assert not collector.record_success(
             principal_id="user-1",
             thread_id="thread-1",

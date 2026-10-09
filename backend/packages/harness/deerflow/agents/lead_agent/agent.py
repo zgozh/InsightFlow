@@ -61,7 +61,7 @@ from deerflow.config.subagents_config import (
     DEFAULT_MAX_TOTAL_SUBAGENTS_PER_RUN,
     effective_subagent_concurrency,
 )
-from deerflow.constants import ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY
+from deerflow.constants import ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY, ANALYSIS_ROLES_CONTEXT_KEY
 from deerflow.models import create_chat_model
 from deerflow.persistence.thread_meta import THREAD_ANALYSIS_MODE_METADATA_KEY
 from deerflow.runtime.checkpoint_mode import (
@@ -1129,23 +1129,27 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
         runtime = configurable.get("__pregel_runtime") if isinstance(configurable, Mapping) else None
         runtime_context = getattr(runtime, "context", None)
         reviewer = runtime_context.get(ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY) if isinstance(runtime_context, Mapping) else None
-        bind_lead_model = getattr(reviewer, "bind_lead_model", None)
+        roles = runtime_context.get(ANALYSIS_ROLES_CONTEXT_KEY) if isinstance(runtime_context, Mapping) else None
         raw_run_id = runtime_context.get("run_id") if isinstance(runtime_context, Mapping) else None
         safe_run_id = raw_run_id if isinstance(raw_run_id, str) and _SAFE_ANALYSIS_RUN_ID.fullmatch(raw_run_id) else "unknown"
-        if callable(bind_lead_model):
+        identity = {
+            "principal_id": runtime_context.get("user_id") if isinstance(runtime_context, Mapping) else None,
+            "thread_id": runtime_context.get("thread_id") if isinstance(runtime_context, Mapping) else None,
+            "run_id": runtime_context.get("run_id") if isinstance(runtime_context, Mapping) else None,
+            "model": lead_model,
+        }
+        binding_succeeded = True
+        for capability_name, capability in (("analysis_report_reviewer", reviewer), ("analysis_roles", roles)):
+            bind_lead_model = getattr(capability, "bind_lead_model", None)
             try:
-                binding_succeeded = bind_lead_model(
-                    principal_id=runtime_context.get("user_id"),
-                    thread_id=runtime_context.get("thread_id"),
-                    run_id=runtime_context.get("run_id"),
-                    model=lead_model,
-                )
-            except Exception:  # noqa: BLE001 - 无法绑定时报告能力保持 fail-closed
+                capability_bound = callable(bind_lead_model) and bind_lead_model(**identity)
+            except Exception:  # noqa: BLE001 - 分析能力无法绑定时必须阻止图继续运行
+                capability_bound = False
+            if not capability_bound:
                 binding_succeeded = False
-            if not binding_succeeded:
-                logger.warning("event=analysis_report_reviewer stage=binding_failed run_id=%s", safe_run_id)
-        else:
-            logger.warning("event=analysis_report_reviewer stage=binding_unavailable run_id=%s", safe_run_id)
+                logger.warning("event=%s stage=binding_failed run_id=%s", capability_name, safe_run_id)
+        if not binding_succeeded:
+            raise RuntimeError("analysis_mode_unavailable")
 
     graph = create_agent(
         model=lead_model,

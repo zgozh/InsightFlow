@@ -15,6 +15,10 @@ from deerflow.mcp.tools import get_mcp_tools
 @pytest.mark.parametrize("authenticated", [False, True])
 async def test_parallel_example_user_agent_reaches_tool_requests(tmp_path, monkeypatch, authenticated):
     captured = []
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
@@ -46,7 +50,7 @@ async def test_parallel_example_user_agent_reaches_tool_requests(tmp_path, monke
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        example = json.loads((Path(__file__).parents[2] / "extensions_config.example.json").read_text())
+        example = json.loads((Path(__file__).parents[2] / "extensions_config.example.json").read_text(encoding="utf-8"))
         parallel = example["mcpServers"]["parallel-search"]
         parallel["enabled"] = True
         parallel["url"] = f"http://127.0.0.1:{server.server_port}/parallel"

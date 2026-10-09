@@ -91,7 +91,7 @@ InsightFlow 是面向企业经营分析的 Autonomous Data Analyst，不是通�
 - Gateway：增加 datasource、metric、report、query audit API。
 - Frontend：改造成 InsightFlow 分析工作台和结构化执行轨迹。
 - Compose：默认服务为 Nginx、Frontend、Gateway、Redis；SQLite 是默认应用存储，应用 PostgreSQL 由运维显式配置，AIO sandbox 使用 opt-in DooD overlay。
-- MCP：目标架构要求业务数据访问 adapter 共用 Query Policy；现行任意第三方 MCP 工具尚未被强制接入该策略，AS-14 仍为发布阻塞。
+- MCP：目标架构要求平台业务数据访问 adapter 共用 Query Policy；现行可信分析仅准入固定 Analytics 工具，普通聊天 operator MCP 独立于该策略保证。AS-14 已按 [6F2批准边界](../acceptance/phase-06f2-as14-boundary-evidence.md)验收，不要求统一治理任意第三方 MCP。
 
 ### DELETE
 
@@ -178,7 +178,7 @@ App 通过 composition root 向 Harness 注册领域 tools 和不可变的 subag
 
 每个阶段发出结构化 run event，前端只展示计划、工具状态、SQL 风险、耗时、数据行数、artifact 和审查结论，不展示 chain-of-thought。
 
-这是目标数据流，不是对当前运行状态的描述。当前 `business-analysis` skill 由 Lead 按提示词委派内置 `general-purpose` subagent 扮演分析/复核角色；没有专职 SQL Analyst、Reviewer 或 Report Writer 定义。完整 Agent→受控查询→artifact→复核链尚未完成真实端到端验收，详见 [Phase 6D1 证据矩阵](../acceptance/phase-06d-contract-reconciliation.md)。
+这是目标数据流，不是对当前运行状态的描述。普通聊天可由 Lead 通过 `task` 委派内置 `general-purpose` 子 Agent，并按 skill 提示扮演角色；可信分析当前关闭 task、Skills、Memory和通用计划模式，仅使用 `inspect_business_catalog`、`query_business_data`、`write_analysis_report`。Gateway run-scoped writer与绑定本次Lead模型的有界零工具Reviewer已实现，窄范围真实PostgreSQL查询/evidence/报告发布及历史轨迹已有证据；专职五角色链和完整端到端验收仍未完成，详见 [Phase 6D1 证据矩阵](../acceptance/phase-06d-contract-reconciliation.md)与[当前能力清单](../current-capabilities.md)。
 
 ## 8. Agent 架构
 
@@ -190,7 +190,7 @@ App 通过 composition root 向 Harness 注册领域 tools 和不可变的 subag
 | Reviewer | 数字/口径/证据复核 | evidence bundle、receipt、只读元数据 | 默认不重新查询数据库 |
 | Report Writer | 结构化报告 | 已批准 findings、artifact write | 数据库和外部网络 |
 
-以上角色表是目标设计。现行实现没有这些专职 Agent 定义；skill 只指导 Lead 以通用 `general-purpose` 子 Agent 扮演 Data Analyst 与 Reviewer，Report Writer 也未实现。
+以上Lead、SQL Analyst、Data Analyst、Reviewer、Report Writer角色表是目标设计，Metric Service是服务而非Agent。现行没有完整专职角色链：普通聊天支持通用task角色扮演，可信分析不走此路径。报告写入/发布能力已由Gateway按run签发，发布前Reviewer采用同模型、有界、零工具的复核能力；这不等于专职Reviewer或Report Writer子Agent已实现。
 
 约束：
 
@@ -216,7 +216,7 @@ App 通过 composition root 向 Harness 注册领域 tools 和不可变的 subag
 
 `prepare_query` 在内部完成解析、权限、LIMIT 和 EXPLAIN；`execute_readonly_query` 只能接收前一步签发的短期 query plan ID，不能直接接收任意 SQL。数据库凭据只存在于服务端 secret provider。
 
-MCP 保留为扩展机制，可提供外部指标目录或企业系统 connector。目标中的 MCP datasource adapter 必须调用相同的 Query Policy 契约，核心数据访问不能只实现为 MCP。现行任意第三方 MCP 工具可自行执行其提供的操作，平台没有统一强制其经 Query Policy 的机制；AS-14 在该机制和绕过测试具备前仍是发布阻塞。
+MCP 保留为扩展机制，可提供外部指标目录或企业系统 connector。目标中的平台 MCP datasource adapter 必须调用相同的 Query Policy 契约，核心数据访问不能只实现为 MCP。现行可信分析以固定三工具集合与Gateway fail-closed准入约束；普通聊天的operator MCP可执行其自身操作，不受平台Query Policy保证。AS-14已按[6F2批准边界](../acceptance/phase-06f2-as14-boundary-evidence.md)验收，universal MCP mediation不是现行发布要求，不据此承诺任意第三方MCP安全。
 
 ## 10. Text2SQL 安全设计
 
@@ -354,7 +354,7 @@ SQLGlot 只承担 parser/AST/transpiler，不被当作安全验证器。任何�
 - DDL/DML、多语句、注释绕过、`Command` fallback。
 - 越权 datasource/schema/table/column。
 - 凭据和 PII 不进入日志、SSE、receipt、artifact。
-- 任意提供业务数据访问的 MCP 不得绕过统一查询策略；现行系统尚未对任意第三方 MCP 强制执行这项约束，AS-14 是未解决的发布阻塞。
+- 平台Analytics数据访问必须经过Query Policy，可信分析工具集合与Gateway准入不得被绕过。普通聊天operator MCP在该保证范围外；AS-14按[6F2批准边界](../acceptance/phase-06f2-as14-boundary-evidence.md)已验收，不将任意第三方MCP统一治理作为现行门禁。
 
 ### E2E
 

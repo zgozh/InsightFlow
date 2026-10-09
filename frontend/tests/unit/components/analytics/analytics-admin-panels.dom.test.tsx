@@ -89,6 +89,27 @@ const mocks = rs.hoisted(() => ({
     error: null,
     isSuccess: false,
   } as MutationDouble,
+  grantMetric: {
+    mutate: rs.fn(),
+    isPending: false,
+    error: null,
+    isSuccess: false,
+  } as MutationDouble,
+  revokeMetric: {
+    mutate: rs.fn(),
+    isPending: false,
+    error: null,
+    isSuccess: false,
+  } as MutationDouble,
+  adminMetricGrants: {
+    principalIds: [] as string[],
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+    error: null as unknown,
+    refetch: rs.fn(),
+  },
+  metricGrantCalls: [] as unknown[][],
   adminSchema: {
     schema: null as unknown,
     isLoading: false,
@@ -118,6 +139,12 @@ rs.mock("@/core/analytics/hooks", () => ({
   useCreateMetric: () => mocks.createMetric,
   useUpdateMetric: () => mocks.updateMetric,
   useRetireMetric: () => mocks.retireMetric,
+  useGrantMetric: () => mocks.grantMetric,
+  useRevokeMetric: () => mocks.revokeMetric,
+  useAdminMetricGrants: (metricKey: string, enabled: boolean) => {
+    mocks.metricGrantCalls.push([metricKey, enabled]);
+    return mocks.adminMetricGrants;
+  },
   useAdminSchema: () => mocks.adminSchema,
   useAdminPolicy: (
     datasourceId: string,
@@ -199,6 +226,8 @@ function resetMutations() {
     "createMetric",
     "updateMetric",
     "retireMetric",
+    "grantMetric",
+    "revokeMetric",
   ] as const) {
     Object.assign(mocks[key], {
       mutate: rs.fn(),
@@ -228,6 +257,15 @@ beforeEach(() => {
     isLoading: false,
     isError: false,
   });
+  Object.assign(mocks.adminMetricGrants, {
+    principalIds: [],
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+    error: null,
+    refetch: rs.fn(),
+  });
+  mocks.metricGrantCalls = [];
   mocks.policyCalls = [];
 });
 
@@ -544,6 +582,33 @@ describe("访问策略编辑器", () => {
 });
 
 describe("指标管理面板", () => {
+  it("按指标打开独立授权面板，关闭后切换指标不会保留旧输入", () => {
+    const revenue = metricView();
+    const margin = { ...metricView(), key: "margin", name: "Margin" };
+    render(wrap(<MetricAdminSection metrics={[revenue, margin]} />));
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Grant access Revenue" }),
+    );
+    expect(mocks.metricGrantCalls.at(-1)).toEqual(["revenue", true]);
+    fireEvent.change(screen.getByLabelText("User principal ID"), {
+      target: { value: "old-user" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByTestId("metric-grant-panel")).toBeNull();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Grant access Margin" }),
+    );
+    expect(mocks.metricGrantCalls.at(-1)).toEqual(["margin", true]);
+    expect(inputValue(screen.getByLabelText("User principal ID"))).toBe("");
+    expect(
+      within(screen.getByTestId("metric-grant-panel")).getByText("margin"),
+    ).toBeTruthy();
+    expect(document.body.textContent).not.toContain("old-user");
+  });
+
   it("下线是状态语义：确认取消不调用接口，确认只调用一次", () => {
     render(wrap(<MetricAdminSection metrics={[metricView()]} />));
     const trigger = screen.getByRole("button", {

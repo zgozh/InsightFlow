@@ -16,7 +16,7 @@ export const metadata: Metadata = {
   description: branding.tagline,
   applicationName: branding.productName,
   icons: {
-    icon: [{ url: "/favicon.svg", type: "image/svg+xml", sizes: "any" }],
+    icon: [{ url: "/favicon.png", type: "image/png", sizes: "32x32" }],
   },
   openGraph: {
     title: branding.productName,

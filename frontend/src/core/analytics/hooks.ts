@@ -23,14 +23,17 @@ import { useAuth } from "@/core/auth/AuthProvider";
 import {
   adminCreateDatasource,
   adminCreateMetric,
+  adminGrantMetric,
   adminGetDatasource,
   adminGetPolicy,
   adminGetSchema,
   adminListAudits,
   adminListDatasources,
+  adminListMetricGrants,
   adminListMetrics,
   adminListReports,
   adminRemovePolicy,
+  adminRevokeMetric,
   adminReplacePolicy,
   adminReplaceSchema,
   adminRetireMetric,
@@ -79,6 +82,8 @@ export const analyticsKeys = {
       principalId,
     ] as const,
   adminMetrics: () => [ANALYTICS_QUERY_ROOT, "admin", "metrics"] as const,
+  adminMetricGrants: (metricKey: string) =>
+    [ANALYTICS_QUERY_ROOT, "admin", "metrics", metricKey, "grants"] as const,
   adminAudits: (principalId: string) =>
     [ANALYTICS_QUERY_ROOT, "admin", "audits", principalId] as const,
   adminReports: (principalId: string) =>
@@ -433,6 +438,62 @@ export function useRetireMetric() {
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: analyticsKeys.adminMetrics() });
       void client.invalidateQueries({ queryKey: analyticsKeys.metrics() });
+    },
+  });
+}
+
+export function useAdminMetricGrants(
+  metricKey: string | null,
+  enabled: boolean,
+) {
+  const query = useQuery({
+    queryKey: analyticsKeys.adminMetricGrants(metricKey ?? ""),
+    queryFn: () => adminListMetricGrants(metricKey!),
+    enabled: enabled && metricKey !== null && metricKey.length > 0,
+    retry: false,
+  });
+  return {
+    principalIds: query.data?.principal_ids ?? [],
+    isLoading: query.isLoading,
+    isFetching: query.isFetching,
+    isError: query.isError,
+    error: query.error,
+    refetch: query.refetch,
+  };
+}
+
+export function useGrantMetric() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (variables: { metricKey: string; principalId: string }) =>
+      adminGrantMetric(variables.metricKey, variables.principalId),
+    onSuccess: (_result, variables) => {
+      void client.invalidateQueries({
+        queryKey: analyticsKeys.adminMetricGrants(variables.metricKey),
+        exact: true,
+      });
+      void client.invalidateQueries({
+        queryKey: analyticsKeys.metrics(),
+        exact: true,
+      });
+    },
+  });
+}
+
+export function useRevokeMetric() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (variables: { metricKey: string; principalId: string }) =>
+      adminRevokeMetric(variables.metricKey, variables.principalId),
+    onSuccess: (_result, variables) => {
+      void client.invalidateQueries({
+        queryKey: analyticsKeys.adminMetricGrants(variables.metricKey),
+        exact: true,
+      });
+      void client.invalidateQueries({
+        queryKey: analyticsKeys.metrics(),
+        exact: true,
+      });
     },
   });
 }

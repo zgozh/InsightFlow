@@ -587,10 +587,11 @@ async def test_a_query_without_a_limit_uses_the_smaller_of_the_two_server_values
 
 
 @pytest.mark.asyncio
-async def test_only_the_result_row_cap_is_clamped_and_everything_else_matches_the_config():
+async def test_low_risk_only_clamps_result_rows_and_keeps_other_configured_limits():
     events: list[str] = []
     config = AnalyticsConfig()
     prepared, authorized = _authorized_with_row_limit(10)
+    authorized = replace(authorized, risk=QueryRisk.LOW)
     create_plan = _CreatePlan(_plan_created(), events=events)
     use_case = _use_case(
         catalog=_Catalog(_datasource(), events=events),
@@ -605,11 +606,127 @@ async def test_only_the_result_row_cap_is_clamped_and_everything_else_matches_th
 
     configured = config.execution_limits()
     delivered = create_plan.calls[0]["limits"]
+    assert create_plan.calls[0]["authorized"].risk is QueryRisk.LOW
     assert delivered.max_result_rows == 10
     for field_name in configured.__dataclass_fields__:
         if field_name == "max_result_rows":
             continue
         assert getattr(delivered, field_name) == getattr(configured, field_name), field_name
+
+
+@pytest.mark.asyncio
+async def test_medium_risk_halves_server_timeout_row_and_byte_budgets_after_authorization():
+    events: list[str] = []
+    config = _config(statement_timeout_ms=5_001, max_result_rows=101, max_result_bytes=1_001)
+    prepared, authorized = _authorized_with_row_limit(100)
+    authorized = replace(authorized, risk=QueryRisk.MEDIUM)
+    create_plan = _CreatePlan(_plan_created(), events=events)
+    use_case = _use_case(
+        catalog=_Catalog(_datasource(), events=events),
+        # 语义授权结果驱动风险预算；更早的 syntax policy 仍然是 LOW。
+        policy=_Policy(_allow_policy(prepared=prepared), events=events),
+        authorizer=_Authorizer(_allow_authorization(authorized), events=events),
+        create_plan=create_plan,
+        audit=_Audit(events=events),
+        config=config,
+    )
+
+    delivery = await use_case.execute(principal_id="user-1", datasource_id="ds-1", raw_sql=_SMALL_LIMIT_SQL)
+
+    assert delivery.code == ExecutionDecisionCode.PLAN_CREATED.value
+    assert create_plan.calls[0]["authorized"].risk is QueryRisk.MEDIUM
+    assert create_plan.calls[0]["limits"] == replace(
+        config.execution_limits(),
+        statement_timeout_ms=2_500,
+        max_result_rows=50,
+        max_result_bytes=500,
+    )
+
+
+@pytest.mark.asyncio
+async def test_medium_budget_does_not_reject_a_query_already_below_the_global_row_cap():
+    events: list[str] = []
+    config = _config(max_result_rows=20)
+    prepared, authorized = _authorized_with_row_limit(10)
+    authorized = replace(authorized, risk=QueryRisk.MEDIUM)
+    create_plan = _CreatePlan(_plan_created(), events=events)
+    use_case = _use_case(
+        catalog=_Catalog(_datasource(), events=events),
+        policy=_Policy(_allow_policy(prepared=prepared), events=events),
+        authorizer=_Authorizer(_allow_authorization(authorized), events=events),
+        create_plan=create_plan,
+        audit=_Audit(events=events),
+        config=config,
+    )
+
+    delivery = await use_case.execute(principal_id="user-1", datasource_id="ds-1", raw_sql=_SMALL_LIMIT_SQL)
+
+    assert delivery.code == ExecutionDecisionCode.PLAN_CREATED.value
+    assert create_plan.calls[0]["limits"].max_result_rows == 10
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"statement_timeout_ms": 100},
+        {"query_max_rows": 1, "max_result_rows": 1},
+        {"max_result_bytes": 1},
+    ],
+    ids=("timeout-floor", "row-floor", "byte-floor"),
+)
+@pytest.mark.asyncio
+async def test_medium_budget_at_a_global_floor_is_audited_and_never_creates_a_plan(overrides):
+    events: list[str] = []
+    config = _config(**overrides)
+    sql = "SELECT id FROM orders LIMIT 1"
+    prepared = _prepared(sql=sql, row_limit=1)
+    authorized = _authorized(prepared=prepared, risk=QueryRisk.MEDIUM)
+    audit = _Audit(events=events)
+    create_plan = _CreatePlan(_plan_created(), events=events)
+    use_case = _use_case(
+        catalog=_Catalog(_datasource(), events=events),
+        policy=_Policy(_allow_policy(prepared=prepared), events=events),
+        authorizer=_Authorizer(_allow_authorization(authorized), events=events),
+        create_plan=create_plan,
+        audit=audit,
+        config=config,
+    )
+
+    delivery = await use_case.execute(principal_id="user-1", datasource_id="ds-1", raw_sql=sql)
+
+    assert delivery.code == ExecutionDecisionCode.COST_LIMIT_EXCEEDED.value
+    assert delivery.receipt is None
+    assert create_plan.calls == []
+    assert events == ["datasource", "policy", "authorization", "audit:start", "audit:finish"]
+    assert audit.started[0].phase.value == "plan"
+    assert audit.started[0].risk is QueryRisk.MEDIUM
+    assert audit.finished[0].decision_code == ExecutionDecisionCode.COST_LIMIT_EXCEEDED.value
+
+
+@pytest.mark.parametrize("failed_phase", ("start", "finish"))
+@pytest.mark.asyncio
+async def test_medium_budget_floor_refusal_returns_audit_unavailable_when_audit_fails(failed_phase):
+    events: list[str] = []
+    audit_kwargs = {f"{failed_phase}_error": RuntimeError("audit store down")}
+    audit = _Audit(events=events, **audit_kwargs)
+    sql = "SELECT id FROM orders LIMIT 1"
+    prepared = _prepared(sql=sql, row_limit=1)
+    authorized = _authorized(prepared=prepared, risk=QueryRisk.MEDIUM)
+    create_plan = _CreatePlan(_plan_created(), events=events)
+    use_case = _use_case(
+        catalog=_Catalog(_datasource(), events=events),
+        policy=_Policy(_allow_policy(prepared=prepared), events=events),
+        authorizer=_Authorizer(_allow_authorization(authorized), events=events),
+        create_plan=create_plan,
+        audit=audit,
+        config=_config(statement_timeout_ms=100),
+    )
+
+    delivery = await use_case.execute(principal_id="user-1", datasource_id="ds-1", raw_sql=sql)
+
+    assert delivery.code == ExecutionDecisionCode.AUDIT_UNAVAILABLE.value
+    assert delivery.receipt is None
+    assert create_plan.calls == []
 
 
 @pytest.mark.asyncio

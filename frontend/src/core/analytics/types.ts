@@ -41,6 +41,87 @@ export type QueryRisk = (typeof QUERY_RISKS)[number];
 export const REPORT_STATUSES = ["published"] as const;
 export type ReportStatus = (typeof REPORT_STATUSES)[number];
 
+export const ANALYSIS_STAGES = [
+  "workflow",
+  "catalog",
+  "sql",
+  "authorization",
+  "execution",
+  "data",
+  "writer",
+  "reviewer",
+  "publish",
+] as const;
+export type AnalysisStage = (typeof ANALYSIS_STAGES)[number];
+
+export const ANALYSIS_STAGE_STATUSES = [
+  "running",
+  "succeeded",
+  "failed",
+  "blocked",
+  "cancelled",
+] as const;
+export type AnalysisStageStatus = (typeof ANALYSIS_STAGE_STATUSES)[number];
+
+export const ANALYSIS_STAGE_RISKS = [
+  "LOW",
+  "MEDIUM",
+  "HIGH",
+  "BLOCKED",
+] as const;
+export type AnalysisStageRisk = (typeof ANALYSIS_STAGE_RISKS)[number];
+
+export const ANALYSIS_STAGE_CODES = [
+  "ok",
+  "unavailable",
+  "invalid_request",
+  "invalid_response",
+  "numeric_validation_failed",
+  "attempt_limit",
+  "input_too_large",
+  "policy_denied",
+  "cost_limit",
+  "query_failed",
+  "query_timeout",
+  "result_limit_reached",
+  "evidence_unavailable",
+  "review_rejected",
+  "report_conflict",
+  "cancelled",
+] as const;
+export type AnalysisStageCode = (typeof ANALYSIS_STAGE_CODES)[number];
+
+export interface AnalysisStageEvent {
+  type: "analysis_stage";
+  version: 1;
+  run_id: string;
+  seq: number;
+  stage: AnalysisStage;
+  status: AnalysisStageStatus;
+  duration_ms?: number;
+  row_count?: number;
+  byte_count?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  risk?: AnalysisStageRisk;
+  cached?: boolean;
+  code?: AnalysisStageCode;
+  evidence_ids?: string[];
+}
+
+export interface AnalysisStreamMetadata {
+  thread_id: string;
+  run_id: string;
+}
+
+export type AnalysisObservedRunStatus =
+  | "pending"
+  | "running"
+  | "error"
+  | "success"
+  | "timeout"
+  | "interrupted";
+
 /**
  * 服务端稳定错误码。它们只用于把 HTTP 结果翻译成本地化文案，
  * **不能**被当成授权结论使用——真正的授权边界始终是服务器。

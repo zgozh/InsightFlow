@@ -91,6 +91,8 @@ def _running_studio_server(
     port = _free_port()
     log_path = runtime_dir / f"server-{uuid4()}.log"
     env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(BACKEND_DIR), env.get("PYTHONPATH")]))
     env["LANGSMITH_LANGGRAPH_API_VARIANT"] = "local_dev"
     executable = shutil.which(
@@ -138,7 +140,7 @@ def _running_studio_server(
         else:
             process.terminate()
             process.wait(timeout=10)
-            pytest.fail(f"LangGraph dev server failed to start ({last_error!r}).\n{log_path.read_text(encoding='utf-8')}")
+            pytest.fail(f"LangGraph dev server failed to start ({last_error!r}).\n{log_path.read_text(encoding='utf-8', errors='replace')}")
 
         client = httpx.Client(
             base_url=base_url,
@@ -339,7 +341,16 @@ def test_persisted_legacy_assistants_survive_cross_version_restart(
             assert response.status_code == 200, response.text
             assert response.json()["version"] == 2
 
-    assert (tmp_path / ".langgraph_api" / ".langgraph_ops.pckl").is_file()
+        ops_path = tmp_path / ".langgraph_api" / ".langgraph_ops.pckl"
+        last_update_ns = time.time_ns()
+        flush_deadline = time.monotonic() + 15
+        while time.monotonic() < flush_deadline:
+            if ops_path.is_file() and ops_path.stat().st_mtime_ns >= last_update_ns:
+                break
+            time.sleep(0.1)
+
+    assert ops_path.is_file()
+    assert ops_path.stat().st_mtime_ns >= last_update_ns
 
     with _running_studio_server(
         tmp_path,

@@ -86,6 +86,18 @@ export type ThreadStreamOptions = {
   onSend?: (threadId: string) => void;
   onStart?: (threadId: string, runId: string) => void;
   onFinish?: (state: AgentThreadState) => void;
+  onStreamMetadata?: (metadata: ThreadStreamMetadata) => void;
+  onCustomEvent?: (
+    event: unknown,
+    metadata: ThreadStreamMetadata | null,
+  ) => void;
+  onRunSettled?: (metadata: ThreadStreamMetadata | null) => void;
+  onReplayGap?: (metadata: ThreadStreamMetadata | null) => void;
+};
+
+export type ThreadStreamMetadata = {
+  thread_id: string;
+  run_id: string;
 };
 
 type SendMessageOptions = {
@@ -1728,6 +1740,10 @@ export function useThreadStream({
   onSend,
   onStart,
   onFinish,
+  onStreamMetadata,
+  onCustomEvent,
+  onRunSettled,
+  onReplayGap,
 }: ThreadStreamOptions) {
   const { t } = useI18n();
   const currentViewThreadId = displayThreadId ?? threadId ?? null;
@@ -1757,10 +1773,15 @@ export function useThreadStream({
   const pendingPreparedReplayRef = useRef<PendingPreparedReplayMask | null>(
     null,
   );
+  const streamMetadataRef = useRef<ThreadStreamMetadata | null>(null);
   const listeners = useRef({
     onSend,
     onStart,
     onFinish,
+    onStreamMetadata,
+    onCustomEvent,
+    onRunSettled,
+    onReplayGap,
   });
 
   const {
@@ -1775,11 +1796,35 @@ export function useThreadStream({
 
   // Keep listeners ref updated with latest callbacks
   useEffect(() => {
-    listeners.current = { onSend, onStart, onFinish };
-  }, [onSend, onStart, onFinish]);
+    listeners.current = {
+      onSend,
+      onStart,
+      onFinish,
+      onStreamMetadata,
+      onCustomEvent,
+      onRunSettled,
+      onReplayGap,
+    };
+  }, [
+    onCustomEvent,
+    onFinish,
+    onReplayGap,
+    onRunSettled,
+    onSend,
+    onStart,
+    onStreamMetadata,
+  ]);
+
+  const notifyStreamMetadata = useCallback((metadata: ThreadStreamMetadata) => {
+    streamMetadataRef.current = metadata;
+    listeners.current.onStreamMetadata?.(metadata);
+  }, []);
 
   useEffect(() => {
     const normalizedThreadId = threadId ?? null;
+    if (threadIdRef.current !== normalizedThreadId) {
+      streamMetadataRef.current = null;
+    }
     if (!normalizedThreadId) {
       // Reset when the UI moves back to a brand new unsaved thread.
       startedRef.current = false;
@@ -1790,36 +1835,40 @@ export function useThreadStream({
     threadIdRef.current = normalizedThreadId;
   }, [threadId]);
 
-  const handleStreamStart = useCallback((_threadId: string, _runId: string) => {
-    threadIdRef.current = _threadId;
-    setOptimisticThreadId((currentOptimisticThreadId) => {
-      const currentView = currentViewThreadIdRef.current;
-      if (
-        currentOptimisticThreadId &&
-        (currentOptimisticThreadId === currentView ||
-          currentOptimisticThreadId === _threadId)
-      ) {
-        return _threadId;
+  const handleStreamStart = useCallback(
+    (_threadId: string, _runId: string) => {
+      notifyStreamMetadata({ thread_id: _threadId, run_id: _runId });
+      threadIdRef.current = _threadId;
+      setOptimisticThreadId((currentOptimisticThreadId) => {
+        const currentView = currentViewThreadIdRef.current;
+        if (
+          currentOptimisticThreadId &&
+          (currentOptimisticThreadId === currentView ||
+            currentOptimisticThreadId === _threadId)
+        ) {
+          return _threadId;
+        }
+        return currentOptimisticThreadId;
+      });
+      setLiveMessagesThreadId((currentLiveMessagesThreadId) => {
+        const currentView = currentViewThreadIdRef.current;
+        if (
+          currentLiveMessagesThreadId &&
+          (currentLiveMessagesThreadId === currentView ||
+            currentLiveMessagesThreadId === _threadId)
+        ) {
+          return _threadId;
+        }
+        return currentLiveMessagesThreadId;
+      });
+      if (!startedRef.current) {
+        listeners.current.onStart?.(_threadId, _runId);
+        startedRef.current = true;
       }
-      return currentOptimisticThreadId;
-    });
-    setLiveMessagesThreadId((currentLiveMessagesThreadId) => {
-      const currentView = currentViewThreadIdRef.current;
-      if (
-        currentLiveMessagesThreadId &&
-        (currentLiveMessagesThreadId === currentView ||
-          currentLiveMessagesThreadId === _threadId)
-      ) {
-        return _threadId;
-      }
-      return currentLiveMessagesThreadId;
-    });
-    if (!startedRef.current) {
-      listeners.current.onStart?.(_threadId, _runId);
-      startedRef.current = true;
-    }
-    setOnStreamThreadId(_threadId);
-  }, []);
+      setOnStreamThreadId(_threadId);
+    },
+    [notifyStreamMetadata],
+  );
 
   const queryClient = useQueryClient();
   const { tasksRef, setTasks } = useSubtaskContext();
@@ -1893,6 +1942,19 @@ export function useThreadStream({
           .catch(() => ({}));
       }
     },
+    onMetadataEvent(metadata) {
+      if (
+        typeof metadata === "object" &&
+        metadata !== null &&
+        typeof metadata.thread_id === "string" &&
+        typeof metadata.run_id === "string"
+      ) {
+        notifyStreamMetadata({
+          thread_id: metadata.thread_id,
+          run_id: metadata.run_id,
+        });
+      }
+    },
     onUpdateEvent(data, { mutate }) {
       if (hasRenderedThreadStateUpdate(data)) {
         mutate((previous) => reduceThreadStateUpdates(previous, data) ?? {});
@@ -1941,6 +2003,7 @@ export function useThreadStream({
       }
     },
     onCustomEvent(event: unknown) {
+      listeners.current.onCustomEvent?.(event, streamMetadataRef.current);
       // Narrow `event.type` once; taskEventToSubtaskUpdate already validated the
       // task_* events, so the per-branch re-narrowing below reads this single
       // source of truth instead of re-checking the object shape each time.
@@ -1950,6 +2013,7 @@ export function useThreadStream({
           : undefined;
 
       if (eventType === "stream_replay_gap") {
+        listeners.current.onReplayGap?.(streamMetadataRef.current);
         setOptimisticMessages([]);
         setOptimisticThreadId(null);
         setLiveMessagesThreadId(null);
@@ -1999,7 +2063,11 @@ export function useThreadStream({
         }
       }
     },
-    onError(error) {
+    onError(error, runMetadata) {
+      // 终态回调可能迟到于同线程新 run；结算时不能用旧 metadata 切换当前 scope。
+      listeners.current.onRunSettled?.(
+        runMetadata ?? streamMetadataRef.current,
+      );
       setOptimisticMessages([]);
       setOptimisticThreadId(null);
       setLiveMessagesThreadId(null);
@@ -2021,7 +2089,11 @@ export function useThreadStream({
         });
       }
     },
-    onFinish(state) {
+    onFinish(state, runMetadata) {
+      // 终态回调可能迟到于同线程新 run；结算时不能用旧 metadata 切换当前 scope。
+      listeners.current.onRunSettled?.(
+        runMetadata ?? streamMetadataRef.current,
+      );
       listeners.current.onFinish?.(state.values);
       pendingPreparedReplayRef.current = null;
       pendingUsageBaselineMessageIdsRef.current = new Set(
@@ -2043,6 +2115,7 @@ export function useThreadStream({
       stoppedThreadId,
       isMock,
     );
+    listeners.current.onRunSettled?.(streamMetadataRef.current);
     if (pendingReplay) {
       setOptimisticMessages([]);
       setOptimisticThreadId(null);
@@ -3246,7 +3319,7 @@ export function useThreadRuns(
 ) {
   const apiClient = getAPIClient();
   return useQuery<Run[]>({
-    queryKey: ["thread", threadId],
+    queryKey: ["thread", "runs", threadId],
     queryFn: async () => {
       if (!threadId) {
         return [];

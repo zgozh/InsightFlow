@@ -5,6 +5,7 @@ from app.analytics.application.authorization import (
     SemanticQueryAuthorizer,
 )
 from app.analytics.application.delivery import ExecuteAnalyticsQuery, PlanAnalyticsQuery, QueryExecutionDelivery, QueryPlanDelivery
+from app.analytics.application.evidence_ports import AnalysisEvidenceRepository, AnalysisEvidenceStoreError, StoredAnalysisEvidence
 from app.analytics.application.execution import CreateQueryExecutionPlan, ExecuteQueryPlan
 from app.analytics.application.execution_ports import (
     Clock,
@@ -35,6 +36,8 @@ __all__ = [
     "AccessPolicyCatalog",
     "AccessPolicyRepository",
     "AnalysisReportRepository",
+    "AnalysisEvidenceRepository",
+    "AnalysisEvidenceStoreError",
     "AuthorizePreparedQuery",
     "Clock",
     "CreateQueryExecutionPlan",
@@ -67,4 +70,5 @@ __all__ = [
     "SchemaSnapshotRepository",
     "SemanticQueryAuthorizer",
     "StoredExecutionPlan",
+    "StoredAnalysisEvidence",
 ]

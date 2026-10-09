@@ -1,0 +1,15 @@
+# 历史门禁Windows测试修正
+
+gpt-6-luna/max。Root已读失败签名与实际平台路径，14候选12fail主要是Windows测试假设，不证明生产回归。只修直接测试可移植性，不恢复已删产品功能、不skip整模块、不改production让旧测试过。
+
+独占明确tests文件：test_client_live_policy.py（UTF8 subprocess输出），test_detect_blocking_io_static.py（JSON路径as_posix契约），test_extension_manager.py（实际Windows venv Scripts/python.exe），test_langgraph_studio_routes.py（子进程UTF8与safe日志暴露首错），test_local_sandbox_command_timeout.py、test_local_sandbox_provider_mounts.py（mock实际平台runner，保持原映射/timeout行为），test_parallel_mcp_user_agent.py（read_text UTF8），及 docs/acceptance/2026-10-09-windows-historical-gate-fixes.md。Dataworker4tests完全不在所有权内。
+
+有界修上述明确原因：subprocess text解码指定encoding=utf8及childPYTHONUTF8=1，失败日志可errors=replace用于诊断但不能隐藏assertion；venv路径根据os.name实际配置；路径输出test正确as_posix；shell测试只mock实际选中的runner保持本来pathreplacement/timeout断言，必要POSIX限定仅真正POSIX行为测试要明确理由并保留Linux必跑，不为了PASS随意skip；扩展manager事务回滚原完整assertions保留。
+
+LangGraph legacy assistant测试先固定UTF8看真实启动首错，不能因为旧customAgent已移除就改production加回。有真实产品/契约问题交Root最小建议，不无限修删功能。
+
+所有相关修复一起完成后跑候选14一次+受影响文件ruff一次（V1）；只新失败继续直接定位，禁止全14习惯性循环或整后端suite。输出12故障是否消除、真实剩余fail及CI Linux未跑边界；历史旧13保留当时事实，当前通过可新增证明。
+
+不build/Docker/model、no stage/commit。短recordactualdiff/checks后freeze，Root独立review门禁再最终stagecommitpush。
+
+Root统一复核后的第二步裁决：仅7个新失败节点定点，不重跑14。client env保留SYSTEMROOT/WINDIR/COMSPEC/TEMP/TMP这些操作系统启动键，继续剥离真实凭据，PYTHONUTF8已固定；不能把未确认Winsock根因当生产bug。Studio当前实际locked runtime ops是10秒flush的pickle而非SQLite，故在legacy-server context结束前有界等待实际持久文件存在（最多15秒poll）后再terminate，保留原文件/restart GET身份全部断言，不删assert/加回CustomAgent。MCP localHTTP fixture设NO_PROXY/no_proxy=127.0.0.1,localhost并仅测试清proxykey，避免Windows系统代理干扰。新增所有权仅test_mcp_task_service.py里的该重试时钟测试：生产契约退避至少5秒，使用确定性错误时钟或>=符合下界，禁止跳过正确错误/claim释放断言。完成这些一轮修复后只跑实际7失败nodes+changedRuff，真实新fail再精确回Root，别全suite。

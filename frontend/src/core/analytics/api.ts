@@ -24,6 +24,7 @@ import {
   adminDatasourceViewSchema,
   analysisReportPageSchema,
   analyticsErrorBodySchema,
+  AnalyticsParseError,
   type AccessPolicyViewParsed,
   type AdminDatasourceViewParsed,
   type AnalysisReportPageParsed,
@@ -31,7 +32,13 @@ import {
   type DatasourceViewParsed,
   datasourceListSchema,
   metricListSchema,
+  metricGrantListSchema,
+  metricGrantRemovalSchema,
+  metricGrantResponseSchema,
   metricViewSchema,
+  type MetricGrantListParsed,
+  type MetricGrantRemovalParsed,
+  type MetricGrantResponseParsed,
   type MetricViewParsed,
   parseExternal,
   queryAuditPageSchema,
@@ -325,6 +332,49 @@ export async function adminRetireMetric(
     }),
   );
   return parseExternal(metricViewSchema, payload);
+}
+
+export async function adminListMetricGrants(
+  metricKey: string,
+): Promise<MetricGrantListParsed> {
+  const payload = await readJson(
+    await fetch(url(`/admin/metrics/${encodeURIComponent(metricKey)}/grants`)),
+  );
+  return parseExternal(metricGrantListSchema, payload);
+}
+
+export async function adminGrantMetric(
+  metricKey: string,
+  principalId: string,
+): Promise<MetricGrantResponseParsed> {
+  const payload = await readJson(
+    await fetch(
+      url(
+        `/admin/metrics/${encodeURIComponent(metricKey)}/grants/${encodeURIComponent(principalId)}`,
+      ),
+      { method: "PUT" },
+    ),
+  );
+  const result = parseExternal(metricGrantResponseSchema, payload);
+  if (result.principal_id !== principalId) {
+    throw new AnalyticsParseError("invalid_analytics_response");
+  }
+  return result;
+}
+
+export async function adminRevokeMetric(
+  metricKey: string,
+  principalId: string,
+): Promise<MetricGrantRemovalParsed> {
+  const payload = await readJson(
+    await fetch(
+      url(
+        `/admin/metrics/${encodeURIComponent(metricKey)}/grants/${encodeURIComponent(principalId)}`,
+      ),
+      { method: "DELETE" },
+    ),
+  );
+  return parseExternal(metricGrantRemovalSchema, payload);
 }
 
 export async function adminListAudits(

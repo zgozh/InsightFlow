@@ -1,21 +1,6 @@
-# InsightFlow 本机试用指南
+# InsightFlow 历史本机试用与验收证据
 
-## 配置速览
-
-首次启动建议从仓库根目录运行 `make setup`。交互向导会写出带有有效 `models[]` 的 `config.yaml`，并保存所选模型需要的 key；之后启动服务，在网页 `/setup` 创建首位管理员。`make config` 只复制模板，不会替你选模型。仅在 `.env` 填 key 但没有启用任何 `models[]` 条目，Gateway 仍无法启动 Agent。
-
-| 配置项 | 写入位置或操作入口 | 说明 |
-| --- | --- | --- |
-| **必填：模型与首位管理员** | 模型条目在 `config.yaml` 的 `models[]`；模型 key 放 Git 忽略的根目录 `.env`；管理员在网页 `/setup` 创建 | 至少启用一个有效模型；只需填写该模型实际要求的 key。也可通过 `make setup` 生成模型配置。 |
-| **默认可不填** | `config.yaml`、`extensions_config.json`、Compose | 应用数据库默认 SQLite；本机 sandbox 与基础工具有默认值；MCP/自定义 skills 可按需配置。默认 Compose 已提供必需 Redis 和内部地址，不需要单独发布 Redis 端口。 |
-| **经营分析额外** | 只读连接凭证放根目录 `.env` 的 `ANALYTICS_DS`；schema、metric、policy 在登录后的管理页面登记 | PostgreSQL/MySQL 业务库由使用者提供，不会随默认栈启动。数据源 `secret_ref` 填 `env://ANALYTICS_DS`；凭证用只读账号 JSON，不能把密码写入 `config.yaml`、数据源记录或仓库。 |
-| **高级可选** | 依功能写入 `.env`、`config.yaml` 或 `extensions_config.json` | Jina key 放 `.env`；Scheduler 在 `config.yaml` 配置；应用 PostgreSQL 要同时配置 `database.backend: postgres` 与 `.env` 中的 `DATABASE_URL`；MCP 与 skills 属于 `extensions_config.json`；观测按需设置 LangSmith/Monocle 环境变量。 |
-
-安全边界：Gateway 的 Analytics 结构化运行输出投影不拦截 LangSmith、Langfuse、Monocle 等可选 tracing SDK；启用后它们可能采集 prompt、tool input/output 与 completion。运维应关闭 tracing，或仅导出到受信目标并单独管理访问权限与保留期。本机试用和本切片均未验证第三方 tracing 的实际导出内容。
-
-`make up` 默认只启动 Nginx、Frontend、Gateway 和 Redis，并绑定本机回环地址；部署脚本会生成所需的认证密钥。外部 sandbox provisioner 必须由运维另行部署：`config.yaml` 中的 provisioner URL/key 要与该服务端配置匹配，Compose 不会自动创建它。`.env` 保存环境值，`config.yaml` 描述启用的模型和应用行为，`extensions_config.json` 管理 MCP/skills；这三者不能相互替代。
-
-DeepSeek Flash 的简洁模型条目见根目录 `config.example.yaml` 的 “DEEPSEEK FLASH QUICKSTART” 注释块。模板使用 `langchain_openai:ChatOpenAI`、`base_url` 和非思考模式；DeepSeek 官方文档列出 `deepseek-flash`、`https://api.deepseek.com`，并说明 Chat Completions 工具调用支持。[模型与价格](https://api-docs.deepseek.com/quick_start/pricing/)、[工具调用](https://api-docs.deepseek.com/guides/tool_calls/)。思考模式下的工具调用需正确回传 `reasoning_content`；本模板不启用该路径。
+> 当前标准安装、配置和工作台使用步骤见根目录[安装与运行指南](../Install.md)。本文件保留有日期的合成 PostgreSQL 演示配置和验收记录；这些历史运行不代表当前整体发布状态。
 
 ## 6D2：持久化 PostgreSQL 16 演示
 
@@ -75,7 +60,7 @@ ANALYTICS_DEMO_READER_CREDENTIAL=$readerCredential
 "@ | Set-Content -Encoding ASCII .env.analytics-demo
 ```
 
-`.analytics-demo/` 保存 TLS 文件和独立 Gateway 本地状态，`.env.analytics-demo` 保存仅供本机演示的随机密码与只读凭证 JSON；这些路径均已加入 `.gitignore`。Gateway 的 runtime home 由 `DEER_FLOW_HOME` 指向该 project 独有的绝对路径，不会复用其他 DeerFlow/InsightFlow 栈的 SQLite 或认证状态。不要把凭证复制到数据源记录，那里只填 `env://ANALYTICS_DEMO_READER_CREDENTIAL`。
+`.analytics-demo/` 保存 TLS 文件和独立 Gateway 本地状态，`.env.analytics-demo` 保存仅供本机演示的随机密码与只读凭证 JSON；这些路径均已加入 `.gitignore`。Gateway 的 runtime home 由 `DEER_FLOW_HOME` 指向该 project 独有的绝对路径，不会复用其他既有应用栈的 SQLite 或认证状态。不要把凭证复制到数据源记录，那里只填 `env://ANALYTICS_DEMO_READER_CREDENTIAL`。
 
 需要 Docker Compose V2；双 `--env-file` 用法已用 v2.40.3 验证，后一个文件覆盖前一个文件中的同名变量。Compose shell 环境变量优先级高于 env 文件；每次启动或停止前都从本地文件重载专用标量变量，避免 PowerShell profile 中的同名值改写独立 home 或 loopback 端口。只读凭证 JSON **不要**经 `ConvertFrom-StringData` 赋给 `$env:ANALYTICS_DEMO_READER_CREDENTIAL`：它含有 JSON 转义的 PEM 换行，PowerShell 会将 `\n` 解成实际换行，破坏 JSON。让 Compose 通过 `--env-file` 原样读取该单行值；若当前启动 shell 已有同名覆盖，只清除该进程中的覆盖，不改其他环境：
 
@@ -119,7 +104,7 @@ docker compose -p insightflow-analytics-demo `
   down --timeout 20
 ```
 
-`down` 会停止此 project 的容器并移除它的网络，保留 `insightflow-analytics-demo_analytics-demo-data` 数据卷；再次运行启动命令可继续使用。不要使用 `make down` 管理这个 project，也不要对它执行 `down -v`。默认栈和旧的 `deer-flow-*` 容器、卷不属于此演示 project。
+`down` 会停止此 project 的容器并移除它的网络，保留 `insightflow-analytics-demo_analytics-demo-data` 数据卷；再次运行启动命令可继续使用。不要使用 `make down` 管理这个 project，也不要对它执行 `down -v`。默认栈和其他既有容器、卷（实际名称见后续资源记录）不属于此演示 project。
 
 ### 管理员注册
 
@@ -194,46 +179,9 @@ docker compose -p insightflow-analytics-demo `
 
 2026-09-26 在独立 `insightflow-analytics-demo` project 上完成一次合成数据真实分析彩排。曾发现 PowerShell 演示步骤会解码凭据 JSON 中的 PEM 换行，且 shell 环境覆盖会优先于 Compose `--env-file`；现按上文“启动与停止”步骤只清除当前进程的 reader credential 覆盖，并让 Compose 原样读取单行 JSON，证书仍以 `verify_full` 校验。真实模型 run、持久线程身份、PostgreSQL evidence、报告写入/读取和拒绝结果详见[Phase 6F1 验收记录](acceptance/phase-06f1-real-analysis-rehearsal.md)。该 opt-in 演示不表示默认四服务 AS-15、AS-14 或 Phase 6 已验收；project 与合成数据库卷保留供操作者复验。
 
-## 最短试用步骤
+## 当前安装入口
 
-在仓库根目录打开 PowerShell。Docker Desktop、Docker Compose、`make`、Python 3.12+ 和 `uv` 必须可用。使用 MSYS GNU Make 时仓库会选择 MSYS 自带的 POSIX shell 与 `/usr/bin/bash`；Node.js 22+ 和仓库锁定的 pnpm 10.26.2 是本地开发、运行 `make check` 的依赖，Docker 构建则在镜像内安装前端依赖。
-
-1. 在交互式终端运行 `make setup`，选择模型提供方和模型；仅当所选提供方需要时才输入 API key。本地 Ollama 不需要 key。若 Gateway 运行在 Docker、Ollama 运行在宿主机，向导生成后需编辑 Git 忽略的 `config.yaml`，把该模型的 `base_url` 从 `http://localhost:11434` 改为 `http://host.docker.internal:11434`。向导把模型定义写入根目录 `config.yaml`，把所需的 key 写入 Git 忽略的 `.env`。如果此前运行过 `make config`，配置已存在时向导会询问是否重配；确认后继续。非交互终端运行 `make setup` 会安全退出，不会改写配置。
-
-   也可以运行 `make config` 生成模板，再手动编辑 `config.yaml` 的 `models` 项；需要凭据的提供方还要在 `.env` 设置对应变量，例如 `OPENAI_API_KEY` 或 `DEEPSEEK_API_KEY`。只有 `.env` 中有 key 还不够：`config.yaml` 必须有模型条目并引用该变量。像本地 Ollama 这样的无 key 提供方不需要配置 key；容器访问宿主机上的 Ollama 时还需使用 `host.docker.internal` 地址。`make config` 在 `config.yaml` 已存在时会中止，不会覆盖它。
-
-2. 运行 `make doctor` 检查配置。未配置模型时会报告 `models configured` 失败；Windows Docker 路径没有宿主机 Nginx 时，`nginx` 项也会失败，这不妨碍 Docker Compose 内的 Nginx 启动。不要把这两项误读为容器启动健康检查。
-
-3. 构建并启动 Docker 服务：
-
-   ```powershell
-   make up
-   ```
-
-   等待脚本报告 `DeerFlow is running!`，然后打开 <http://localhost:2026>。默认仅绑定 `127.0.0.1`。
-
-4. 首次访问会进入 `/setup`。在页面创建管理员账号后登录。管理员邮箱和密码由使用者自行设定；不要把它们写进仓库或交给测试脚本。
-
-5. 结束试用时运行 `make down`。它停止并移除该 Compose 项目的容器和网络，不带 `--volumes`；不要自行追加 `-v`，以免删除本机持久数据。`make up` 可以重新启动。
-
-## 配置文件与能力边界
-
-| 文件                     | 用途                                                                  |
-| ------------------------ | --------------------------------------------------------------------- |
-| `config.yaml`            | 必须有至少一个模型条目；沙箱、工具、Analytics 等 Gateway 配置也在这里 |
-| `.env`                   | 模型 key、可选 Jina key、数据库 secret JSON 等运行时环境变量          |
-| `extensions_config.json` | MCP 服务和技能启用状态；本机模板生成会创建空配置                      |
-| `frontend/.env`          | 前端本机开发配置；Docker 试用一般沿用 Compose 的服务地址              |
-
-上述文件均为 Git 忽略文件。不要提交真实 key、密码、数据库连接材料或管理员凭证。Jina key 是可选项；未配置时仍可使用 `web_fetch`，但可能受到上游匿名请求限额影响。AIO external provisioner 只是 Gateway 调用的外部兼容端点，本仓库不包含或启动其服务端。
-
-聊天依赖有效的 `config.yaml -> models[]`、提供方要求的凭据（如有）以及管理员账号。本次无模型凭据冷启动验证没有发起模型请求，因此模型对话仍需使用者配置后实测。
-
-Analytics 应用控制面默认使用持久 SQLite：Gateway 在 `backend` 工作目录下写入 `backend/.deer-flow/data/deerflow.db`，默认 Compose 将 `backend/.deer-flow` 持久挂载。显式设置 `database.backend: postgres` 时，应用 PostgreSQL 由运维提供，默认 Compose 不会启动它；Analytics 管理的业务 PostgreSQL/MySQL 也是外部数据源，与应用数据库分开。默认 Compose 固定运行 Nginx、Frontend、Gateway、Redis 四个服务，Redis 是必需服务而非可选组件；本地 `make dev` 则运行三个面向用户的进程。要分析业务数据，还需准备一份小型、非敏感的数据集，并为 Gateway 提供只读账号。管理员在“数据源”登记连接（`secret_ref` 使用 `env://ANALYTICS_DS`），发布与真实表列一致的 schema snapshot，为明确的用户 principal 配置访问 policy，并在“指标”登记指标和维度。凭证 JSON 由使用者保存在 Git 忽略的 `.env` 并作为 `ANALYTICS_DS` 注入，字段为 `engine`、`host`、`port`、`database`、`username`、`password`；TLS 选项见[配置指南](../backend/docs/CONFIGURATION.md)。关闭 TLS 仅允许连接 loopback；容器访问宿主机时不要把 `host.docker.internal` 当作 loopback。
-
-推荐的最小演示数据：一个 `demo` schema、一张包含日期、状态、金额和产品标识的合成订单表、50–200 行合成数据，以及只能读取所需 schema/table/column 的数据库账号。不放入真实个人信息。建议从 1 vCPU、1 GiB 内存和 1 GiB 持久磁盘起步；这是小型样例库的资源预算建议，尚未做容量基准。默认 Compose 不新增业务数据库服务。
-
-`scripts/test_analytics_databases.py --engine all` 使用独立临时 PostgreSQL/MySQL 实例验证驱动、迁移和受控查询；脚本结束会删除临时容器和网络。它们不是可供人工试用的持久数据源。
+当前安装、模型配置、默认服务启动和工作台使用步骤统一见根目录[安装与运行指南](../Install.md)。以下各节保留带日期的合成 PostgreSQL 演示配置及历史验收结果，不能作为当前整体发布状态的证明。
 
 ## 本机实测记录（2026-09-24）
 
@@ -255,7 +203,7 @@ Analytics 应用控制面默认使用持久 SQLite：Gateway 在 `backend` 工�
 ## Phase 6C 复核补记（2026-09-24）
 
 - 再次运行 `make up` 退出码 0；Compose 等待 Nginx、Frontend、Gateway、Redis 就绪后报告运行成功。HTTP 检查中 `/health`、首页、`/setup`、`/login` 均为 200；未登录访问 `/workspace/chats` 返回 307 并转到 `/setup`；`/api/v1/auth/setup-status` 返回 `needs_setup: true`。没有创建管理员账号，也没有发起模型请求。
-- 启动前确认冲突的四个已停止容器来自另一 checkout（Compose project `docker`，目录为 `D:\develop\workspace\deer-flow\docker`）。仅临时改名以保留容器和卷；本次 `make down` 退出码 0 后，四个容器均恢复原名和原 ID，没有清除卷。
+- 启动前确认冲突的四个已停止容器来自另一份既有 checkout（Compose project `docker`，机器路径 `D:\develop\workspace\deer-flow\docker`）。仅临时改名以保留容器和卷；本次 `make down` 退出码 0 后，四个容器均恢复原名和原 ID，没有清除卷。
 - 当前根配置的 `models` 列表为空，因此模型对话未验证。没有通过持久业务数据库、只读账号、schema snapshot 和用户 policy 完成 Analytics 查询；**经营分析未端到端验证**。按指南填写模型与业务数据源配置后，再由使用者进行人工试用。
 - 静态演示未提供可复现的 Agent→沙箱 HTML 写入→artifact 登记→浏览器预览全链路证据；现有 artifact 预览 E2E 使用模拟写入与响应。保留四个可编辑欢迎示例，不增加第五个网页示例。
 - `D:\develop\workspace\InsightFlow-6A-baseline-20260924` 仍需保留；它不属于已登记 worktree，可能包含未跟踪文件。不得递归删除或移动，如需清理应先由使用者检查并另行授权。

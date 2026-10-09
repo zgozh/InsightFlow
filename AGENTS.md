@@ -12,25 +12,22 @@ guide rather than expecting full detail here:
 - **[frontend/AGENTS.md](frontend/AGENTS.md)** — frontend depth: Next.js App Router layout,
   thread/streaming data flow, code style, commands.
 
-## What is DeerFlow
+## What is InsightFlow
 
-DeerFlow is a LangGraph-based AI super-agent system with a full-stack architecture. The
-backend runs a "super agent" with sandboxed execution, persistent memory, subagent
-delegation, and extensible tools (built-in, MCP, community), all per-thread isolated. The
-frontend is a Next.js chat UI.
+InsightFlow 是基于 LangGraph 通用 Agent 运行时构建的受控经营分析工作台。产品提供数据源与指标目录、主体授权、只读查询、证据校验和受控报告发布；普通聊天沿用独立的通用 Agent 路径。Harness 及 `deerflow-harness` 等稳定包名仍保留在代码结构中，不因产品品牌调整而改名。
 
-Phase 5 之后产品面收缩为 InsightFlow 受控经营分析工作台：外部 IM 平台桥接、Custom/Managed
-Agent、Projects/Documents/Trash、Browser 与上游 provider zoo 已删除。
+Phase 5 之后，外部 IM 平台桥接、Custom/Managed Agent、Projects/Documents/Trash、Browser 与上游 provider zoo 已从产品面删除。
 
+产品说明与使用入口见 [中文 README](README.md) 和 [安装指南](Install.md)；当前能力、发布证据与交付状态分别见 [功能概览](docs/current-capabilities.md)、[验收矩阵](docs/acceptance/2026-10-09-final-release-matrix.md) 和 [最终交付摘要](docs/acceptance/2026-10-09-final-delivery.md)。
 ## Service Topology
 
 Local `make dev` starts the three application-facing services. Both default Docker Compose files run four cooperating containers; the extra Redis container backs the Redis Streams bridge:
 
-| Service         | Port   | Role                                                                 |
-| --------------- | ------ | -------------------------------------------------------------------- |
-| **Nginx**       | `2026` | Unified reverse-proxy entry point — open this in the browser        |
-| **Gateway API** | `8001` | FastAPI REST API + embedded LangGraph-compatible agent runtime      |
-| **Frontend**    | `3000` | Next.js web interface                                               |
+| Service         | Port   | Role                                                                    |
+| --------------- | ------ | ----------------------------------------------------------------------- |
+| **Nginx**       | `2026` | Unified reverse-proxy entry point — open this in the browser            |
+| **Gateway API** | `8001` | FastAPI REST API + embedded LangGraph-compatible agent runtime          |
+| **Frontend**    | `3000` | Next.js web interface                                                   |
 | **Redis**       | `6379` | Docker Compose internal Redis Streams bridge; no host port is published |
 
 The default Docker Compose set is exactly `nginx`, `frontend`, `gateway`, and `redis`; Redis is a required default service, not an optional profile. The application database defaults to SQLite at `.deer-flow/data/deerflow.db` relative to the Gateway working directory, persisted under `backend/.deer-flow` in the default deployment. Operators may explicitly configure an external PostgreSQL application database. PostgreSQL/MySQL business databases are separate external data sources; neither is included in the default Compose stack.
@@ -95,6 +92,7 @@ Gateway API. Config schema and resolution order are documented in
 [backend/AGENTS.md](backend/AGENTS.md).
 
 Scheduled-task note:
+
 - The scheduled-task MVP adds a workspace page at `/workspace/scheduled-tasks` plus a background scheduler service gated by `config.yaml -> scheduler.enabled`.
 - Scheduled background runs are intentionally non-interactive: the lead-agent toolset excludes `ask_clarification` when `context.non_interactive=true`. That key, `disable_clarification`, and `github_token` are honored only for internally-authenticated callers; client-supplied copies are dropped from both `body.context` and `body.config`.
 - Busy scheduled occurrences are persisted as `queued`; `launching` is a short lease-fenced claim, `running` remains the normal Gateway run lifecycle, and `scheduler.queue_timeout_seconds` bounds the durable wait. Do not reintroduce skip-on-overlap or count waiting rows against `max_concurrent_runs`.
@@ -193,9 +191,11 @@ cd frontend && pnpm rstest run <pattern>     # e.g. pnpm rstest run my-component
 
 - Backend work → **[backend/AGENTS.md](backend/AGENTS.md)**
 - Frontend work → **[frontend/AGENTS.md](frontend/AGENTS.md)**
-- Setup & install → **[Install.md](Install.md)**, **[CONTRIBUTING.md](CONTRIBUTING.md)**
-- Project overview & usage → **[README.md](README.md)** (translations: `README_zh.md`,
-  `README_ja.md`, `README_fr.md`, `README_ru.md`)
+- Setup & install → **[Install.md](Install.md)**; development contributions → **[CONTRIBUTING.md](CONTRIBUTING.md)**
+- Project overview & usage → **[中文 README](README.md)** (default), [English README](README_en.md)
+- Current product capabilities → **[docs/current-capabilities.md](docs/current-capabilities.md)**; architecture → **[docs/architecture/insightflow-overview.md](docs/architecture/insightflow-overview.md)**
+- Final delivery status → **[docs/acceptance/2026-10-09-final-delivery.md](docs/acceptance/2026-10-09-final-delivery.md)**
+- Historical local PostgreSQL trial evidence → **[docs/LOCAL_TRIAL.md](docs/LOCAL_TRIAL.md)**
 - Security policy → **[SECURITY.md](SECURITY.md)**
 - Changes → **[CHANGELOG.md](CHANGELOG.md)**
 - Cutting a release → **[RELEASING.md](RELEASING.md)**
@@ -216,6 +216,7 @@ These apply repo-wide; module guides own the module-specific detail.
   实现；仅安全中断、用户新指令或必须由主会话完成的治理操作例外。每个可验收切片遵循
   “方案 → 子 Agent 实施与证据 → 主会话审查 → 下一切片”，不把实施者自报通过当成验收。
   只有产品/安全承诺或权限范围必须由用户决定时才打断用户；用户可随时要求暂停或改变分工。
+- **根目录 README 语言** — `README.md` 是默认中文项目说明；`README_en.md` 是对应英文版。根目录不再维护其它语言版本。
 - **中文优先（InsightFlow 自有内容）** — 新增或修改的内容以中文为主要语言：代码注释、docstring、
   架构说明、实施计划、AI 实施提示词、复杂测试场景说明。以下保持英文，不做机械汉化：变量/函数/类/
   模块名、API 与数据库字段、配置键、错误码、协议值、CLI 命令、SQL 关键字、第三方与行业标准术语。

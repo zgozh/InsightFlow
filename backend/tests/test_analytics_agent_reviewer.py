@@ -23,21 +23,32 @@ from app.analytics.agent.reviewer import (
     create_analysis_report_reviewer_capability,
 )
 from app.analytics.domain import DatasourceEngine, QueryCostEstimate, QueryExecutionResult, QueryRisk
+from app.analytics.domain.claims import EvidenceCellReference, NumericClaimOperation, VerifiedNumericClaim
 
 
-class _NoToolModel(BaseChatModel):
+class _SyntheticCompletionsClient:
+    def create(self, **_kwargs):
+        raise AssertionError("The synthetic Reviewer must not use the SDK transport")
+
+
+class _SyntheticAsyncRoot:
+    def __init__(self, *, max_retries: int) -> None:
+        self.max_retries = max_retries
+        self.chat = type("Chat", (), {"completions": _SyntheticCompletionsClient()})()
+
+    def with_options(self, *, max_retries: int):
+        return _SyntheticAsyncRoot(max_retries=max_retries)
+
+
+class _NoToolModel(ChatOpenAI):
     """带可检查调用参数、响应和等待行为的离线模型。"""
 
-    max_tokens: int | None = None
     responses: list[Any] = Field(default_factory=list)
-    delay_seconds: float = 0
+    delay_control: list[float] = Field(default_factory=lambda: [0])
     messages_seen: list[list[BaseMessage]] = Field(default_factory=list)
     invocation_kwargs: list[dict[str, Any]] = Field(default_factory=list)
+    observed_settings: list[dict[str, Any]] = Field(default_factory=list)
     _started: asyncio.Event = PrivateAttr(default_factory=asyncio.Event)
-
-    @property
-    def _llm_type(self) -> str:
-        return "synthetic-no-tool-reviewer"
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         raise AssertionError("Reviewer must use its async model entry point")
@@ -45,9 +56,23 @@ class _NoToolModel(BaseChatModel):
     async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
         self.messages_seen.append(messages)
         self.invocation_kwargs.append(kwargs)
+        self.observed_settings.append(
+            {
+                "callbacks": self.callbacks,
+                "callback_manager": self.callback_manager,
+                "tags": self.tags,
+                "metadata": self.metadata,
+                "model_kwargs": dict(self.model_kwargs),
+                "extra_body": dict(self.extra_body or {}),
+                "max_retries": self.max_retries,
+                "sdk_max_retries": self.root_async_client.max_retries,
+                "client": self.client,
+                "root_client": self.root_client,
+            }
+        )
         self._started.set()
-        if self.delay_seconds:
-            await asyncio.sleep(self.delay_seconds)
+        if self.delay_control[0]:
+            await asyncio.sleep(self.delay_control[0])
         response = self.responses.pop(0) if self.responses else '{"approved":true,"reason_code":"approved"}'
         if isinstance(response, BaseMessage):
             message = response
@@ -70,9 +95,11 @@ class _UnboundedModel(BaseChatModel):
 class _CallbackProbe(BaseCallbackHandler):
     def __init__(self) -> None:
         self.calls = 0
+        self.inputs: list[Any] = []
 
-    def on_chat_model_start(self, *args: Any, **kwargs: Any) -> None:
+    def on_chat_model_start(self, serialized: Any, messages: Any, **kwargs: Any) -> None:
         self.calls += 1
+        self.inputs.append(messages)
 
     def on_llm_start(self, *args: Any, **kwargs: Any) -> None:
         self.calls += 1
@@ -112,10 +139,21 @@ def _successful_snapshot() -> tuple[AnalyticsQueryToolResult, str]:
     )
 
 
-def _capability(*, responses: list[Any] | None = None, delay_seconds: float = 0):
+def _capability(*, responses: list[Any] | None = None, delay_seconds: float = 0, **model_options: Any):
     snapshot, evidence_id = _successful_snapshot()
     capability = create_analysis_report_reviewer_capability(principal_id="owner-1", thread_id="thread-1", run_id="run-1")
-    model = _NoToolModel(responses=list(responses or []), delay_seconds=delay_seconds)
+    model = _NoToolModel(
+        model="synthetic-no-tool-reviewer",
+        api_key="offline-test-key",
+        base_url="https://offline.example/v1",
+        max_retries=2,
+        client=object(),
+        async_client=_SyntheticCompletionsClient(),
+        root_async_client=_SyntheticAsyncRoot(max_retries=2),
+        responses=list(responses or []),
+        delay_control=[delay_seconds],
+        **model_options,
+    )
     assert capability.bind_lead_model(principal_id="owner-1", thread_id="thread-1", run_id="run-1", model=model)
     return capability, model, snapshot, evidence_id
 
@@ -132,11 +170,40 @@ async def _review(capability, snapshot, evidence_id, markdown="# Synthetic resul
     )
 
 
+def _verified_claim(evidence_id: str, operation: NumericClaimOperation = NumericClaimOperation.CELL) -> VerifiedNumericClaim:
+    return VerifiedNumericClaim(
+        id="cell-claim",
+        operation=operation,
+        source_references=(EvidenceCellReference(evidence_id, 0, "amount"),),
+        calculated_value="42",
+        rounded=False,
+        references_truncated_snapshot=False,
+        unit=None,
+        period=None,
+        unit_reference=None,
+        period_reference=None,
+    )
+
+
 @pytest.mark.asyncio
 async def test_reviewer_uses_the_bound_lead_model_without_tools_or_inherited_run_callbacks():
-    capability, model, snapshot, evidence_id = _capability()
     probe = _CallbackProbe()
-    token = var_child_runnable_config.set({"callbacks": [probe], "tags": ["lead-run"], "metadata": {"run_id": "run-1"}})
+    model_kwargs = {
+        "tools": [{"type": "function", "function": {"name": "private-tool"}}],
+        "tool_choice": "required",
+        "synthetic_option": "preserved",
+    }
+    extra_body = {"tools": [{"name": "private-extra-tool"}], "tool_choice": "required", "synthetic_body_option": True}
+    capability, model, snapshot, evidence_id = _capability(
+        callbacks=[probe],
+        tags=["lead-model"],
+        metadata={"run_id": "lead-run"},
+        model_kwargs=model_kwargs,
+        extra_body=extra_body,
+    )
+    lead_metadata = dict(model.metadata)
+    ambient_probe = _CallbackProbe()
+    token = var_child_runnable_config.set({"callbacks": [ambient_probe], "tags": ["lead-run"], "metadata": {"run_id": "run-1"}})
     try:
         result = await _review(capability, snapshot, evidence_id)
     finally:
@@ -144,12 +211,140 @@ async def test_reviewer_uses_the_bound_lead_model_without_tools_or_inherited_run
 
     assert result.code == "approved"
     assert probe.calls == 0
+    assert probe.inputs == []
+    assert ambient_probe.calls == 0
     assert len(model.messages_seen) == 1
     assert model.invocation_kwargs == [{"max_tokens": MAX_ANALYSIS_REVIEWER_OUTPUT_TOKENS}]
+    settings = model.observed_settings[0]
+    assert settings["callbacks"] is None
+    assert settings["callback_manager"] is None
+    assert settings["tags"] == []
+    assert settings["metadata"] == {}
+    assert settings["model_kwargs"] == {"synthetic_option": "preserved"}
+    assert settings["extra_body"] == {"synthetic_body_option": True}
+    assert settings["max_retries"] == settings["sdk_max_retries"] == 0
+    assert settings["client"] is None
+    assert settings["root_client"] is None
+    assert model.callbacks == [probe]
+    assert model.tags == ["lead-model"]
+    assert model.metadata == lead_metadata
+    assert model.model_kwargs == model_kwargs
+    assert model.extra_body == extra_body
+    assert model.max_retries == model.root_async_client.max_retries == 2
     review_payload = json.loads(model.messages_seen[0][1].content)
     assert review_payload["evidence_ids"] == [evidence_id]
     assert review_payload["successful_queries"][0]["rows"] == [[42]]
     assert "sql" not in review_payload["successful_queries"][0]
+
+
+@pytest.mark.asyncio
+async def test_reviewer_receives_closed_verified_claim_mapping_with_scoped_reference_roles():
+    capability, model, snapshot, evidence_id = _capability()
+
+    result = await capability.review(
+        principal_id="owner-1",
+        thread_id="thread-1",
+        run_id="run-1",
+        title="Synthetic report",
+        markdown="# Synthetic result is 42.\n",
+        evidence_ids=(evidence_id,),
+        snapshots=(snapshot,),
+        verified_claims=(_verified_claim(evidence_id),),
+    )
+
+    payload = json.loads(model.messages_seen[0][1].content)
+    assert result.code == "approved"
+    assert payload["verified_claims"] == [
+        {
+            "id": "cell-claim",
+            "operation": "cell",
+            "calculated_value": "42",
+            "source_references": [{"evidence_id": evidence_id, "row_index": 0, "column_name": "amount"}],
+            "unit": None,
+            "period": None,
+            "unit_reference": None,
+            "period_reference": None,
+            "rounded": False,
+            "references_truncated_snapshot": False,
+        }
+    ]
+    system_prompt = str(model.messages_seen[0][0].content)
+    assert "columns/rows" in system_prompt
+    assert "row_index" in system_prompt
+    assert "不是经营结论或经营数值" in system_prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "invalid_claims",
+    [
+        [{"id": "model-asserted", "calculated_value": "42"}],
+        ({"id": "model-asserted", "calculated_value": "42"},),
+        (),
+    ],
+)
+async def test_reviewer_rejects_untyped_or_empty_verified_claim_maps_before_model(invalid_claims):
+    capability, model, snapshot, evidence_id = _capability()
+
+    result = await capability.review(
+        principal_id="owner-1",
+        thread_id="thread-1",
+        run_id="run-1",
+        title="Synthetic report",
+        markdown="# Synthetic result is 42.\n",
+        evidence_ids=(evidence_id,),
+        snapshots=(snapshot,),
+        verified_claims=invalid_claims,
+    )
+
+    assert result.code == "analysis_review_unavailable"
+    assert model.messages_seen == []
+
+
+@pytest.mark.asyncio
+async def test_reviewer_rejects_a_verified_claim_reference_outside_this_run_before_model():
+    capability, model, snapshot, evidence_id = _capability()
+
+    result = await capability.review(
+        principal_id="owner-1",
+        thread_id="thread-1",
+        run_id="run-1",
+        title="Synthetic report",
+        markdown="# Synthetic result is 42.\n",
+        evidence_ids=(evidence_id,),
+        snapshots=(snapshot,),
+        verified_claims=(_verified_claim("f" * 64),),
+    )
+
+    assert result.code == "analysis_review_unavailable"
+    assert model.messages_seen == []
+
+
+@pytest.mark.asyncio
+async def test_reviewer_cache_fingerprint_includes_verified_claim_mapping():
+    capability, model, snapshot, evidence_id = _capability(
+        responses=[
+            '{"approved":true,"reason_code":"approved"}',
+            '{"approved":false,"reason_code":"evidence_mismatch"}',
+        ]
+    )
+    common = {
+        "principal_id": "owner-1",
+        "thread_id": "thread-1",
+        "run_id": "run-1",
+        "title": "Synthetic report",
+        "markdown": "# Same report\n",
+        "evidence_ids": (evidence_id,),
+        "snapshots": (snapshot,),
+    }
+
+    first = await capability.review(**common, verified_claims=(_verified_claim(evidence_id),))
+    changed_map = await capability.review(**common, verified_claims=(_verified_claim(evidence_id, NumericClaimOperation.SUM),))
+
+    assert first.code == "approved"
+    assert changed_map.code == "analysis_review_rejected"
+    assert changed_map.reason_code == "evidence_mismatch"
+    assert len(model.messages_seen) == 2
 
 
 @pytest.mark.asyncio
@@ -316,6 +511,46 @@ async def test_deepseek_reviewer_uses_bounded_tokens_on_the_real_sdk_wire_body()
 
 
 @pytest.mark.asyncio
+async def test_reviewer_sdk_retry_is_disabled_without_changing_the_lead_client():
+    request_count = 0
+
+    def respond(_request: httpx.Request) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+        return httpx.Response(500, json={"error": {"message": "offline failure"}})
+
+    async_client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    sync_client = httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(500)))
+    model = ChatOpenAI(
+        model="compatible-test-model",
+        api_key="offline-test-key",
+        base_url="https://offline.example/v1",
+        http_client=sync_client,
+        http_async_client=async_client,
+        max_retries=2,
+        max_tokens=99,
+    )
+    lead_root = model.root_async_client
+    lead_async_client = model.async_client
+    snapshot, evidence_id = _successful_snapshot()
+    capability = create_analysis_report_reviewer_capability(principal_id="owner-1", thread_id="thread-1", run_id="run-1")
+    assert capability.bind_lead_model(principal_id="owner-1", thread_id="thread-1", run_id="run-1", model=model)
+
+    try:
+        result = await _review(capability, snapshot, evidence_id)
+    finally:
+        await async_client.aclose()
+        sync_client.close()
+
+    assert result.code == "analysis_review_unavailable"
+    assert request_count == 1
+    assert model.max_retries == 2
+    assert model.root_async_client is lead_root
+    assert model.async_client is lead_async_client
+    assert lead_root.max_retries == 2
+
+
+@pytest.mark.asyncio
 async def test_other_openai_compatible_reviewer_does_not_get_deepseek_effort_override():
     wire_bodies: list[dict[str, Any]] = []
     response_body = {
@@ -477,7 +712,7 @@ async def test_reviewer_timeout_fails_closed_and_cancellation_propagates(monkeyp
         await task
 
     # The cancelled attempt consumes one slot, but the single allowed revision remains usable.
-    cancel_model.delay_seconds = 0
+    cancel_model.delay_control[0] = 0
     retry = await _review(cancel_capability, snapshot, evidence_id, "# revised")
     exhausted = await _review(cancel_capability, snapshot, evidence_id, "# another revision")
     assert retry.code == "approved"
