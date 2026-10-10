@@ -831,7 +831,18 @@ test.describe("Chat workspace", () => {
     await expect(textarea).toBeVisible({ timeout: 15_000 });
 
     await textarea.fill("/goal finish all tests");
+    const goalSaveResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "PUT" &&
+        /\/api\/threads\/[^/]+\/goal$/.test(new URL(response.url()).pathname),
+      { timeout: 5_000 },
+    );
     await textarea.press("Enter");
+    const savedGoal = await goalSaveResponse;
+    expect(savedGoal.status()).toBe(200);
+    await expect(savedGoal.json()).resolves.toMatchObject({
+      goal: { objective: "finish all tests", status: "active" },
+    });
 
     await expect(
       page.locator("span.font-medium", { hasText: "finish all tests" }),

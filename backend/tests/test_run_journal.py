@@ -17,6 +17,7 @@ from langchain_core.outputs import ChatGeneration, LLMResult
 
 from deerflow.runtime.events.store.memory import MemoryRunEventStore
 from deerflow.runtime.journal import RunJournal
+from deerflow.runtime.serialization import serialize_lc_object
 from deerflow.utils.messages import ORIGINAL_USER_CONTENT_KEY
 
 
@@ -527,7 +528,9 @@ class TestLlmCallbacks:
 
         events = await store.list_events("t1", "r1")
         relevant = [event for event in events if event["event_type"] in {"llm.ai.response", "llm.tool.result", "run.end"}]
-        encoded = json.dumps(relevant, ensure_ascii=False)
+        end_event = next(event for event in relevant if event["event_type"] == "run.end")
+        assert isinstance(end_event["content"]["messages"][0], ToolMessage)
+        encoded = json.dumps(serialize_lc_object(relevant), ensure_ascii=False)
         assert not any(
             sentinel in encoded
             for sentinel in (
@@ -543,7 +546,6 @@ class TestLlmCallbacks:
         assert ai_event["content"]["tool_calls"][0]["args"] == {"datasource_id": "ds-1"}
         result_event = next(event for event in relevant if event["event_type"] == "llm.tool.result")
         assert json.loads(result_event["content"]["content"])["evidence"]["evidence_id"] == "a" * 64
-        end_event = next(event for event in relevant if event["event_type"] == "run.end")
         assert end_event["content"]["note"] == "arbitrary model text remains outside structured projection"
         assert tool_message.content == result_content
         assert tool_message.artifact == {"body": "ARTIFACT_BODY_SENTINEL"}

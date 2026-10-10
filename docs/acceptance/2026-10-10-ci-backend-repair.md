@@ -71,3 +71,32 @@ GitHub Unit Tests run `38019134148` 在四个分片报告 17 项失败。日志�
 - `.reviews/ci-20261010/job-114115994295.txt`：分片二，6 项失败。
 - `.reviews/ci-20261010/job-114115994212.txt`：分片三，4 项失败。
 - `.reviews/ci-20261010/job-114115994196.txt`：分片四，5 项失败。
+
+## 本轮 journal CI 断言修正
+
+Linux `LinuxUnitTests` run `38033361469` 的 shard1 在 `TestLlmCallbacks::test_analytics_structured_payloads_are_projected_for_journal_events[asyncio]` 失败：Memory `run.end` 按契约保留 `ToolMessage`，原断言却直接对整组内存事件调用 `json.dumps`。测试显式锁定内存事件仍含 `ToolMessage`，再用 `serialize_lc_object` 只将事件对象转换为 JSON 可编码值，不额外执行脱敏；这样所有 SQL、计划、凭证、列、行和 artifact 哨兵仍可检出 journal producer 本身的泄漏，且全部保留。
+
+本机定点验证（pytest/Ruff 工作目录 `backend/`；diff 检查在仓库根目录运行）。复审前的关联组结果为：
+
+```text
+.venv\Scripts\python.exe -B -m pytest -q -p no:cacheprovider tests/test_run_journal.py::TestLlmCallbacks tests/test_run_event_stream_contract.py::test_run_end_backend_storage_semantics_match_contract
+14 passed in 5.73s
+```
+
+复审将目标哨兵编码改为只调用 `serialize_lc_object` 后，最终修订只重跑该失败 node；其余 13 个关联用例沿用前次通过结果，未重复运行：
+
+```text
+.venv\Scripts\python.exe -B -m pytest -q -p no:cacheprovider 'tests/test_run_journal.py::TestLlmCallbacks::test_analytics_structured_payloads_are_projected_for_journal_events[asyncio]'
+1 passed in 4.23s
+
+.venv\Scripts\ruff.exe check tests/test_run_journal.py
+All checks passed!
+
+.venv\Scripts\ruff.exe format --check tests/test_run_journal.py
+1 file already formatted
+
+git diff --check -- backend/tests/test_run_journal.py docs/acceptance/2026-10-10-ci-backend-repair.md
+passed (no output)
+```
+
+CI 17 状态记录：原有该项 fail 已闭合，本轮对应定点验证通过；剩余 6 个 Actions 仍待最新 CI 核验。本轮未运行完整 backend suite，也未提交或推送。

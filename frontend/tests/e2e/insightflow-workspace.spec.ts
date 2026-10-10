@@ -247,12 +247,17 @@ async function mockEmptyAnalyticsCatalogs(page: Page) {
   }
 }
 
-async function openWorkspacePage(page: Page, path: string) {
+async function openWorkspacePage(
+  page: Page,
+  path: string,
+  { analysisMode = false }: { analysisMode?: boolean } = {},
+) {
   mockLangGraphAPI(page, {
     threads: [
       {
         thread_id: MOCK_THREAD_ID,
         title: "2026 Q3 经营分析",
+        metadata: analysisMode ? { analysis_mode: true } : undefined,
         messages: traceMessages(),
       },
     ],
@@ -305,7 +310,24 @@ test.describe("InsightFlow workspace", () => {
     page,
   }) => {
     await page.setViewportSize({ width: 375, height: 812 });
-    await openWorkspacePage(page, `/workspace/analysis/${MOCK_THREAD_ID}`);
+    const runEventsPath = `/api/threads/${MOCK_THREAD_ID}/runs/run-${MOCK_THREAD_ID}/events`;
+    const runEventsResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        new URL(response.url()).pathname === runEventsPath,
+      { timeout: 5_000 },
+    );
+    await page.route(new RegExp(`${runEventsPath}(?:\\?|$)`), (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: "[]",
+      }),
+    );
+    await openWorkspacePage(page, `/workspace/analysis/${MOCK_THREAD_ID}`, {
+      analysisMode: true,
+    });
+    expect((await runEventsResponse).status()).toBe(200);
 
     const panel = page.getByTestId("analytics-trace-panel");
     const trigger = page.getByTestId("analytics-trace-trigger");
@@ -348,8 +370,16 @@ test.describe("InsightFlow workspace", () => {
       "href",
       `/workspace/analysis/${MOCK_THREAD_ID}`,
     );
-    // 报告索引不构造产物直链。
-    await expect(record.locator("a[href*='/artifacts/']")).toHaveCount(0);
+    // 下载只走带线程 owner 边界的 Gateway 路由，不拼公开产物地址。
+    const download = record.getByTestId("report-download");
+    const downloadHref = await download.getAttribute("href");
+    expect(downloadHref).toBeTruthy();
+    const downloadUrl = new URL(downloadHref!, page.url());
+    expect(downloadUrl.pathname).toBe(
+      `/api/threads/${MOCK_THREAD_ID}/artifacts${REPORT_PATH}`,
+    );
+    expect(downloadUrl.searchParams.get("download")).toBe("true");
+    await expect(download).toHaveAttribute("download", "");
   });
 
   test("an administrator can manage datasources and metrics", async ({
