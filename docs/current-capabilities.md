@@ -1,13 +1,13 @@
 # InsightFlow 当前功能与架构
 
-核对日期：2026-10-09。本页按当前源码和有日期的验收记录区分实现状态、已完成实测与未完成发布门禁；不把目标架构当现状，也不以代码存在推断发布验收已完成。源码链接使用仓库中的真实模块和符号名称。
+更新日期：2026-10-10。本页说明当前源码能力，并链接到对应的验收记录。模块已经实现不等于已通过发布验收；验收结论只适用于记录中明确的测试范围。
 
-## 最新 PostgreSQL 正例与当前验收边界
+## 近期验收与范围
 
-- 最新 PostgreSQL 报告通过重启、19-field、hash 和报告 UI 检查；真实 PostgreSQL checkpoint/evidence producer 复用及原 artifact hash 有 proof，未完成运行也已通过独立 PG 与新 Gateway lifespan 进程验证为 `error/orphan_recovered`。相关记录见[报告验收](acceptance/2026-10-09-label-repair-api-acceptance.md)、[checkpoint 与取消验收](acceptance/2026-10-09-live-checkpoint-and-cancel.md)及[未完成运行恢复](acceptance/2026-10-09-unfinished-run-recovery.md)。受控查询 API/SQL 安全、风险预算和真实 HTTP statement timeout/audit 已通过，见[查询安全](acceptance/2026-10-09-direct-query-security.md)、[风险门禁](acceptance/2026-10-09-query-risk-gates.md)及[HTTP timeout 验收](acceptance/2026-10-09-http-timeout-cancel-gates.md)。这些结果不代表 Phase 6 或整体发布验收完成。
-- 数据源/指标两步预填修复的 4 项定点测试和浏览器探针已通过。产品仍允许编辑预填草稿，不会自动提交分析请求；当前 Gateway 实例与交互证据分别记录，见[最终交付状态](acceptance/2026-10-09-final-delivery.md)。
-- 最新 scheduled run 在 server-computation1109 Gateway 上通过 AS-11：无历史 analysis thread，单次 once occurrence / attempt 完成查询、Data、Writer、Reviewer approved 与 Publish，并生成 owner report。详细安全摘要见[最终交付记录](acceptance/2026-10-09-final-delivery.md)；之前的失败 run 与 fail-closed 拒绝记录继续保留。
-- 功能与部署门禁按批准范围均已通过，包括 Windows 7 项门禁、合并后的 14 项候选检查、`sharedproxy=True` 复验和 29384 原入口独立后验收。Root 已接受最终源码与暂存审查；本状态记录截于发布提交前，commit/push 状态以 Git 记录为准，远程 CI 结果以 Actions 为准（本记录形成时尚未运行）。详细证据见[最终发布矩阵](acceptance/2026-10-09-final-release-matrix.md)与[最终交付记录](acceptance/2026-10-09-final-delivery.md)。
+- PostgreSQL 报告链、查询安全与风险限制、HTTP timeout/audit，以及 checkpoint/evidence 复用和未完成运行恢复均有范围明确的验收记录。详见[报告验收](acceptance/2026-10-09-label-repair-api-acceptance.md)、[checkpoint 与取消验收](acceptance/2026-10-09-live-checkpoint-and-cancel.md)、[未完成运行恢复](acceptance/2026-10-09-unfinished-run-recovery.md)、[查询安全](acceptance/2026-10-09-direct-query-security.md)、[风险门禁](acceptance/2026-10-09-query-risk-gates.md)和[HTTP timeout 验收](acceptance/2026-10-09-http-timeout-cancel-gates.md)。这些单项结果不代表任意输入组合均通过。
+- 数据源和指标目录的预填草稿已通过定点检查与浏览器探针。用户仍可编辑草稿，只有显式提交才会运行分析；部署和交互证据见[最终交付状态](acceptance/2026-10-09-final-delivery.md)。
+- 最新 scheduled run 按 AS-11 合同完成查询、报告复核和发布，并生成 owner report。早期失败 run 和 `fail-closed` 拒绝记录仍保留，详见[最终交付记录](acceptance/2026-10-09-final-delivery.md)。
+- 功能与部署门禁按批准范围通过；远程 CI 尚未核验。具体范围和证据见[最终发布矩阵](acceptance/2026-10-09-final-release-matrix.md)与[最终交付记录](acceptance/2026-10-09-final-delivery.md)。
 
 ## 通用 Agent 运行时
 
@@ -53,7 +53,7 @@
 | 1 数据源与指标两步预填 | 草稿修复的 4 项定点测试及浏览器探针通过，见[修复记录](acceptance/2026-10-09-prefilled-analysis-draft-fix.md)。 | 当前 Gateway 部署由独立交付摘要记录；UI 探针本身不替代服务端部署证据。 |
 | 2 Scheduler 与重启恢复 | AS-11 最新 once run 已成功并产生 owner report；AS-12 PostgreSQL checkpoint/evidence producer 复用与 unfinished-run 恢复有独立 proof。 | 旧失败 run 与 Reviewer 拒绝保留；不以其替代最新成功 run，也不作任意输入保证。 |
 | 3 未承诺的输入范围 | 平台合同范围内的报告、查询、安全与阶段证据按矩阵通过。 | 任意自由文本敏感内容、任意第三方 MCP/RAG 行为及未约定输入变体不在此结论内。 |
-| 4 交付收尾 | 功能与部署门禁按批准范围均已通过，含 29384 原入口独立后验收。 | Root 已接受最终源码与暂存审查；本记录截于发布提交前，commit/push 状态以 Git 记录为准，远程 CI 结果以 Actions 为准（形成时尚未运行）。 |
+| 4 交付收尾 | 功能与部署门禁按批准范围通过，详细记录见[最终交付状态](acceptance/2026-10-09-final-delivery.md)。 | 远程 CI 尚未核验。 |
 
 ## 个人项目描述
 
@@ -64,4 +64,4 @@
 - 实现可信分析线程准入、固定工具集合及 run-scoped 报告能力，以查询 evidence、有限零工具 Reviewer 和 owner 产物下载形成可复核发布链；已完成窄范围真实 PostgreSQL/模型样例与浏览器历史报告验证。
 - 保留并整合上游 task 委派、MCP/Skills、沙箱、记忆、压缩与持久运行机制，收缩无关产品入口；完成原创响应式颗粒黑洞首页与静态/减动效适配。
 
-受控分析由 Lead 接收问题并驱动 run：SQL Analyst 整理查询，Gateway 执行授权的只读查询；Data role 只选择证据单元格引用和运算，domain verifier 使用 `Decimal` 在服务端完成计算与核验；Report Writer 生成固定格式报告，Reviewer 执行有界零工具复核。当前 PostgreSQL 报告、安全预算、HTTP timeout/audit、checkpoint/evidence producer 复用、unfinished-run 恢复、预填交互、AS-11 scheduled report 及 29384 原入口部署均有验收证据。功能与部署门禁按批准范围通过；Root 已接受最终源码/暂存审查。本段截于发布提交前，commit/push 状态以 Git 记录为准，远程 CI 结果以 Actions 为准（本记录形成时尚未运行）。详见[最终交付记录](acceptance/2026-10-09-final-delivery.md)。
+受控分析由 Lead 驱动：SQL Analyst 整理查询，Gateway 执行授权的只读查询；Data role 引用 evidence 并提交运算计划，domain verifier 使用 `Decimal` 在服务端完成核验；Report Writer 生成固定格式报告，Reviewer 执行有界零工具复核。本页列出的验收结果只覆盖各自记录中的样例和边界；功能、部署与交付状态见[最终交付记录](acceptance/2026-10-09-final-delivery.md)。

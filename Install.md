@@ -1,35 +1,33 @@
 # 安装与运行 InsightFlow
 
-默认容器部署是本地使用的最短路径。仓库根目录的命令可在 Windows PowerShell、macOS 和 Linux 执行；Windows 需要 Docker Desktop、Python、`uv`，以及仓库支持的 GNU Make/Git Bash 工具链。
-
-> **当前状态（2026-10-09）：** 功能与部署验收按批准范围通过，29384 原入口的首页、health/ready 与匿名拒绝独立后验收通过。详细实例、备份与交付边界见[最终交付状态](docs/acceptance/2026-10-09-final-delivery.md)。Root 最终源码/暂存审查及 commit/push 尚待完成；远程 CI 未运行。
+默认推荐使用 Docker Compose。GNU Make 提供便捷命令，但不是部署必需品；没有 Make 时，可在仓库根目录直接运行 `scripts/deploy.sh`。Windows 用户需要 Git for Windows 的 Git Bash 来运行该 Bash 脚本。
 
 ## 环境要求
 
-- Docker Desktop 和 Docker Compose V2：运行默认容器栈。
-- GNU Make、Python 3.12+ 和 `uv`：生成配置、安装依赖和启动本机服务。
-- Node.js 22+ 和 pnpm 10.26.2+：本机前端开发。
+- 默认 Docker 部署：Docker Desktop（Windows/macOS）或 Docker Engine（Linux），以及 Docker Compose V2；`docker compose up --wait` 需要当前 Compose 版本支持。
+- 直接运行部署脚本：Bash，以及 Python 3 或 OpenSSL，用于首次生成并保存认证密钥。Windows 可使用 Git Bash。
+- Make 命令：GNU Make、Python 3.12+ 和 `uv`。运行本机前端还需要 Node.js 22+ 和 pnpm 10.26.2+。
 
-运行 `make check` 查看本机缺少的工具。完成配置后可运行 `make doctor` 检查应用配置和本机运行条件。仓库脚本不会替你安装系统依赖。
+有 Make 时可运行 `make check` 查看工具要求，`make doctor` 检查应用配置和本机运行条件。仓库脚本不会替你安装系统依赖。
 
 ## 配置模型和本地文件
 
-首次配置可在交互式终端运行 `make setup`。向导会在 Git 忽略的根目录 `config.yaml` 写入模型条目；如果所选 provider 需要 API key，向导会将你提供的 key 写入根目录 `.env`。向导不会提供凭据。若 `config.yaml` 已存在，向导会先询问是否重配。
+首次配置模型可运行 `make setup`。交互向导会在根目录 `config.yaml` 写入所选模型，并按 provider 要求把 API key 写入 Git 忽略的根目录 `.env`。向导不会提供凭据。
 
-手工配置时运行 `make config`。它会复制示例配置、扩展设置和环境变量模板，不会覆盖已有配置；然后在 `config.yaml` 的 `models:` 下启用模型，并将 provider 所需的 key 放入 `.env`。Agent 调用需要有效的模型条目和该 provider 要求的凭据；Gateway 与工作台可以在未配置模型时启动，但不能执行模型请求。
+手工配置可运行 `make config` 生成配置模板，再在 `config.yaml` 的 `models:` 下配置所需模型条目，并把对应的 provider key 写入 `.env`。该命令不会覆盖已有文件，也不会替你选模型或生成凭据。Gateway 和工作台可以在没有模型配置时启动，但 Agent 无法调用模型。
 
-Windows PowerShell 不使用 Make 时，可直接运行同一配置脚本：
+Windows PowerShell 可在首次初始化时直接运行配置脚本和模型向导：
 
-~~~powershell
+```powershell
 python scripts/configure.py
 Push-Location backend
 uv run python ..\scripts\setup_wizard.py
 Pop-Location
-~~~
+```
 
-本机开发安装依赖时，`make install` 会安装后端、前端和 pre-commit 工具。若需在 PowerShell 中逐条执行：
+本机源码开发可在 PowerShell 中逐项安装依赖：
 
-~~~powershell
+```powershell
 Set-Location backend
 uv sync --locked
 Set-Location ..\frontend
@@ -37,63 +35,109 @@ python ..\scripts\pnpm.py install
 Set-Location ..
 uv tool install pre-commit
 pre-commit install --overwrite
-~~~
+```
 
-## 启动服务
+若只部署 Docker，可按下一节在 Git Bash 中复制模板并手动填写模型配置；无需在宿主机安装 `uv` 或 Node.js。
 
-### Docker 生产部署
+## Docker 生产部署
 
-在仓库根目录运行：
+### Windows 与 Git Bash：不使用 Make
 
-~~~sh
+先启动 Docker Desktop，并在 Git Bash 中进入仓库根目录。检查 Docker Compose 与密钥生成工具可用：
+
+```sh
+docker compose version
+python --version
+```
+
+部署脚本会依次尝试 `python3`、`python` 和 `openssl` 生成密钥；在 Git Bash 中至少需要其中一种。若没有 Python，可改用 `openssl version` 检查 OpenSSL。Compose 版本需支持 `docker compose up --wait`。
+
+复制 Docker Compose 所需的环境文件和配置模板：
+
+以下命令只用于首次部署且目标文件尚不存在时。若本地文件已存在，不要覆盖；保留文件并按需编辑。
+
+```sh
+cp .env.example .env
+cp frontend/.env.example frontend/.env
+cp config.example.yaml config.yaml
+cp extensions_config.example.json extensions_config.json
+```
+
+编辑 `config.yaml`，配置所需模型条目；编辑根目录 `.env`，填写模型对应的 provider key。数据源密码稍后由管理员在服务端通过 `secret_ref` 配置，不要写进 `config.yaml` 或前端环境文件。
+
+启动默认生产栈：
+
+```sh
+bash scripts/deploy.sh
+```
+
+首次启动会构建镜像、启动默认的四个容器，并等待 Gateway readiness 检查通过。脚本会把认证密钥保存在 `backend/.deer-flow`，后续启动会复用。浏览器打开 <http://localhost:2026>，在 `/setup` 创建首位管理员，然后从 `/login` 登录。
+
+常用脚本命令：
+
+| 命令 | 行为 |
+| --- | --- |
+| `bash scripts/deploy.sh` | 构建镜像并启动默认四容器，等待 Gateway 就绪 |
+| `bash scripts/deploy.sh build` | 只构建镜像 |
+| `bash scripts/deploy.sh start` | 使用已构建镜像启动服务 |
+| `bash scripts/deploy.sh down` | 停止并移除容器与网络，保留应用目录和 Docker 数据卷 |
+
+默认入口只绑定本机 `127.0.0.1:2026`。默认部署运行 Nginx、Frontend、Gateway 和 Redis；Redis 仅在 Compose 网络内服务 Streams bridge。不要把 Gateway 或 Redis 端口发布到公网。
+
+### 使用 Make 的 Docker 部署
+
+```sh
+make setup
 make up
-~~~
+```
 
-默认 Compose 启动 Nginx、Frontend、Gateway 和 Redis，并等待健康检查。Redis 是必需服务，只在 Compose 网络内可用。浏览器打开 <http://localhost:2026>；默认只有 Nginx 入口发布到宿主机，并绑定 `127.0.0.1`。首次访问时在 `/setup` 创建管理员，再从 `/login` 登录。运行 `make down` 停止并移除容器和网络；命名数据卷会保留。
+`make setup` 交互配置模型；如果已手工准备好配置，也可直接运行 `make up`。`make up` 会等待 Gateway 健康检查通过。打开 <http://localhost:2026>，在 `/setup` 创建管理员。停止并移除容器和网络、保留持久数据：
 
-### 本机开发与本机优化运行
+```sh
+make down
+```
 
-首次安装依赖后，在仓库根目录运行：
+### 本机开发与 Docker 开发
 
-~~~sh
+本机源码开发需要安装后端与前端依赖：
+
+```sh
 make install
 make dev
-~~~
+```
 
-这会启动本机 Gateway、Frontend 和 Nginx，开发模式支持代码重载，入口为 <http://localhost:2026>。本机优化模式使用 `make start`，默认会构建前端；设置 `SKIP_FRONTEND_BUILD=1 make start` 时会复用现有产物，且要求 `frontend/.next/BUILD_ID` 已存在。`make stop` 停止本机进程。
+`make dev` 启动本机 Gateway、Frontend 和 Nginx 三个进程，支持代码重载，入口为 <http://localhost:2026>。`make stop` 停止这些本机进程。
 
-### Docker 开发环境
+`make start` 运行本机优化模式并默认构建前端。只有 `frontend/.next/BUILD_ID` 已存在时，才使用 `SKIP_FRONTEND_BUILD=1 make start` 复用已有构建；`make stop` 停止服务。Docker 开发环境使用另一份 Compose 配置，命令为 `make docker-start`、`make docker-stop` 和 `make docker-logs`。
 
-使用 `make docker-start` 和 `make docker-stop` 运行、停止 Docker 开发 Compose 配置。查看开发栈日志使用 `make docker-logs`。Docker 开发配置与生产部署使用不同的 Compose 文件。
+可选的本机 PostgreSQL 分析演示栈在默认四个容器之外增加一个业务 PostgreSQL 容器，合计五个容器。仓库的演示环境示例将入口设为 `2027`；它不是默认生产栈入口，实际端口以该演示环境文件为准。配置和启动方式见[本机 PostgreSQL 试用记录](docs/LOCAL_TRIAL.md)。默认入口仍是 `http://localhost:2026`。
 
-若 Docker 使用期间 `make doctor` 报告宿主机缺少 Nginx，该检查针对本机 `make dev` / `make start`；Docker Compose 内已有 Nginx。启动失败时先确认 Docker Desktop 正在运行、`2026` 端口可用，并且所需配置文件与环境变量存在。`make up` 未能就绪时会显示 Compose 状态和近期 Gateway 日志。
-
-## 设置经营分析工作流
+## 首次使用与分析授权
 
 1. 首次访问 `/setup` 时创建首位管理员，然后登录。
-2. 管理员登记业务数据源并发布 schema snapshot，配置数据源访问策略；连接凭据只由服务端引用，例如将 `secret_ref` 设为 `env://ANALYTICS_DS`，并把凭据保存在 Git 忽略的根目录 `.env`。
-3. 登记指标定义、负责人和口径，再将指标授权给相应主体。指标可见性与数据源查询策略是两项独立授权。
-4. 普通用户可在 `/workspace/analysis/new` 手动填写经营问题。数据源与指标页面也提供将文字带入新建分析草稿的快捷入口；草稿可编辑，只有用户显式提交后才运行。预填修复的 4 项定点测试和浏览器探针均已通过，见[修复验收记录](docs/acceptance/2026-10-09-prefilled-analysis-draft-fix.md)。
-5. 运行阶段显示允许公开的摘要。完成查询、evidence 校验和报告复核后，报告才会出现在 `/workspace/reports`；用户可下载报告，并在 `/workspace/history` 查看审计记录。
-6. 可在 `/workspace/scheduled-tasks` 创建定时任务。后台自动调度还需在 `config.yaml` 中启用 `scheduler.enabled`。
+2. 管理员登记外部业务数据源并发布 schema snapshot。使用只读数据库账号，通过服务端 `secret_ref` 引用连接凭据，例如 `env://ANALYTICS_DS`；凭据保存在根目录 `.env`。
+3. 配置数据源访问策略，再登记指标定义、负责人和口径，并单独把指标授权给相应用户。指标授权不会自动授予数据源访问权限。
+4. 用户在 `/workspace/analysis/new` 输入经营问题后提交分析。数据源和指标目录也可预填一个可编辑草稿；只有显式提交才会运行。
+5. 查询、证据核验和报告复核成功后，报告出现在 `/workspace/reports`。所有者可以下载报告，并在 `/workspace/history` 查看可见的审计记录。
+6. 可在 `/workspace/scheduled-tasks` 创建定时任务。后台调度还需要在 `config.yaml` 中启用 `scheduler.enabled`。
 
-## 数据库与凭据
+## 数据库、凭据与安全边界
 
-Gateway 应用数据库默认使用 SQLite，位于 `backend/.deer-flow`，默认 Docker 部署会持久化该目录。运维人员也可以显式配置外部 PostgreSQL 作为应用数据库。业务 PostgreSQL/MySQL 是单独登记的外部数据源，不由默认 Compose 启动。为业务库使用只读账号，并通过服务端 `secret_ref` 引用凭据；不要把密码写入数据源记录、浏览器请求或受版本控制的文件。TLS 参数见[后端配置指南](backend/docs/CONFIGURATION.md)。
+Gateway 的应用数据库默认使用 SQLite，文件位于 `backend/.deer-flow/data/deerflow.db`，Docker 部署会持久化该目录。运维人员也可显式配置外部 PostgreSQL 作为应用数据库。业务 PostgreSQL/MySQL 是管理员单独登记的外部分析数据源；默认 Compose 不会启动它们。
 
-不要提交 `config.yaml`、`extensions_config.json`、`.env`、前端环境文件、数据库凭据或管理员密码。只配置可信任的模型 provider、MCP 服务、扩展和沙箱端点。Local sandbox 使用 Gateway 进程的主机权限；默认 Compose 入口只绑定本机回环地址。
+不要提交 `config.yaml`、`extensions_config.json`、`.env`、前端环境文件、数据库凭据或管理员密码。只配置可信任的模型 provider、MCP 服务、扩展和沙箱端点。Local sandbox 使用 Gateway 进程的主机权限。
 
-可选的 LangSmith、Langfuse 或 Monocle tracing SDK 可能在 Gateway 结构化输出投影之外采集 prompt 和工具输入/输出。启用时应只发送到可信目标，并单独管理访问权限和保留期限。
+可选的 LangSmith、Langfuse 或 Monocle tracing SDK 可能在平台结构化输出之外采集 prompt、工具输入/输出或模型回复。启用前应确认目标可信，并单独管理访问权限和数据保留期限。TLS 配置见[后端配置指南](backend/docs/CONFIGURATION.md)。
 
-## 常见空状态和错误
+## 常见问题
 
-- 数据源列表为空：尚未登记数据源，或当前主体无权查看。
-- 指标列表为空：没有 active 指标归属当前主体或明确授权给当前主体。指标授权不会自动授予数据源访问权。
-- 报告列表为空：还没有 run 完成 evidence 校验和发布复核。审计历史也只显示当前主体可见的记录。
-- `401`：通常需要先在 `/setup` 创建管理员，或重新登录。
-- `403`：已登录主体缺少相应权限；检查数据源策略、指标授权和资源 owner。
-- `404`：检查路由和资源 ID。owner 隔离资源不属于当前账号时也可能返回 `404`，请确认登录账号、线程和资源 ID。
-- Agent 不能调用模型：确认 `config.yaml` 启用了 `models[]`，并且 `.env` 中有对应 provider 要求的 key。
-- 业务查询连不上数据库：检查 Gateway 容器可达的数据库地址、`secret_ref`、只读账号、schema snapshot、访问策略和 TLS。应用数据库配置不会代替业务数据源配置。
+- Docker 启动失败：确认 Docker Desktop 正在运行、Compose 支持 `up --wait`，并检查 `2026` 端口及 `.env`、`frontend/.env`、`config.yaml` 是否存在。
+- 启动未通过 readiness：部署脚本会显示 Compose 容器状态和最近的 Gateway 日志；先检查这些信息和模型配置。
+- `make doctor` 报告宿主机缺少 Nginx：该检查针对本机 `make dev` 或 `make start`；Docker Compose 自带 Nginx。
+- Agent 无法调用模型：确认 `config.yaml` 的 `models` 下已配置所需模型条目，并且根目录 `.env` 有该 provider 所需的 key。
+- 数据源或指标列表为空：请管理员检查数据源登记、schema snapshot、访问策略和指标授权。
+- 报告列表为空：只有完成证据核验和报告复核的运行会发布报告。
+- `401`：先在 `/setup` 创建管理员，或重新登录。`403` 表示当前账号缺少所需权限；`404` 也可能表示资源属于其他账号。
+- 业务数据库连接失败：检查 Gateway 可访问的地址、`secret_ref`、只读账号、schema snapshot、访问策略和 TLS。应用数据库连接配置不会代替业务数据源配置。
 
-当前功能和验收范围见[当前能力说明](docs/current-capabilities.md)，交付门禁见[最终交付状态](docs/acceptance/2026-10-09-final-delivery.md)，架构见[InsightFlow 架构概览](docs/architecture/insightflow-overview.md)。`docs/LOCAL_TRIAL.md` 保留带日期的合成 PostgreSQL 演示与历史验收证据，不是标准安装指南。
+当前功能与验收范围见[当前能力说明](docs/current-capabilities.md)，最终交付证据见[最终交付状态](docs/acceptance/2026-10-09-final-delivery.md)，完整合同见[发布验收场景](docs/acceptance/acceptance-scenarios.md)。

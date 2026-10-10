@@ -1,6 +1,6 @@
 # InsightFlow 当前架构
 
-核对日期：2026-10-09。本说明描述当前源码与默认服务拓扑，不把目标架构或局部测试等同于完整发布验收。最新 PostgreSQL 报告链及 API/查询安全、风险预算和 PostgreSQL adapter timeout 门禁已通过；两步预填浏览器验收与 Scheduler/重启恢复仍待完成。AS-01～AS-15 整体验收仍在进行，详见[当前功能与验收边界](../current-capabilities.md)。
+更新日期：2026-10-10。本文介绍当前源码和默认运行拓扑。功能与部署验收按批准范围通过；具体证据和边界见[当前功能说明](../current-capabilities.md)及[最终交付状态](../acceptance/2026-10-09-final-delivery.md)。局部验收结果不代表任意输入或所有部署形态均已验证。
 
 ## 运行拓扑
 
@@ -16,7 +16,7 @@ flowchart LR
   Analytics --> BusinessDB[(External PostgreSQL / MySQL)]
 ```
 
-默认 Docker Compose 固定包含 Nginx、Frontend、Gateway 和 Redis。只有 Nginx 的 2026 端口发布到宿主机，默认绑定 loopback；Frontend、Gateway、Redis 端口只在 Compose 网络内通信。`make dev` 启动 Gateway、Frontend、Nginx 三个本地服务。
+默认 Docker Compose 启动 Nginx、Frontend、Gateway 和 Redis 四个容器。只有 Nginx 的 `2026` 端口发布到宿主机，默认绑定 loopback；Frontend、Gateway 和 Redis 只在 Compose 网络内通信。`make dev` 启动 Gateway、Frontend 和 Nginx 三个本机进程，也使用 `2026` 作为入口。可选的本机 PostgreSQL 演示配置额外启动一个业务数据库容器，共五个容器。仓库示例将独立入口设为 `2027`，实际端口由演示环境文件决定；详见[本机 PostgreSQL 试用记录](../LOCAL_TRIAL.md)。
 
 Gateway 是 FastAPI HTTP/API 边界，也承载 Agent run、线程、认证、Scheduler、MCP task 和 Analytics 路由。Nginx 将浏览器流量统一代理到前端与 Gateway。Redis 是默认栈的内部 Streams bridge，不是可选 profile。
 
