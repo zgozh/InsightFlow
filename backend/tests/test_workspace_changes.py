@@ -348,6 +348,7 @@ def test_sensitive_workspace_path_covers_common_secret_names():
         "api_key.txt",
         "apikey",
         "private_key.json",
+        "query-result-run-1-deadbeef.json",
     ):
         assert is_sensitive_workspace_path(f"/mnt/user-data/workspace/{filename}")
 
@@ -375,6 +376,32 @@ def test_compare_snapshots_hides_sensitive_and_binary_file_content(tmp_path):
     assert binary_change.binary is True
     assert binary_change.diff == ""
     assert binary_change.diff_unavailable_reason == "binary"
+
+
+def test_query_result_snapshot_hides_content_while_report_diff_remains_visible(tmp_path):
+    roots = _roots(tmp_path)
+    outputs = roots[1].host_path
+    query_result = outputs / "query-result-run-1-deadbeef.json"
+    report = outputs / "report.md"
+
+    query_result.write_text('{"rows":[["PRIVATE_QUERY_ROW_SENTINEL"]]}\n', encoding="utf-8")
+    before = scan_workspace_roots(roots)
+    query_result.write_text('{"rows":[["PRIVATE_QUERY_ROW_SENTINEL_UPDATED"]]}\n', encoding="utf-8")
+    report.write_text("# Visible report\n", encoding="utf-8")
+    after = scan_workspace_roots(roots)
+
+    query_snapshot = after.files["/mnt/user-data/outputs/query-result-run-1-deadbeef.json"]
+    assert query_snapshot.text is None
+    assert query_snapshot.sha256 is None
+    assert query_snapshot.sensitive is True
+
+    changes = {change.path: change for change in compare_snapshots(before, after).files}
+    query_change = changes["/mnt/user-data/outputs/query-result-run-1-deadbeef.json"]
+    assert query_change.diff == ""
+    assert query_change.diff_unavailable_reason == "sensitive"
+    assert query_change.additions == 0
+    assert changes["/mnt/user-data/outputs/report.md"].diff
+    assert "PRIVATE_QUERY_ROW_SENTINEL" not in str(changes)
 
 
 @pytest.fixture
@@ -549,6 +576,45 @@ async def test_workspace_changes_response_returns_summary_only_and_full_payload(
     assert metadata_only["files"][0]["path"] == "/mnt/user-data/outputs/report.md"
     assert metadata_only["files"][0]["diff"] == ""
     assert full["files"][0]["diff"] == "+hello"
+
+
+@pytest.mark.asyncio
+async def test_workspace_changes_response_masks_historical_query_result_diff_without_mutating_event():
+    store = MemoryRunEventStore()
+    payload = {
+        "summary": {"additions": 3, "deletions": 1},
+        "files": [
+            {
+                "path": "/mnt/user-data/outputs/query-result-run-1-deadbeef.json",
+                "sensitive": False,
+                "diff": '+{"rows":[["PRIVATE_QUERY_ROW_SENTINEL"]]}',
+                "additions": 2,
+                "deletions": 1,
+            },
+            {"path": "/mnt/user-data/outputs/report.md", "diff": "+visible report", "additions": 1, "deletions": 0},
+        ],
+    }
+    await store.put(
+        thread_id="thread-1",
+        run_id="run-1",
+        event_type="workspace_changes",
+        category="workspace",
+        content="2 files changed",
+        metadata={"workspace_changes": payload},
+    )
+
+    response = await get_workspace_changes_response(store, "thread-1", "run-1")
+    persisted = await store.list_events("thread-1", "run-1", event_types=["workspace_changes"])
+
+    sensitive_file, report_file = response["files"]
+    assert sensitive_file["diff"] == ""
+    assert sensitive_file["sensitive"] is True
+    assert sensitive_file["diff_unavailable_reason"] == "sensitive"
+    assert (sensitive_file["additions"], sensitive_file["deletions"]) == (0, 0)
+    assert response["summary"]["additions"] == 1
+    assert response["summary"]["deletions"] == 0
+    assert report_file["diff"] == "+visible report"
+    assert persisted[0]["metadata"]["workspace_changes"]["files"][0]["diff"] == payload["files"][0]["diff"]
 
 
 @pytest.mark.asyncio

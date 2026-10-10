@@ -501,8 +501,7 @@ export default function ScheduledTasksPage() {
                     {contextModeLabel(selectedTask.context_mode)}
                   </div>
                   <div className="text-muted-foreground text-sm">
-                    {st.detail.agent}:{" "}
-                    {st.create.leadAgent}
+                    {st.detail.agent}: {st.create.leadAgent}
                   </div>
                   <div className="text-muted-foreground text-sm">
                     {selectedTask.context_mode === "reuse_thread"

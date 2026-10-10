@@ -14,6 +14,16 @@
 
 首次配置模型可运行 `make setup`。交互向导会在根目录 `config.yaml` 写入所选模型，并按 provider 要求把 API key 写入 Git 忽略的根目录 `.env`。向导不会提供凭据。
 
+### 配置文件各自负责什么
+
+| 位置 | 用途 | 何时需要 |
+| --- | --- | --- |
+| 根目录 `config.yaml` | 应用设置与模型条目。可由 `make config` 从模板生成。 | 需要调用 Agent 时配置模型；Gateway 和工作台本身可在没有模型时启动。 |
+| 根目录 `.env` | 模型 provider 密钥及 Compose 使用的环境变量；`.env.example` 只提供占位示例。 | 配置模型凭据或覆盖部署默认值时。 |
+| 根目录 `extensions_config.json` | 可选的 MCP 服务与技能配置，由 Gateway 管理。 | 需要接入这些扩展能力时；普通聊天不要求填写。 |
+| 管理员登记的数据源 | 经营分析使用独立的外部 PostgreSQL/MySQL 数据源，连接凭据由服务端 `secret_ref` 引用。 | 使用经营分析时；不要把业务数据库凭据放进 `config.yaml` 或前端环境文件。 |
+| Docker Compose | 启动 Nginx、Frontend、Gateway 与 Redis；根目录 `.env` 可设置入口 `BIND_HOST` 和 `PORT`。 | 使用 Docker 部署或覆盖默认入口时。 |
+
 手工配置可运行 `make config` 生成配置模板，再在 `config.yaml` 的 `models:` 下配置所需模型条目，并把对应的 provider key 写入 `.env`。该命令不会覆盖已有文件，也不会替你选模型或生成凭据。Gateway 和工作台可以在没有模型配置时启动，但 Agent 无法调用模型。
 
 Windows PowerShell 可在首次初始化时直接运行配置脚本和模型向导：

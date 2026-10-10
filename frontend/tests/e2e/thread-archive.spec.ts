@@ -139,38 +139,38 @@ test("active list includes legacy chats beyond a full page of archived chats", a
 });
 
 test("archived chat can be restored from its mobile header", async ({
-    page,
-  }, testInfo) => {
-    await page.setViewportSize({ width: 390, height: 844 });
-    mockLangGraphAPI(page, {
-      threads: [
-        {
-          thread_id: CHAT,
-          title: "Archived report",
-          metadata: { deerflow_archived: true },
-        },
-      ],
-    });
-    await page.goto(`/workspace/chats/${CHAT}`, {
-      waitUntil: "domcontentloaded",
-    });
-    const restore = page.getByRole("button", {
-      name: "Restore chat",
-      exact: true,
-    });
-    await expect(restore).toBeVisible({ timeout: 15000 });
-    await expect
-      .poll(() =>
-        page
-          .getByText("Archived report", { exact: true })
-          .evaluate((element) => element.getBoundingClientRect().height),
-      )
-      .toBeLessThanOrEqual(24);
-    await page.screenshot({
-      path: testInfo.outputPath("archived-header-mobile.png"),
-      animations: "disabled",
-    });
-    await restore.click();
-    await expect(restore).toHaveCount(0);
-    await expect(page).toHaveURL(new RegExp(CHAT));
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  mockLangGraphAPI(page, {
+    threads: [
+      {
+        thread_id: CHAT,
+        title: "Archived report",
+        metadata: { deerflow_archived: true },
+      },
+    ],
   });
+  await page.goto(`/workspace/chats/${CHAT}`, {
+    waitUntil: "domcontentloaded",
+  });
+  const restore = page.getByRole("button", {
+    name: "Restore chat",
+    exact: true,
+  });
+  await expect(restore).toBeVisible({ timeout: 15000 });
+  await expect
+    .poll(() =>
+      page
+        .getByText("Archived report", { exact: true })
+        .evaluate((element) => element.getBoundingClientRect().height),
+    )
+    .toBeLessThanOrEqual(24);
+  await page.screenshot({
+    path: testInfo.outputPath("archived-header-mobile.png"),
+    animations: "disabled",
+  });
+  await restore.click();
+  await expect(restore).toHaveCount(0);
+  await expect(page).toHaveURL(new RegExp(CHAT));
+});

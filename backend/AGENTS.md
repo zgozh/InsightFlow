@@ -226,6 +226,8 @@ the tool graph or subagent executor during state/schema imports.
 SQLite, and PostgreSQL: missing differs from null, bool differs from int, and
 float filters accept integer or real JSON numbers through `json_value_matches`.
 
+Analytics 的 workspace 变更元信息可记录服务端 `query-result*.json` 文件，但不生成正文 diff；读取旧事件时只在返回副本中过滤敏感 diff，报告与普通文件 diff 仍保留。
+
 ### Gateway Run-Context Trust Boundary
 
 A server-produced run-context key must be gated on both client-writable feeds:

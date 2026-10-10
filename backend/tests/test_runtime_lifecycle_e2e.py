@@ -821,6 +821,7 @@ def test_cancel_rollback_restores_pre_run_checkpoint(isolated_app):
 
 def test_analysis_gateway_admission_runs_catalog_query_writer_and_owner_scoped_artifact_get(
     isolated_analysis_app,
+    monkeypatch,
 ):
     """Exercise the analysis trust boundary through the real lead graph and artifact route."""
     from datetime import UTC, datetime, timedelta
@@ -828,11 +829,13 @@ def test_analysis_gateway_admission_runs_catalog_query_writer_and_owner_scoped_a
     from types import SimpleNamespace
     from unittest.mock import patch
 
-    from _agent_e2e_helpers import FakeToolCallingModel
+    from analytics_test_support import AnalysisChatOpenAI, close_analysis_chat_models, create_analysis_chat_model
     from langchain_core.messages import AIMessage
+    from langchain_core.outputs import ChatGeneration, ChatResult
     from starlette.testclient import TestClient
 
-    from app.analytics.agent.evidence import AnalyticsQueryEvidence, canonical_json, create_analysis_run_evidence_collector
+    from app.analytics.agent.evidence import AnalyticsQueryEvidence, canonical_json
+    from app.analytics.agent.evidence_bridge import create_durable_analysis_run_evidence_collector
     from app.analytics.agent.runtime import bind_analytics_services, clear_analytics_services
     from app.analytics.application.delivery import QueryPlanDelivery, QueryPlanDeliveryMetadata
     from app.analytics.application.report_ports import ReportPublication
@@ -868,8 +871,8 @@ def test_analysis_gateway_admission_runs_catalog_query_writer_and_owner_scoped_a
         policy_version="synthetic-policy-v1",
     )
     private_result_sentinel = "PRIVATE_QUERY_ROW_SENTINEL"
-    result_columns = ("amount",)
-    result_rows = ((private_result_sentinel,),)
+    result_columns = ("amount", "private_note")
+    result_rows = ((73, private_result_sentinel),)
     query_result = QueryExecutionResult(
         columns=result_columns,
         rows=result_rows,
@@ -895,6 +898,10 @@ def test_analysis_gateway_admission_runs_catalog_query_writer_and_owner_scoped_a
         async def list_accessible(self, *, principal_id):
             self.principals.append(principal_id)
             return self.rows
+
+        async def get_accessible(self, *, principal_id, datasource_id):
+            self.principals.append(principal_id)
+            return next((row for row in self.rows if row.id == datasource_id), None)
 
     class _PlanQuery:
         def __init__(self):
@@ -934,6 +941,17 @@ def test_analysis_gateway_admission_runs_catalog_query_writer_and_owner_scoped_a
         async def list_for_principal(self, **_kwargs):
             return ()
 
+    class _EvidenceRepository:
+        def __init__(self):
+            self.records = {}
+
+        async def put(self, record):
+            self.records[(record.principal_id, record.thread_id, record.run_id, record.evidence_id)] = record
+
+        async def get_many(self, principal_id, thread_id, run_id, evidence_ids):
+            records = tuple(self.records.get((principal_id, thread_id, run_id, evidence_id)) for evidence_id in evidence_ids)
+            return records if all(record is not None for record in records) else ()
+
     class _Clock:
         def now(self):
             return now
@@ -955,12 +973,14 @@ def test_analysis_gateway_admission_runs_catalog_query_writer_and_owner_scoped_a
     plan_query = _PlanQuery()
     execute_query = _ExecuteQuery()
     report_repository = _ReportRepository()
+    evidence_repository = _EvidenceRepository()
     services = SimpleNamespace(
         config=SimpleNamespace(enabled=True),
         datasources=datasources,
         metrics=metrics,
         plan_query=plan_query,
         execute_query=execute_query,
+        analysis_evidence_repository=evidence_repository,
         publish_report=PublishAnalysisReport(
             repository=report_repository,
             clock=_Clock(),
@@ -968,54 +988,63 @@ def test_analysis_gateway_admission_runs_catalog_query_writer_and_owner_scoped_a
         ),
     )
     report_markdown = "# Synthetic report\n\nSynthetic result is supported by the supplied evidence.\n"
-    model = FakeToolCallingModel(
-        responses=[
-            AIMessage(
-                content="",
-                tool_calls=[{"name": "inspect_business_catalog", "args": {}, "id": "call-catalog", "type": "tool_call"}],
-            ),
-            AIMessage(
-                content="",
-                tool_calls=[
-                    {
-                        "name": "query_business_data",
-                        "args": {"datasource_id": datasource_id, "sql": "SELECT amount FROM synthetic_table"},
-                        "id": "call-query",
-                        "type": "tool_call",
-                    }
-                ],
-            ),
-            AIMessage(
-                content="",
-                tool_calls=[
-                    {
-                        "name": "write_analysis_report",
-                        "args": {
-                            "title": "Synthetic analysis",
-                            "markdown": report_markdown,
-                            "evidence_ids": [evidence.evidence_id],
-                        },
-                        "id": "call-report",
-                        "type": "tool_call",
-                    }
-                ],
-            ),
-            AIMessage(content='{"approved":true,"reason_code":"approved"}'),
-            AIMessage(content=f"Synthetic analysis is complete. Evidence: {evidence.evidence_id}"),
-        ]
-    )
+    lead_responses = [
+        AIMessage(
+            content="",
+            tool_calls=[{"name": "inspect_business_catalog", "args": {}, "id": "call-catalog", "type": "tool_call"}],
+        ),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "query_business_data",
+                    "args": {"datasource_id": datasource_id, "sql": "SELECT amount FROM synthetic_table"},
+                    "id": "call-query",
+                    "type": "tool_call",
+                }
+            ],
+        ),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "write_analysis_report",
+                    "args": {
+                        "title": "Synthetic analysis",
+                        "markdown": report_markdown,
+                        "evidence_ids": [evidence.evidence_id],
+                    },
+                    "id": "call-report",
+                    "type": "tool_call",
+                }
+            ],
+        ),
+        AIMessage(content=f"Synthetic analysis is complete. Evidence: {evidence.evidence_id}"),
+    ]
+    original_agenerate = AnalysisChatOpenAI._agenerate
+
+    async def generate_lead_or_role_response(self, messages, stop=None, run_manager=None, **kwargs):
+        if self is not model:
+            return await original_agenerate(self, messages, stop=stop, run_manager=run_manager, **kwargs)
+        if not lead_responses:
+            raise AssertionError("unexpected extra lead model request")
+        message = lead_responses.pop(0)
+        return ChatResult(generations=[ChatGeneration(message=message)])
+
+    monkeypatch.setattr(AnalysisChatOpenAI, "_agenerate", generate_lead_or_role_response)
+    model = create_analysis_chat_model(disable_streaming=True, sql_responses=['{"sql":"SELECT amount FROM synthetic_table"}'])
+    monkeypatch.setattr("deerflow.agents.lead_agent.agent.create_chat_model", lambda **_kwargs: model)
 
     created_collectors = []
 
     def capture_evidence_collector(**kwargs):
-        collector = create_analysis_run_evidence_collector(**kwargs)
+        collector = create_durable_analysis_run_evidence_collector(**kwargs)
         created_collectors.append(collector)
         return collector
 
     try:
         with (
-            patch("deerflow.agents.lead_agent.agent.create_chat_model", return_value=model),
-            patch("app.gateway.services.create_analysis_run_evidence_collector", side_effect=capture_evidence_collector),
+            patch("app.gateway.services.create_durable_analysis_run_evidence_collector", side_effect=capture_evidence_collector),
             TestClient(isolated_analysis_app) as client,
         ):
             isolated_analysis_app.state.analytics_services = services
@@ -1098,7 +1127,13 @@ def test_analysis_gateway_admission_runs_catalog_query_writer_and_owner_scoped_a
             cross_thread = client.get(f"/api/threads/another-thread/artifacts/{artifact_path}")
 
             assert artifact.status_code == 200, artifact.text
-            assert artifact.text == report_markdown
+            assert "# 经营分析报告" in artifact.text
+            assert "| cell-claim | 已验证数据 | 73 | 未提供 | 未提供 | 运算：引用单元格 |" in artifact.text
+            assert f"- claim_id: cell-claim; evidence_id: {evidence.evidence_id}; row_index: 0; column_name: amount" in artifact.text
+            assert private_result_sentinel not in artifact.text
             assert cross_thread.status_code == 404
     finally:
         clear_analytics_services()
+        import asyncio
+
+        asyncio.run(close_analysis_chat_models())

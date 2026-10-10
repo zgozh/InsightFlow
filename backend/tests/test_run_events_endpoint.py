@@ -182,7 +182,7 @@ async def test_list_run_events_reads_analysis_stages_from_sqlite_only_for_the_au
                 status="succeeded",
                 code="ok",
             )
-            await emitter.finish(status="success")
+            terminal_events = await emitter.finish(status="success")
         finally:
             emitter.close()
             reset_current_user(owner_context)
@@ -217,7 +217,7 @@ async def test_list_run_events_reads_analysis_stages_from_sqlite_only_for_the_au
         assert [event["metadata"]["stage"] for event in owner_events] == ["workflow", "catalog", "catalog", "workflow"]
         assert [event["metadata"]["status"] for event in owner_events] == ["running", "running", "succeeded", "succeeded"]
         assert all(event["event_type"] == "analysis.stage" and event["category"] == "analysis" and event["content"] == "" for event in owner_events)
-        assert [event["metadata"] for event in owner_events] == live_events
+        assert [event["metadata"] for event in owner_events] == [*live_events, *terminal_events]
         assert cross_owner_events == []
     finally:
         await close_engine()

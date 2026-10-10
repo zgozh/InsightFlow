@@ -1,8 +1,9 @@
 """Regression test keeping repo shell scripts callable without the executable bit.
 
 The root ``Makefile`` drives every shell script under ``scripts/`` through the
-``RUN_SHELL_SCRIPT`` variable. On Windows that variable is the Git Bash shim; on
-POSIX it used to expand to nothing, so recipes invoked the script directly::
+``RUN_SHELL_SCRIPT`` variable. Native Windows uses the Git Bash shim; MSYS and
+POSIX use Bash. The POSIX definition used to expand to nothing, so recipes
+invoked the script directly::
 
     make: ./scripts/docker.sh: Permission denied
     make: *** [Makefile:181: docker-start] Error 127
@@ -15,11 +16,11 @@ repository can restore the bit for those users.
 
 Naming the interpreter removes the dependency entirely -- ``bash ./x.sh`` ignores
 the mode. Every script under ``scripts/`` uses ``#!/usr/bin/env bash``, so a
-single ``$(BASH)`` default is correct for all of them, and the Windows branch is
-untouched.
+single ``$(BASH)`` default is correct for those branches, while native Windows
+keeps its Git Bash shim.
 
 This test pins both halves of the invariant: no recipe may invoke a shell script
-bare, and the POSIX definition of ``RUN_SHELL_SCRIPT`` must name an interpreter.
+bare, and each platform definition of ``RUN_SHELL_SCRIPT`` must name an interpreter.
 """
 
 from __future__ import annotations
@@ -53,16 +54,17 @@ def test_makefile_never_invokes_shell_scripts_bare() -> None:
     assert not bare, "these recipes invoke a shell script without an interpreter, so they fail with 'Permission denied' in checkouts that lost the executable bit; prefix them with $(RUN_SHELL_SCRIPT):\n  " + "\n  ".join(bare)
 
 
-def test_posix_run_shell_script_names_an_interpreter() -> None:
-    """The non-Windows branch must expand to an interpreter, not to nothing."""
+def test_each_platform_run_shell_script_preserves_its_interpreter() -> None:
+    """Every platform branch must choose its supported shell invocation."""
     text = MAKEFILE.read_text(encoding="utf-8")
 
     assert re.search(r"^BASH \?= bash$", text, re.MULTILINE), "expected 'BASH ?= bash' so operators can override the interpreter"
 
     assignments = re.findall(r"^\s*RUN_SHELL_SCRIPT\s*=\s*(.*)$", text, re.MULTILINE)
-    assert len(assignments) == 2, f"expected one RUN_SHELL_SCRIPT definition per platform branch, got {assignments}"
-    windows, posix = assignments
-    assert "run-with-git-bash.cmd" in windows, windows
+    assert len(assignments) == 3, f"expected one definition for each platform branch, got {assignments}"
+    msys_windows, native_windows, posix = assignments
+    assert msys_windows.strip() == "$(BASH)", msys_windows
+    assert "run-with-git-bash.cmd" in native_windows, native_windows
     assert posix.strip() == "$(BASH)", f"the POSIX branch must name an interpreter; an empty value makes recipes depend on the executable bit, got {posix!r}"
 
 

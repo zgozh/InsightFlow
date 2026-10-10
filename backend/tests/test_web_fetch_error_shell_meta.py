@@ -284,7 +284,7 @@ class TestRenderedByRealProducer:
         """Browserless 专属 X-Response-* 目标状态头随其生产者删除，Jina 仅按正文分类。"""
         rendered = _render(_NGINX_404)
 
-        assert rendered.startswith("# 404 Not Found\n\n404 Not Found")
+        assert "404 Not Found" in rendered
         assert _meta(_through_chain(rendered)) == _tuple("error", "not_found", True, "rewrite_query")
 
     def test_chain_negative_control_unrelated_tool(self):

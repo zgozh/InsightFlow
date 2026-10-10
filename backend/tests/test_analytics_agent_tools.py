@@ -437,7 +437,7 @@ async def test_analysis_query_emits_persisted_stages_in_phase_order_and_finishes
 
     try:
         result = await agent_tools.query_business_data.coroutine(datasource_id="ds-1", sql=_SQL, runtime=runtime)
-        await roles.finish(status="success")
+        terminal_events = await roles.finish(status="success")
     finally:
         roles.close()
 
@@ -454,7 +454,7 @@ async def test_analysis_query_emits_persisted_stages_in_phase_order_and_finishes
         ("execution", "succeeded"),
         ("workflow", "succeeded"),
     ]
-    assert [event["metadata"] for event in store.events] == live
+    assert [event["metadata"] for event in store.events] == [*live, *terminal_events]
     assert all(event["event_type"] == "analysis.stage" and event["category"] == "analysis" and event["content"] == "" for event in store.events)
 
 

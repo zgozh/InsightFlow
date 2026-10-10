@@ -407,8 +407,7 @@ test.describe("Thread message ordering", () => {
             const leaf = (text: string) =>
               [...list.querySelectorAll("div, p")].find(
                 (element) =>
-                  element.children.length === 0 &&
-                  element.textContent === text,
+                  element.children.length === 0 && element.textContent === text,
               );
             const question = leaf("final-turn question");
             const answer = leaf("final-turn answer");
@@ -443,5 +442,4 @@ test.describe("Thread message ordering", () => {
     });
     await expectGroupIndicesAscending(page);
   });
-
 });

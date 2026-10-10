@@ -80,6 +80,7 @@ BINARY_EXTENSIONS = {
 SENSITIVE_PATH_PATTERNS = (
     ".env",
     ".env.*",
+    "query-result*.json",
     "*api_key*",
     "*apikey*",
     "*.key",

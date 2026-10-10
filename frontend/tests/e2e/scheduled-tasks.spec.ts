@@ -404,9 +404,9 @@ test("duplicate keeps the supported lead agent task contract", async ({
     .getByRole("button", { name: "Duplicate" })
     .click();
   const createForm = page.getByTestId("scheduled-task-create-form");
-  await expect(createForm.getByTestId("scheduled-task-create-agent")).toHaveCount(
-    0,
-  );
+  await expect(
+    createForm.getByTestId("scheduled-task-create-agent"),
+  ).toHaveCount(0);
   await expect(createForm.getByPlaceholder("Task title")).toHaveValue(
     /Research digest/,
   );
@@ -415,9 +415,7 @@ test("duplicate keeps the supported lead agent task contract", async ({
   );
 });
 
-test("edit keeps the supported lead agent fixed", async ({
-  page,
-}) => {
+test("edit keeps the supported lead agent fixed", async ({ page }) => {
   let patchBody: Record<string, unknown> | null = null;
   page.on("request", (request) => {
     if (
@@ -457,9 +455,7 @@ test("edit keeps the supported lead agent fixed", async ({
     .getByTestId("scheduled-task-detail")
     .getByRole("button", { name: "Edit" })
     .click();
-  await expect(
-    page.getByTestId("scheduled-task-edit-agent"),
-  ).toHaveCount(0);
+  await expect(page.getByTestId("scheduled-task-edit-agent")).toHaveCount(0);
   await page.getByPlaceholder("Edit title").fill("Renamed digest");
   await page.getByRole("button", { name: "Save edit" }).click();
   await expect(page.getByTestId("scheduled-task-detail")).toContainText(

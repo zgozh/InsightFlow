@@ -15,15 +15,15 @@ Custom/Managed Agent、IM 连接、项目/文档/回收站、浏览器控制、�
 
 ## 常用命令
 
-| 命令 | 用途 |
-| --- | --- |
-| `pnpm dev` | 启动开发服务器 |
-| `pnpm build` | 构建生产版本 |
-| `pnpm check` | 运行 lint 和 TypeScript 检查 |
-| `pnpm format` / `pnpm format:write` | 检查 / 应用格式 |
-| `pnpm test` | 运行 Rstest 单元及 DOM 项目 |
-| `pnpm test:e2e` | 运行 Playwright E2E |
-| `pnpm start` | 启动生产构建 |
+| 命令                                | 用途                         |
+| ----------------------------------- | ---------------------------- |
+| `pnpm dev`                          | 启动开发服务器               |
+| `pnpm build`                        | 构建生产版本                 |
+| `pnpm check`                        | 运行 lint 和 TypeScript 检查 |
+| `pnpm format` / `pnpm format:write` | 检查 / 应用格式              |
+| `pnpm test`                         | 运行 Rstest 单元及 DOM 项目  |
+| `pnpm test:e2e`                     | 运行 Playwright E2E          |
+| `pnpm start`                        | 启动生产构建                 |
 
 单元测试位于 `tests/unit/`。纯逻辑使用 node 项目；只有真实 DOM、React effect 或组件
 交互需要 `*.dom.test.tsx`。Playwright 测试位于 `tests/e2e/`，通常通过

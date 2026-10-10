@@ -102,6 +102,24 @@ def _wire_lead_assembly(monkeypatch, *, model: _SyntheticModel) -> None:
     monkeypatch.setattr(lead_agent_module, "build_tracing_callbacks", lambda: [])
 
 
+def _server_analysis_runtime():
+    from deerflow.constants import ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY, ANALYSIS_ROLES_CONTEXT_KEY
+
+    class Capability:
+        def bind_lead_model(self, **identity):
+            return identity.get("principal_id") == "synthetic-user" and identity.get("thread_id") == "synthetic-thread" and identity.get("run_id") == "synthetic-run" and identity.get("model") is not None
+
+    return SimpleNamespace(
+        context={
+            "user_id": "synthetic-user",
+            "thread_id": "synthetic-thread",
+            "run_id": "synthetic-run",
+            ANALYSIS_REPORT_REVIEWER_CONTEXT_KEY: Capability(),
+            ANALYSIS_ROLES_CONTEXT_KEY: Capability(),
+        }
+    )
+
+
 @pytest.mark.asyncio
 async def test_analysis_assembly_uses_server_context_and_one_set_for_model_and_dispatch(monkeypatch):
     calls: list[str] = []
@@ -156,7 +174,12 @@ async def test_analysis_assembly_uses_server_context_and_one_set_for_model_and_d
     assembly = lead_agent_module._assemble_lead_agent(
         {
             "context": {"analysis_mode": True},
-            "configurable": {"analysis_mode": False, "agent_name": "synthetic-custom", "subagent_enabled": True},
+            "configurable": {
+                "__pregel_runtime": _server_analysis_runtime(),
+                "analysis_mode": False,
+                "agent_name": "synthetic-custom",
+                "subagent_enabled": True,
+            },
         },
         app_config=app_config,
     )
@@ -173,7 +196,7 @@ async def test_analysis_assembly_uses_server_context_and_one_set_for_model_and_d
     forged_assembly = lead_agent_module._assemble_lead_agent(
         {
             "context": {"analysis_mode": True},
-            "configurable": {"analysis_mode": False, "subagent_enabled": True},
+            "configurable": {"__pregel_runtime": _server_analysis_runtime(), "analysis_mode": False, "subagent_enabled": True},
         },
         app_config=app_config,
     )
@@ -253,7 +276,7 @@ def test_analysis_assembly_adds_dedicated_chinese_work_instructions(monkeypatch)
     )
 
     lead_agent_module._assemble_lead_agent(
-        {"context": {"analysis_mode": True}},
+        {"context": {"analysis_mode": True}, "configurable": {"__pregel_runtime": _server_analysis_runtime()}},
         app_config=_app_config(_analysis_tool_configs()),
     )
 

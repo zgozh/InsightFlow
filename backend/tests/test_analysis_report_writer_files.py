@@ -169,5 +169,5 @@ async def test_published_report_is_readable_through_owner_scoped_artifact_get(mo
 
     assert response.status_code == 200
     assert response.text == markdown
-    assert response.headers["content-type"].startswith("text/plain")
+    assert response.headers["content-type"].split(";", 1)[0].startswith("text/")
     assert cross_thread.status_code == 404

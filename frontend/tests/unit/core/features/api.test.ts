@@ -4,9 +4,7 @@ rs.mock("@/core/api/fetcher", () => ({ fetch: rs.fn() }));
 rs.mock("@/core/config", () => ({ getBackendBaseURL: () => "" }));
 
 import { fetch } from "@/core/api/fetcher";
-import {
-  fetchConversationReferencesCapability,
-} from "@/core/features/api";
+import { fetchConversationReferencesCapability } from "@/core/features/api";
 
 const mockedFetch = rs.mocked(fetch);
 
@@ -36,9 +34,7 @@ describe("conversation references feature capability", () => {
   });
 
   it("treats a backend without the field as disabled", async () => {
-    mockedFetch.mockResolvedValueOnce(
-      jsonResponse({}),
-    );
+    mockedFetch.mockResolvedValueOnce(jsonResponse({}));
 
     await expect(fetchConversationReferencesCapability()).resolves.toEqual({
       enabled: false,

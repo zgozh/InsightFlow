@@ -820,3 +820,39 @@ def test_history_event_projection_masks_partial_invalid_and_raw_calls():
     )
     assert projected[0]["content"]["invalid_tool_calls"][0]["args"] == ""
     assert json.loads(projected[1]["content"]["content"]) == {"code": "analytics_result_unavailable"}
+
+
+def test_history_workspace_change_projection_masks_old_query_result_diffs_without_mutating_rows():
+    from deerflow.runtime.serialization import project_analytics_event_rows
+
+    payload = {
+        "summary": {"additions": 2, "deletions": 0},
+        "files": [
+            {
+                "path": "/mnt/user-data/outputs/query-result-run-1-deadbeef.json",
+                "diff": '+{"rows":[["HISTORY_QUERY_SENTINEL"]]}',
+                "sensitive": False,
+                "additions": 2,
+                "deletions": 0,
+            },
+            {"path": "/mnt/user-data/outputs/report.md", "diff": "+visible report"},
+        ],
+    }
+    events = [
+        {"event_type": "workspace_changes", "metadata": {"workspace_changes": payload}},
+        {"event_type": "workspace_changes", "content": payload},
+    ]
+
+    projected = project_analytics_event_rows(events)
+
+    for event in projected:
+        projected_payload = event.get("metadata", {}).get("workspace_changes", event.get("content"))
+        sensitive_file, report_file = projected_payload["files"]
+        assert sensitive_file["diff"] == ""
+        assert sensitive_file["sensitive"] is True
+        assert sensitive_file["diff_unavailable_reason"] == "sensitive"
+        assert sensitive_file["additions"] == 0
+        assert report_file["diff"] == "+visible report"
+    assert "HISTORY_QUERY_SENTINEL" not in repr(projected)
+    assert events[0]["metadata"]["workspace_changes"]["files"][0]["diff"] == payload["files"][0]["diff"]
+    assert events[1]["content"]["files"][0]["diff"] == payload["files"][0]["diff"]

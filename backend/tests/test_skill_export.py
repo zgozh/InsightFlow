@@ -204,22 +204,34 @@ def test_diagnostics_requirements_do_not_expose_contents(package):
 
 @pytest.mark.parametrize("skill_name", ["code-documentation", "skill-creator"])
 @requires_safe_capture
-def test_public_skill_real_install_roundtrip(tmp_path, monkeypatch, skill_name):
+def test_skill_export_install_roundtrip_with_fixture(tmp_path, monkeypatch, skill_name):
     import shutil
-    from pathlib import Path
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
     from deerflow.skills import installer
 
-    public = Path(__file__).resolve().parents[2] / "skills/public" / skill_name
+    public = tmp_path / "public" / skill_name
+    public.mkdir(parents=True)
+    (public / "SKILL.md").write_text(f"---\nname: {skill_name}\ndescription: Roundtrip fixture for {skill_name}\n---\nFixture content.\n", encoding="utf-8")
+    if skill_name == "code-documentation":
+        documentation = public / "references" / "documentation-template.md"
+        documentation.parent.mkdir(parents=True)
+        documentation.write_text("# Documentation fixture\n\nNested reference content.\n", encoding="utf-8")
+    else:
+        validator = public / "scripts" / "quick_validate.py"
+        validator.parent.mkdir(parents=True)
+        validator.write_text(
+            "from pathlib import Path\nimport sys\nskill = Path(sys.argv[1])\nassert (skill / 'SKILL.md').is_file()\nassert (skill / 'SKILL.md').read_text(encoding='utf-8').startswith('---\\n')\nprint('Skill is valid!')\n",
+            encoding="utf-8",
+        )
     storage = LocalSkillStorage(host_path=str(tmp_path / "source"))
     root = storage.get_custom_skill_dir(skill_name)
     shutil.copytree(public, root, ignore=shutil.ignore_patterns("__pycache__"))
     manifest = export.export_manifest(storage, skill_name)
     assert manifest["can_export"], manifest["blockers"]
     archive = export.build_skill_export(storage, skill_name, manifest["revision"])
-    archive_path = tmp_path / "code-documentation.skill"
+    archive_path = tmp_path / f"{skill_name}.skill"
     try:
         archive_path.write_bytes(archive.file.read())
     finally:
@@ -240,6 +252,9 @@ def test_public_skill_real_install_roundtrip(tmp_path, monkeypatch, skill_name):
         result = subprocess.run([sys.executable, str(installed / "scripts/quick_validate.py"), str(installed)], capture_output=True, text=True, timeout=10)
         assert result.returncode == 0, result.stdout + result.stderr
         assert "Skill is valid!" in result.stdout
+    else:
+        installed = target.get_custom_skill_dir(skill_name)
+        assert (installed / "references/documentation-template.md").read_text(encoding="utf-8").startswith("# Documentation fixture")
 
 
 @pytest.mark.parametrize("mode, expected", [(0o100777, 0o755), (0o107777, 0o755), (0o100640, 0o644), (0, 0o644)])

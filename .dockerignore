@@ -1,5 +1,6 @@
 **/.env
 .env.*
+!.env.example
 config.yaml
 extensions_config.json
 .reviews/

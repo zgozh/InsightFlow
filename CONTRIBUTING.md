@@ -22,11 +22,13 @@ Run a focused command for the files you changed:
 | Area | Commands |
 | --- | --- |
 | Root orchestration | `make check`, `make doctor`, `make dev`, `make start`, `make up`, `make down` |
-| Backend | From `backend/`: `make test`, `make lint`; a focused test can use `python -m pytest tests/path/test_file.py::test_name -q` |
+| Backend | From `backend/`: `make test`, `make lint`, or the explicitly opted-in `make test-live`; a focused test can use `python -m pytest tests/path/test_file.py::test_name -q` |
 | Frontend | From `frontend/`: `pnpm check`, `pnpm test`, `pnpm test:e2e` |
 | Version gate | From repository root: `scripts/verify_versions.sh <version>` |
 
 Backend default tests are offline. Live provider and blocking-I/O checks require their documented opt-in targets or environment settings. Browser tests use the repository's local fixtures unless the test explicitly names a real service.
+
+`make test-live` runs tests that call external provider APIs and sets `DEER_FLOW_RUN_LIVE_TESTS=1`; invoking the live pytest marker directly requires setting that opt-in yourself. Never put provider credentials in CI unit-test configuration.
 
 ## Change expectations
 

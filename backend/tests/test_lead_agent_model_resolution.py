@@ -684,7 +684,7 @@ def test_make_lead_agent_reads_runtime_options_from_context(monkeypatch):
         "reasoning_effort": "high",
         "app_config": app_config,
     }
-    get_available_tools.assert_called_once_with(model_name="context-model", groups=None, subagent_enabled=True, include_conversation_reader=False, app_config=app_config)
+    get_available_tools.assert_called_once_with(model_name="context-model", groups=None, subagent_enabled=True, include_conversation_reader=False, analysis_mode=False, app_config=app_config)
     assert result["model"] is not None
 
 
@@ -1541,6 +1541,7 @@ def test_empty_allowed_subagents_disables_requested_delegation(monkeypatch):
         groups=None,
         subagent_enabled=False,
         include_conversation_reader=False,
+        analysis_mode=False,
         app_config=app_config,
     )
     assert config["context"]["subagent_enabled"] is False

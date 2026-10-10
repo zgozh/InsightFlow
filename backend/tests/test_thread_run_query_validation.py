@@ -94,6 +94,7 @@ def test_read_endpoints_accept_positive_limits_and_hit_store():
         task_id=None,
         limit=1,
         after_seq=None,
+        user_id=None,
     )
 
 

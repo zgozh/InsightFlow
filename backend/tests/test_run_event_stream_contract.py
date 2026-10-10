@@ -94,10 +94,10 @@ async def _persist_subagent_batch(store) -> list[dict]:
     return await store.list_events("thread-batch", "run-batch")
 
 
-async def _record_run_end(store) -> dict:
+async def _record_run_end(store, outputs=None) -> dict:
     journal = RunJournal("run-output", "thread-output", store, flush_threshold=100)
     journal.on_chain_end(
-        {"messages": [AIMessage(content="final answer", id="final-message")]},
+        outputs or {"messages": [AIMessage(content="final answer", id="final-message")]},
         run_id=uuid4(),
         parent_run_id=None,
     )
@@ -263,24 +263,63 @@ async def test_run_end_backend_storage_semantics_match_contract(tmp_path):
     contract_event = _contract_events()["run.end"]
     assert set(contract_event["storage_semantics"]) == {"memory", "jsonl", "database"}
 
-    memory_event = await _record_run_end(MemoryRunEventStore())
-    jsonl_event = await _record_run_end(JsonlRunEventStore(base_dir=tmp_path / "events"))
+    outputs = {
+        "messages": [
+            AIMessage(
+                content="querying",
+                id="query-call-message",
+                tool_calls=[
+                    {
+                        "id": "query-call",
+                        "name": "query_business_data",
+                        "args": {"datasource_id": "ds-safe", "sql": "SELECT RUN_END_SQL_SENTINEL"},
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            ToolMessage(
+                content=json.dumps({"code": "executed", "row_count": 1, "rows": [["RUN_END_ROW_SENTINEL"]]}),
+                id="query-result-message",
+                name="query_business_data",
+                tool_call_id="query-call",
+                artifact={"private": "RUN_END_ARTIFACT_SENTINEL"},
+                additional_kwargs={"private": "RUN_END_ADDITIONAL_SENTINEL"},
+                response_metadata={"private": "RUN_END_METADATA_SENTINEL"},
+            ),
+        ]
+    }
+    memory_event = await _record_run_end(MemoryRunEventStore(), outputs)
+    jsonl_event = await _record_run_end(JsonlRunEventStore(base_dir=tmp_path / "events"), outputs)
 
     url = f"sqlite+aiosqlite:///{tmp_path / 'run-output.db'}"
     await init_engine("sqlite", url=url, sqlite_dir=str(tmp_path))
     try:
-        database_event = await _record_run_end(DbRunEventStore(get_session_factory()))
+        database_event = await _record_run_end(DbRunEventStore(get_session_factory()), outputs)
     finally:
         await close_engine()
 
     for event in (memory_event, jsonl_event, database_event):
         _assert_fixed_event_valid(event, persisted=True)
 
-    assert isinstance(memory_event["content"]["messages"][0], AIMessage)
-    assert isinstance(jsonl_event["content"]["messages"][0], str)
-    assert isinstance(database_event["content"]["messages"][0], str)
-    assert "final answer" in jsonl_event["content"]["messages"][0]
-    assert "final answer" in database_event["content"]["messages"][0]
+    memory_ai, memory_tool = memory_event["content"]["messages"]
+    assert isinstance(memory_ai, AIMessage)
+    assert isinstance(memory_tool, ToolMessage)
+    assert memory_ai.tool_calls[0]["args"] == {"datasource_id": "ds-safe"}
+    assert "RUN_END_SQL_SENTINEL" not in json.dumps(memory_ai.tool_calls)
+    assert json.loads(memory_tool.content) == {"code": "executed", "row_count": 1}
+    assert memory_tool.artifact is None
+    assert memory_tool.additional_kwargs == {}
+    assert memory_tool.response_metadata == {}
+
+    for event in (jsonl_event, database_event):
+        stored_messages = event["content"]["messages"]
+        assert all(isinstance(message, str) for message in stored_messages)
+        encoded = json.dumps(stored_messages)
+        assert "RUN_END_SQL_SENTINEL" not in encoded
+        assert "RUN_END_ROW_SENTINEL" not in encoded
+        assert "RUN_END_ARTIFACT_SENTINEL" not in encoded
+        assert "RUN_END_ADDITIONAL_SENTINEL" not in encoded
+        assert "RUN_END_METADATA_SENTINEL" not in encoded
 
 
 @pytest.mark.anyio

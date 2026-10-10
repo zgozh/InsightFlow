@@ -406,6 +406,51 @@ def project_analytics_structured_value(value: Any, *, tool_names: dict[str, str]
     return _project_analytics_value(result, names)
 
 
+def project_analytics_structured_value_preserving_types(value: Any, *, tool_names: dict[str, str] | None = None) -> Any:
+    """安全投影 Analytics 字段，同时为内存 run.end 保留未修改的 Python 类型。"""
+    from langchain_core.messages import BaseMessage
+
+    original = deepcopy(value)
+    serialized = serialize_lc_object(value)
+    names = dict(tool_names or {})
+    _collect_analytics_tool_call_names(serialized, names)
+    projected = _project_analytics_value(deepcopy(serialized), names)
+
+    def equal(left: Any, right: Any) -> bool:
+        try:
+            result = left == right
+            return result if isinstance(result, bool) else False
+        except Exception:
+            return False
+
+    def restore(original_value: Any, plain_value: Any, safe_value: Any) -> Any:
+        if equal(plain_value, safe_value):
+            return deepcopy(original_value)
+        if isinstance(original_value, BaseMessage) and isinstance(plain_value, dict) and isinstance(safe_value, dict):
+            updates: dict[str, Any] = {}
+            for key, safe_child in safe_value.items():
+                if key == "type":
+                    continue
+                plain_child = plain_value.get(key)
+                if equal(plain_child, safe_child):
+                    continue
+                original_child = getattr(original_value, key, plain_child)
+                updates[key] = restore(original_child, plain_child, safe_child)
+            try:
+                return original_value.model_copy(update=updates, deep=True)
+            except Exception:
+                return deepcopy(safe_value)
+        if isinstance(original_value, dict) and isinstance(plain_value, dict) and isinstance(safe_value, dict):
+            return {key: restore(original_value.get(key), plain_value.get(key), safe_child) for key, safe_child in safe_value.items()}
+        if isinstance(plain_value, list) and isinstance(safe_value, list) and len(plain_value) == len(safe_value):
+            original_items = original_value if isinstance(original_value, (list, tuple)) and len(original_value) == len(plain_value) else plain_value
+            restored = [restore(original_items[index], plain_child, safe_child) for index, (plain_child, safe_child) in enumerate(zip(plain_value, safe_value, strict=True))]
+            return tuple(restored) if isinstance(original_value, tuple) else restored
+        return deepcopy(safe_value)
+
+    return restore(original, serialized, projected)
+
+
 def project_analytics_messages(messages: list[Any]) -> list[Any]:
     """在独立消息列表中投影 Analytics 字段，并关联结果调用 ID。"""
     result = deepcopy(serialize_lc_object(messages))
@@ -421,12 +466,21 @@ def project_analytics_messages(messages: list[Any]) -> list[Any]:
 
 def project_analytics_event_rows(events: list[Any]) -> list[Any]:
     """投影事件行中的 Analytics 消息结构，也兼容已有历史行。"""
+    from deerflow.workspace_changes.api import project_workspace_changes_payload
+
     result = deepcopy(serialize_lc_object(events))
     if not isinstance(result, list):
         return []
     names_by_run: dict[str | None, dict[str, str]] = {}
     projected = []
     for event in result:
+        if isinstance(event, dict) and event.get("event_type") == "workspace_changes":
+            metadata = event.get("metadata")
+            if isinstance(metadata, dict) and "workspace_changes" in metadata:
+                metadata["workspace_changes"] = project_workspace_changes_payload(metadata["workspace_changes"])
+            content = event.get("content")
+            if isinstance(content, dict):
+                event["content"] = project_workspace_changes_payload(content)
         run_id = event.get("run_id") if isinstance(event, dict) else None
         scope = run_id if isinstance(run_id, str) else None
         names = names_by_run.setdefault(scope, {})

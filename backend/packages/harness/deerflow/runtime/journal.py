@@ -47,7 +47,7 @@ from deerflow.runtime.events.catalog import (
     RUN_ERROR_EVENT,
     RUN_START_EVENT,
 )
-from deerflow.runtime.serialization import project_analytics_messages, project_analytics_structured_value
+from deerflow.runtime.serialization import project_analytics_messages, project_analytics_structured_value, project_analytics_structured_value_preserving_types
 from deerflow.utils.messages import message_to_text, restore_original_human_message
 
 if TYPE_CHECKING:
@@ -730,12 +730,13 @@ class RunJournal(BaseCallbackHandler):
                 self._persist_tool_result_message(message)
 
     def _make_event(self, *, event_type: str, category: str, content: str | dict = "", metadata: dict | None = None) -> dict:
+        project_value = project_analytics_structured_value_preserving_types if event_type == RUN_END_EVENT.event_type else project_analytics_structured_value
         return {
             "thread_id": self.thread_id,
             "run_id": self.run_id,
             "event_type": event_type,
             "category": category,
-            "content": project_analytics_structured_value(content, tool_names=self._tool_call_names_for_projection),
+            "content": project_value(content, tool_names=self._tool_call_names_for_projection),
             "metadata": metadata or {},
             "created_at": datetime.now(UTC).isoformat(),
         }

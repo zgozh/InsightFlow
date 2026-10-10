@@ -16,7 +16,7 @@ from deerflow.models.factory import create_chat_model
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_EXAMPLE = REPO_ROOT / "config.example.yaml"
 ENV_EXAMPLE = REPO_ROOT / ".env.example"
-LOCAL_TRIAL = REPO_ROOT / "docs" / "LOCAL_TRIAL.md"
+INSTALL_GUIDE = REPO_ROOT / "Install.md"
 SAMPLE_START = "# BEGIN DEEPSEEK FLASH QUICKSTART"
 SAMPLE_END = "# END DEEPSEEK FLASH QUICKSTART"
 
@@ -63,11 +63,10 @@ def test_env_example_covers_setup_wizard_model_credentials_without_real_values()
     assert all(re.search(rf"(?m)^\s*#\s*{re.escape(name)}=", template) for name in env_names)
 
 
-def test_local_trial_explains_the_configuration_layers_in_chinese():
-    guide = LOCAL_TRIAL.read_text(encoding="utf-8")
+def test_install_guide_explains_the_configuration_layers_in_chinese():
+    guide = INSTALL_GUIDE.read_text(encoding="utf-8")
 
-    assert "## 配置速览" in guide
-    for label in ("必填", "默认可不填", "经营分析额外", "高级可选"):
-        assert label in guide
-    for filename in (".env", "config.yaml", "extensions_config.json", "Compose"):
+    for filename in (".env", ".env.example", "config.yaml", "extensions_config.json", "Compose", "BIND_HOST", "PORT", "secret_ref"):
         assert filename in guide
+    for term in ("经营分析", "PostgreSQL", "MySQL"):
+        assert term in guide
