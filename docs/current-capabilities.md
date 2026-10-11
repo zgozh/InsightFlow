@@ -7,7 +7,7 @@
 - PostgreSQL 报告链、查询安全与风险限制、HTTP timeout/audit，以及 checkpoint/evidence 复用和未完成运行恢复均有范围明确的验收记录。详见[报告验收](acceptance/2026-10-09-label-repair-api-acceptance.md)、[checkpoint 与取消验收](acceptance/2026-10-09-live-checkpoint-and-cancel.md)、[未完成运行恢复](acceptance/2026-10-09-unfinished-run-recovery.md)、[查询安全](acceptance/2026-10-09-direct-query-security.md)、[风险门禁](acceptance/2026-10-09-query-risk-gates.md)和[HTTP timeout 验收](acceptance/2026-10-09-http-timeout-cancel-gates.md)。这些单项结果不代表任意输入组合均通过。
 - 数据源和指标目录的预填草稿已通过定点检查与浏览器探针。用户仍可编辑草稿，只有显式提交才会运行分析；部署和交互证据见[最终交付状态](acceptance/2026-10-09-final-delivery.md)。
 - 最新 scheduled run 按 AS-11 合同完成查询、报告复核和发布，并生成 owner report。早期失败 run 和 `fail-closed` 拒绝记录仍保留，详见[最终交付记录](acceptance/2026-10-09-final-delivery.md)。
-- 功能与部署门禁按批准范围通过；远程 CI 尚未核验。具体范围和证据见[最终发布矩阵](acceptance/2026-10-09-final-release-matrix.md)与[最终交付记录](acceptance/2026-10-09-final-delivery.md)。
+- 2026-10-10 验收快照记录提交 `b40ea6b497b6559eb0731cb6f370f53085fbd33d` 的六个 GitHub Actions 工作流均成功，并记录本机部署验收通过；该结果只对应当时的提交快照，不表示当前 HEAD 的 Actions 状态。详见[CI 与本机部署验收快照](acceptance/2026-10-10-ci-final-acceptance.md)。
 
 ## 通用 Agent 运行时
 
@@ -53,7 +53,7 @@
 | 1 数据源与指标两步预填 | 草稿修复的 4 项定点测试及浏览器探针通过，见[修复记录](acceptance/2026-10-09-prefilled-analysis-draft-fix.md)。 | 当前 Gateway 部署由独立交付摘要记录；UI 探针本身不替代服务端部署证据。 |
 | 2 Scheduler 与重启恢复 | AS-11 最新 once run 已成功并产生 owner report；AS-12 PostgreSQL checkpoint/evidence producer 复用与 unfinished-run 恢复有独立 proof。 | 旧失败 run 与 Reviewer 拒绝保留；不以其替代最新成功 run，也不作任意输入保证。 |
 | 3 未承诺的输入范围 | 平台合同范围内的报告、查询、安全与阶段证据按矩阵通过。 | 任意自由文本敏感内容、任意第三方 MCP/RAG 行为及未约定输入变体不在此结论内。 |
-| 4 交付收尾 | 功能与部署门禁按批准范围通过，详细记录见[最终交付状态](acceptance/2026-10-09-final-delivery.md)。 | 远程 CI 尚未核验。 |
+| 4 交付收尾 | 功能与部署门禁按批准范围通过，详细记录见[最终交付状态](acceptance/2026-10-09-final-delivery.md)。 | 2026-10-10 快照中的六项远程 CI 工作流均通过，部署检查见[CI 与本机部署验收快照](acceptance/2026-10-10-ci-final-acceptance.md)；该结果对应提交 `b40ea6b497b6559eb0731cb6f370f53085fbd33d`，不表示当前 HEAD 状态。 |
 
 ## 个人项目描述
 

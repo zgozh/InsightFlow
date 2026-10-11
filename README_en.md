@@ -2,9 +2,27 @@
 
 [简体中文](README.md) | [English](README_en.md)
 
-InsightFlow is an individually developed workspace for business analysis with internal data. It brings the data catalog, server-side authorization, read-only queries, evidence checks, and report publishing into one traceable workflow.
+InsightFlow is an agent workspace I designed and built around analysis of internal business data. It uses a LangGraph agent runtime to connect the data catalog, server-side authorization, evidence checks, and report publishing in a traceable flow, while retaining a general tool loop and task subagents for ordinary chat.
 
-> The delivery record dated 2026-10-09 marks the functional and deployment gates as passed within the approved scope. Remote CI has not been verified. See the [final delivery status](docs/acceptance/2026-10-09-final-delivery.md) for scope and evidence.
+> The 2026-10-10 acceptance snapshot records six successful GitHub Actions workflows for commit `b40ea6b497b6559eb0731cb6f370f53085fbd33d` and a successful local deployment review. It describes that commit at that time; see the [acceptance snapshot](docs/acceptance/2026-10-10-ci-final-acceptance.md) for its scope and evidence.
+
+## Project highlights
+
+- **A governed analytics product on a general runtime:** InsightFlow App is separated from the reusable Harness, with server-side contracts for catalogs, authorization, read-only queries, evidence, and report publishing.
+- **Reports tied to query evidence:** Results are scoped to a run; Data submits a numeric plan referencing evidence cells, the Gateway recalculates it with `Decimal`, and a fixed Writer and tool-free Reviewer complete the publishing path.
+- **Two distinct agent paths:** Ordinary chat retains a general tool loop and configurable extensions. Analytics uses a fixed tool set and bounded role calls to keep model behavior inside product authorization.
+- **A complete workspace flow:** The UI covers data sources, metrics, analysis traces, report downloads, conversations, audit history, and scheduled tasks.
+
+## Technology stack
+
+| Layer | Technology |
+| --- | --- |
+| Web workspace | Next.js, React, TypeScript |
+| Unified entry | Nginx reverse proxy |
+| Gateway and product app | Python, FastAPI |
+| Agent runtime | LangGraph, InsightFlow Harness |
+| Query and storage | SQLGlot, external PostgreSQL/MySQL, application SQLite; Redis Streams for internal event bridging |
+| Local delivery | Docker Compose or Make-driven local services |
 
 ## Features and workflows
 
@@ -21,31 +39,69 @@ On first use, create the initial administrator at `/setup`, then sign in at `/lo
 | `/workspace/history` | View audit history available to the signed-in user |
 | `/workspace/scheduled-tasks` | Create and view scheduled tasks; background scheduling also requires `scheduler.enabled` |
 
-Ordinary chat at `/workspace/chats/new` uses the general Lead Agent. Depending on operator configuration, it can call tools, delegate task subagents, and use MCP, Skills, sandboxes, and Memory; checkpoints record run state, and SSE streams progress. Available capabilities depend on deployment configuration. Governed Analytics is a separate workflow: Lead coordinates fixed SQL Analyst (bounded query preparation) and Data (evidence and numeric plan) roles, followed by report writing from Report Writer and review by a tool-free Reviewer.
+## Agent capabilities
 
-The data-source and metric pages can prefill a new analysis draft. Users can edit it, and the analysis runs only after submission. The server loads the current user's accessible catalog and checks authorization again, so browser-supplied resource IDs cannot expand access.
+### Ordinary chat
 
-## Architecture
+Ordinary chat runs a general Lead Agent tool loop. When `task` is enabled, the Lead can delegate bounded work to task subagents. Each delegation gets a separate execution identity and is governed by a queue, concurrency limit, timeout, token budget, cancellation, and result receipt. Defaults are 3 running tasks, 64 queued tasks, and a 300-second queue wait; operators can configure them.
+
+The following capabilities depend on operator configuration and deployment settings:
+
+| Capability | Purpose |
+| --- | --- |
+| MCP | Connects external tools through MCP; long-running work is tracked by the Gateway's durable task service and can be recovered. |
+| Skills | Discovers and loads reusable task instructions; specific content can be searched and read on demand instead of keeping every instruction in context. |
+| Memory and summaries | Persistent memory can extract, update, and retrieve cross-session information; summarization condenses older messages at configured thresholds while retaining recent context. |
+| Sandbox | Local file and command tools use Gateway host privileges and do not provide isolation; AIO is a client for an external sandbox service, whose isolation boundary is determined by that service. InsightFlow does not run the AIO server. |
+| Plan and clarification | Ordinary chat can use plan mode and interactive clarification; internal non-interactive runs remove the clarification tool. |
+
+Installing the project does not enable all capabilities by default. Local sandbox and extensions run with Gateway privileges, so only trusted sources should be loaded.
+
+The Gateway saves run state in checkpoints and can store events in the application database for history and recovery. SSE streams run and subtask progress to the workspace, while cancellation flows into the corresponding run or subtask lifecycle. Scheduled tasks reuse the ordinary run path and require `scheduler.enabled` in `config.yaml`. Busy occurrences are persisted as `queued`, then move through lease-fenced `launching`; queued work does not consume active-run capacity.
+
+### Governed Analytics
+
+Analytics disables general `task` delegation, Skills, Memory, and general plan mode. The Lead has only three fixed tools: `inspect_business_catalog`, `query_business_data`, and `write_analysis_report`. It calls bounded SQL Analyst and Data roles in the same run, followed by the fixed Writer and tool-free Reviewer publishing steps.
+
+The server loads the catalog and metrics visible to the signed-in user, then SQL Analyst prepares a query. SQLGlot AST checks and semantic authorization must pass before the Gateway issues a short-lived, single-use plan and runs a read-only query with row, byte, time, and audit limits. Raw SQL and result rows are excluded from the stage UI.
+
+Query results become evidence scoped to the current run. The Data role submits a `NumericClaimPlan` referencing evidence cells; the domain verifier recalculates and checks claims with server-side `Decimal`. A fixed Report Writer creates the report, then a bounded tool-free Reviewer checks it before an owner-scoped report is published. SQL Analyst and Data are bounded roles called by the Lead in one run; Writer and Reviewer are fixed publishing steps, not five independent resident agents.
+
+Data-source and metric pages can prefill an analysis draft. Users can edit it, and it runs only after explicit submission. The server reloads the current user's accessible catalog and checks authorization, so browser-supplied resource IDs cannot expand access.
+
+## Architecture and key design
 
 ```mermaid
 flowchart LR
   Browser[Browser] --> Nginx[Unified Nginx entry]
   Nginx --> Frontend[Next.js workspace]
   Nginx --> Gateway[FastAPI Gateway]
-  Gateway --> Chat[Ordinary chat: general Agent]
-  Gateway --> Analytics[Governed Analytics]
-  Analytics --> Catalog[Data and metric catalog]
-  Catalog --> Policy[Authorization, read-only plans, and limits]
-  Policy --> BusinessDB[External business PostgreSQL or MySQL]
-  BusinessDB --> Evidence[Run-scoped query evidence]
-  Evidence --> Verify[Server-side numeric checks and report review]
-  Gateway --> AppDB[Application database: SQLite by default]
-  Gateway <--> Redis[Redis Streams]
+  Gateway --> App[InsightFlow App]
+  Gateway --> Harness[Harness agent runtime]
+  App --> Analytics[Five-layer Analytics app]
+  Analytics --> BusinessDB[(External business PostgreSQL or MySQL)]
+  Gateway --> AppDB[(Application state: SQLite by default)]
+  Gateway <--> Redis[(Redis Streams)]
 ```
 
-Analytics queries pass syntax and semantic checks, run read-only with result limits, and are audited. The Gateway verifies the Data stage's evidence-linked numeric plan with `Decimal`. The stage panel shows only permitted summaries, not raw SQL or result rows.
+| Component | Responsibility |
+| --- | --- |
+| Next.js workspace | Provides analysis, chat, catalog, report, audit, and scheduled-task pages; displays server-filtered stage information. |
+| Nginx | Serves as the single browser entry, routing page requests to the frontend and API or streaming requests to the Gateway. |
+| FastAPI Gateway | Handles authentication, threads, runs, artifacts, SSE, scheduling, and HTTP APIs, and composes the product app with Harness. |
+| Harness | Provides the general Lead, tools and middleware, task subagents, MCP, Skills, sandbox, Memory, and checkpoints. The app may depend on Harness; the reverse dependency is prohibited. |
+| Analytics domain | Defines contracts for data sources, schemas, policies, metrics, query plans, evidence, and reports. |
+| Analytics application | Orchestrates catalog, authorization, query execution, and report-publishing use cases through ports. |
+| Analytics infrastructure | Implements SQLite persistence, server-side `secret_ref` resolution, SQL AST and semantic policies, and PostgreSQL/MySQL connectors. |
+| Analytics agent | Wraps governed use cases as fixed agent capabilities, registers evidence, organizes numeric claims, and produces reports. |
+| Analytics API | Provides HTTP schemas and routers; `composition.py` assembles dependencies. |
+| Application SQLite / optional PostgreSQL | Stores Gateway users, threads, runs, events, and Analytics application state. Operators can explicitly switch the application database to PostgreSQL. |
+| Redis Streams | Bridges internal streaming events in the default Docker stack; it is not a public entry point. |
+| External business PostgreSQL / MySQL | Separately registered by administrators and accessed with read-only credentials; these databases are outside the default Compose stack. |
 
-Ordinary-chat MCP, extensions, and sandboxes do not inherit Analytics SQL protections. They run with or are called by the Gateway process, so configure trusted sources only. Local sandbox commands use the Gateway host's privileges; they are not container isolation.
+A governed analysis proceeds in order: authenticate the owner and load their accessible catalog and metrics; resolve `secret_ref` on the server and authorize the SQL AST and semantics; issue a short-lived single-use plan and execute it read-only with limits and audit; bind results to run-scoped evidence; let Data submit a `NumericClaimPlan` for server-side `Decimal` verification; then have the fixed Writer and tool-free Reviewer publish an owner-scoped report. The stage UI receives a safe projection without SQL or result contents.
+
+These boundaries address distinct risks: owner checks prevent cross-account access to threads and reports; server-side `secret_ref` resolution keeps credentials out of the browser; checkpoints and database event storage preserve run state across refreshes and restarts; the Scheduler's durable queue and leases prevent busy work from being lost or launched twice, while queued work stays outside the active-run budget.
 
 ## Deployment
 
@@ -82,9 +138,10 @@ For source development, run `make install` and then `make dev`; `make start` run
 
 ## First use and authorization
 
-1. The administrator creates the initial account at `/setup`, registers an external business data source, publishes its schema snapshot, and references read-only credentials through server-side `secret_ref`. The administrator then defines metrics, owners, and semantics, and configures data-source policies and metric grants separately. A metric grant does not grant access to its business data source.
-2. Users sign in at `/login` and choose ordinary chat at `/workspace/chats/new` or governed analysis at `/workspace/analysis/new`. For example, they can ask how sales last month varied by region; the answerable scope depends on the authorized catalog, configuration, and data.
-3. The analysis page shows stage progress. A report appears at `/workspace/reports` only after the query, evidence checks, and report review complete. Users with access can download it and inspect visible audit history at `/workspace/history`.
+1. The administrator creates the initial account at `/setup`, registers an external business data source, and publishes its schema snapshot. Read-only credentials are referenced with server-side `secret_ref`. The administrator then defines metric semantics and owners and configures data-source policies and metric grants separately. A metric grant does not grant access to its business data source.
+2. After signing in at `/login`, users can bring authorized content from a data-source or metric page into a new analysis draft, edit the question, and explicitly submit it. They can also submit directly at `/workspace/analysis/new` or start ordinary chat at `/workspace/chats/new`.
+3. The analysis page shows a safe stage trace. After query, evidence, and report review complete, users can open and download the owner report at `/workspace/reports`, return to its related thread, and inspect visible audit history at `/workspace/history`.
+4. Ordinary chat can call configured tools or task subagents and show tool progress and generated artifacts. Background schedules can be created at `/workspace/scheduled-tasks` when the Gateway has `scheduler.enabled` turned on.
 
 ## Common questions
 
@@ -97,6 +154,7 @@ For source development, run `make install` and then `make dev`; `make start` run
 ## Documentation
 
 - [Current capabilities and acceptance evidence](docs/current-capabilities.md)
+- [2026-10-10 CI and local deployment acceptance snapshot](docs/acceptance/2026-10-10-ci-final-acceptance.md)
 - [Analytics architecture overview](docs/architecture/insightflow-overview.md)
 - [Install and run](Install.md) — Windows, Git Bash, deployment modes, and troubleshooting
 - [Final delivery status](docs/acceptance/2026-10-09-final-delivery.md) and [release acceptance scenarios](docs/acceptance/acceptance-scenarios.md)
